@@ -1,0 +1,11 @@
+{
+  "name": "claude-codex-bridge",
+  "owner": { "name": "lacknerhossfeld" },
+  "plugins": [
+    {
+      "name": "codex-bridge",
+      "source": "./codex-bridge",
+      "description": "把执行类编码工作派给 OpenAI Codex（gpt-6-astra），按规则验收，并按需让 Codex 独立审查代码。"
+    }
+  ]
+}

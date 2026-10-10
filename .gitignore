@@ -1,0 +1,11 @@
+# 打包产物，发布时上传到 GitHub Releases
+dist/
+
+# 系统和编辑器
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# 本地 Claude Code 设置
+.claude/settings.local.json

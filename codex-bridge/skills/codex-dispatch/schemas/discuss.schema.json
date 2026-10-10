@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["position", "options", "critiques", "risks", "open_questions", "confidence"],
+  "properties": {
+    "position": {
+      "type": "string",
+      "description": "你的核心结论或推荐，一两句话说清楚"
+    },
+    "options": {
+      "type": "array",
+      "description": "你考虑过的可行方案（包括推荐的那个）；只是评价别人的方案时可以为空",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "idea", "pros", "cons", "recommended"],
+        "properties": {
+          "name": { "type": "string", "description": "方案的简短名称" },
+          "idea": { "type": "string", "description": "怎么做，几句话" },
+          "pros": { "type": "array", "items": { "type": "string" } },
+          "cons": { "type": "array", "items": { "type": "string" } },
+          "recommended": { "type": "boolean" }
+        }
+      }
+    },
+    "critiques": {
+      "type": "array",
+      "description": "对给定方案或前一轮观点的反对和质疑；没有给你方案时可以为空",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target", "issue", "severity", "suggestion"],
+        "properties": {
+          "target": { "type": "string", "description": "针对哪一点" },
+          "issue": { "type": "string", "description": "问题是什么，依据是什么" },
+          "severity": { "type": "string", "enum": ["high", "medium", "low"] },
+          "suggestion": { "type": "string", "description": "建议怎么改" }
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "无论选哪个方案都要注意的风险"
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "需要先确认的事实或假设，以及需要决策者拍板的问题"
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"],
+      "description": "对自己结论的把握程度"
+    }
+  }
+}

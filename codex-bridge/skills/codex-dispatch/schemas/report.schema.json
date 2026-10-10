@@ -1,0 +1,44 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "files_changed", "commands_run", "verification", "open_issues"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["completed", "partial", "blocked", "failed"],
+      "description": "completed=全部完成并验证；partial=部分完成；blocked=缺信息或越界需要调度方决定；failed=没做成"
+    },
+    "summary": { "type": "string", "description": "做了什么、关键实现决策，简明扼要" },
+    "files_changed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "change"],
+        "properties": {
+          "path": { "type": "string" },
+          "change": { "type": "string", "description": "这个文件改了什么" }
+        }
+      }
+    },
+    "commands_run": {
+      "type": "array",
+      "description": "运行过的构建、测试、脚本命令及结果",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "outcome"],
+        "properties": {
+          "command": { "type": "string" },
+          "outcome": { "type": "string", "description": "通过/失败及关键输出" }
+        }
+      }
+    },
+    "verification": { "type": "string", "description": "如何验证结果正确；没验证就写没验证及原因" },
+    "open_issues": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "未完成、未验证、有疑问或需要调度方决定的事项"
+    }
+  }
+}
