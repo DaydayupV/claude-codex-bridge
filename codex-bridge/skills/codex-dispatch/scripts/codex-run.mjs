@@ -23,6 +23,8 @@
 //
 // 配置：用户级 ~/.claude/codex-bridge.json（可用环境变量 CODEX_BRIDGE_CONFIG 改路径），
 // 项目级 <工作目录>/.claude/codex-bridge.json。字段见 DEFAULT_CONFIG，config --init 生成模板。
+// 偏好文件（给 Claude 读的文字偏好）：~/.claude/codex-bridge.md 和 <工作目录>/.claude/codex-bridge.md，
+// 脚本不解析，只在 config 输出里报告路径和是否存在。
 
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -38,8 +40,14 @@ const DISCUSS_SCHEMA = path.join(HERE, '..', 'schemas', 'discuss.schema.json');
 
 const USER_CONFIG = process.env.CODEX_BRIDGE_CONFIG || path.join(os.homedir(), '.claude', 'codex-bridge.json');
 const PROJECT_CONFIG = path.join('.claude', 'codex-bridge.json');
+const USER_PREFS = path.join(path.dirname(USER_CONFIG), 'codex-bridge.md');
+const PROJECT_PREFS = path.join('.claude', 'codex-bridge.md');
 
 const DEFAULT_CONFIG = {
+  // true：符合门槛的任务由 Claude 主动派给 Codex；false：Claude 先提议，用户同意后再派
+  auto_dispatch: true,
+  // auto：有终端面板工具时自动打开实时查看，没有就把 watch 命令发给用户；off：不主动打开
+  watch: 'auto',
   // 各等级没写模型时用的模型；null 表示沿用 Codex 自己的配置（~/.codex/config.toml）
   model: null,
   // 各模式下，简单 / 常规 / 复杂三级任务分别用的模型和推理强度（Codex 的 model_reasoning_effort）。
@@ -631,6 +639,8 @@ function cmdConfig(o) {
     effective,
     runs_dir: RUNS_ROOT,
     watch_launcher: path.join(RUNS_ROOT, 'watch.mjs'),
+    preferences: [USER_PREFS, ...(o.cwd ? [path.join(resolveDir(o.cwd), PROJECT_PREFS)] : [])]
+      .map((file) => ({ file, exists: fs.existsSync(file) })),
     codex: codexCommand(),
   }, null, 2) + '\n');
 }
