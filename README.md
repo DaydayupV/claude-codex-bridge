@@ -1,0 +1,138 @@
+# claude-codex-bridge
+
+[English](README.en.md)
+
+一个 Claude Code 插件：让 Claude 把执行类编码工作派给 OpenAI Codex，再由 Claude 验收；也可以让 Codex 独立审查代码，或者在复杂方案上和 Claude 讨论。
+
+分工的思路是：Claude 负责规划、核心决策、设计和文字，Codex 负责其余的执行工作。Codex 用的是你自己的 OpenAI 额度，不占 Claude 的额度。
+
+## 能做什么
+
+| 命令 | 作用 |
+|---|---|
+| `/codex-bridge:rescue <任务>` | 把一个执行任务派给 Codex，完成后 Claude 审查改动、实际运行验证，不合格就返工 |
+| `/codex-bridge:discuss <议题>` | 就复杂的方案和 Codex 讨论，最多 3 轮交叉挑错，由 Claude 逐条裁决，最后给出决策记录 |
+| `/codex-bridge:review` | 让 Codex 审查未提交的改动、某个分支或某次提交，Claude 逐条核实，排除误报 |
+| `/codex-bridge:status` | 查看最近的 Codex 任务，或某次任务的详细结果 |
+| `/codex-bridge:watch` | 实时查看 Codex 正在做什么 |
+| `/codex-bridge:config` | 查看或修改插件配置 |
+
+不用命令也可以。插件自带的 skill 会让 Claude 自己判断：执行类任务达到一定规模时主动派给 Codex，遇到复杂又不确定的方案时先和 Codex 讨论，高风险改动交付前请 Codex 审查。这个行为可以关掉，见下文的 `auto_dispatch`。
+
+每次派活，Claude 都会在对话里写明这次用的模型和推理强度。
+
+## 前提
+
+- [Claude Code](https://claude.com/claude-code)
+- [Codex CLI](https://github.com/openai/codex)，已安装并登录。在终端里运行 `codex exec "hello"` 能正常回复就行
+- Node.js 18 或更高版本
+- Git 2.25 或更高版本，用来追踪 Codex 改了哪些文件
+
+## 安装
+
+在 Claude Code 里运行：
+
+```
+/plugin marketplace add DaydayupV/claude-codex-bridge
+/plugin install codex-bridge@claude-codex-bridge
+```
+
+装好后可以先运行 `/codex-bridge:config`，看看当前生效的配置。
+
+## 配置
+
+第一次使用时，插件会自动生成用户配置 `~/.claude/codex-bridge.json`，内容就是下文"任务等级、模型和推理强度"里的示例：默认用 `gpt-6.1-sol`，复杂任务用 `gpt-6-astra`。沙箱和审批不在里面设置，沿用 Codex 自己的 `~/.codex/config.toml`。
+
+想调整时，直接编辑这个文件，或者在 Claude 里说"用 `/codex-bridge:config` 把复杂任务改成 ultra"。
+
+配置文件是 JSON，后面的覆盖前面的：
+
+1. 插件内置默认值
+2. 用户配置 `~/.claude/codex-bridge.json`（可以用环境变量 `CODEX_BRIDGE_CONFIG` 换路径）
+3. 项目配置 `<项目目录>/.claude/codex-bridge.json`
+
+### 任务等级、模型和推理强度
+
+Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复杂 `complex`。每一级用哪个模型和推理强度，由你在配置里决定。没有隐式默认：Claude 每次都必须给出等级，漏了脚本直接报错，不会悄悄按某个档位运行。
+
+```json
+{
+  "model": "gpt-6.1-sol",
+  "levels": {
+    "run": {
+      "simple":  { "model": null, "effort": "medium" },
+      "normal":  { "model": null, "effort": "high" },
+      "complex": { "model": "gpt-6-astra", "effort": "max" }
+    },
+    "review": {
+      "simple":  { "model": null, "effort": "medium" },
+      "normal":  { "model": null, "effort": "high" },
+      "complex": { "model": "gpt-6-astra", "effort": "max" }
+    },
+    "discuss": {
+      "simple":  { "model": null, "effort": "high" },
+      "normal":  { "model": null, "effort": "max" },
+      "complex": { "model": "gpt-6-astra", "effort": "max" }
+    }
+  }
+}
+```
+
+- 某一级的 `model` 为 `null` 时用顶层的 `model`；顶层也是 `null`，就用 Codex 自己配置的模型。示例只是一种搭配，换成你账号能用、适合你任务的模型。
+- `effort` 可选 `low`、`medium`、`high`、`xhigh`、`max`、`ultra`。模型不支持的档位会被 Codex 拒绝，报错会出现在结果里。
+- 你想临时指定时，可以对 Claude 说"用 ultra 跑"或"用某某模型跑"，Claude 会改用 `--effort` 或 `--model`。
+
+### 全部字段
+
+| 字段 | 作用 | 默认 |
+|---|---|---|
+| `auto_dispatch` | `true`：符合条件的任务由 Claude 主动派给 Codex；`false`：Claude 先提议，你同意后再派 | `true` |
+| `watch` | `auto`：派活后自动打开实时查看；`off`：不主动打开 | `auto` |
+| `model` | 各等级没单独写模型时用的模型 | `null`，沿用 Codex 配置 |
+| `levels` | 见上文 | 模型都是 `null`；推理强度 run 和 review 为 medium / high / max，discuss 为 high / max / max |
+| `sandbox` | `run` / `discuss` / `review` 各自的沙箱：`read-only`、`workspace-write`、`danger-full-access` | 都是 `null`，沿用 Codex 配置 |
+| `approval` | Codex 的审批策略，比如 `never` | `null`，沿用 Codex 配置 |
+| `timeout_min` | 单次任务的总超时（分钟） | `240` |
+| `stall_min` | 连续多少分钟没有任何活动、也没有命令在执行，就判定为卡死并结束；`0` 表示关闭 | `20` |
+| `codex_bin` | codex 可执行文件或 `codex.js` 的路径（也可以用环境变量 `CODEX_BIN`） | 自动查找 |
+| `runs_dir` | 运行记录目录（也可以用环境变量 `CODEX_RUNS_DIR`） | `~/.claude/codex-runs` |
+
+项目配置只认 `model`、`levels`、`timeout_min`、`stall_min`。其余字段只能写在用户配置里，这样别人的仓库没法通过项目配置放宽沙箱、换掉可执行文件，或者擅自花你的额度。
+
+### 偏好文件
+
+有些习惯不好写成 JSON，比如你的项目里哪类代码算高风险、哪些活不想派给 Codex。这些可以用文字写在偏好文件里，Claude 每个会话开始用插件时会读：
+
+- 用户级：`~/.claude/codex-bridge.md`
+- 项目级：`<项目目录>/.claude/codex-bridge.md`
+
+和插件自带的规则冲突时，以偏好文件为准，项目级优先于用户级。例如：
+
+```markdown
+# codex-bridge 偏好
+
+- 这个项目的计费和对账代码按高风险处理：派活用 complex，改完都请 Codex 审查。
+- 数据库迁移脚本不派给 Codex，由 Claude 自己写。
+- 改动超过 200 行就请 Codex 审查。
+```
+
+## 安全提示
+
+- **沙箱以 Codex 的配置为准。** 如果你的 Codex 配置是 `danger-full-access`，Codex 能读写电脑上的任何目录。任务说明会限定它的改动范围，Claude 事后也会审查 diff，但这些都不是技术上的隔离。想要技术隔离，就在配置里把 `sandbox` 设成 `workspace-write` 或 `read-only`。注意 Codex 在 Windows 上的沙箱支持可能不完整，改了之后要实际测试。
+- **后台运行时审批策略要设成 `never`**，否则 Codex 会卡在等待确认上。
+- **你的代码和任务说明会发给 OpenAI。** 涉及敏感代码的项目，先确认这样做没问题。
+- **用 API key 计费时，每次派活都会产生费用。** 不想让 Claude 自动派活，就把 `auto_dispatch` 设成 `false`。
+
+## 运行记录
+
+每次调用都会在 `~/.claude/codex-runs/<run_id>/` 留档：任务说明、Codex 的事件流、diff、最终报告。`/codex-bridge:status` 可以查看。改动追踪用的是放在这个记录目录里的独立 git 仓库，不会碰你项目里的 `.git`。
+
+## 平台支持
+
+Windows 上已经实际测试过。macOS 和 Linux 的代码路径已经写好，但还没有测试，欢迎反馈问题。
+
+目前插件的规则和输出都是中文。
+
+## 许可证
+
+[MIT](LICENSE)

@@ -55,7 +55,7 @@ node "<脚本路径>" config [--cwd "<项目目录>"]
 - 多个任务可以并行，但文件范围不能重叠。**Codex 正在改的文件，Claude 不碰。**
 
 ## 配置
-配置文件是 JSON，按顺序叠加，后面的覆盖前面的：脚本内置默认值 → 用户配置 `~/.claude/codex-bridge.json`（可用环境变量 `CODEX_BRIDGE_CONFIG` 换路径）→ 项目配置 `<项目目录>/.claude/codex-bridge.json`。`config --init` 生成一份用户配置模板。
+配置文件是 JSON，按顺序叠加，后面的覆盖前面的：脚本内置默认值 → 用户配置 `~/.claude/codex-bridge.json`（可用环境变量 `CODEX_BRIDGE_CONFIG` 换路径）→ 项目配置 `<项目目录>/.claude/codex-bridge.json`。用户配置不存在时，脚本第一次运行（任何子命令）会自动生成一份：默认模型 `gpt-6.1-sol`，三种模式的复杂任务用 `gpt-6-astra`。脚本输出"首次使用，已生成配置文件"时，告诉用户生成了配置文件、在哪里、用了哪些模型，并提醒可以按需修改。
 
 | 字段 | 作用 | 默认 |
 |---|---|---|

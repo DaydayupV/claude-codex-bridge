@@ -1,6 +1,6 @@
 {
   "name": "claude-codex-bridge",
-  "owner": { "name": "lacknerhossfeld" },
+  "owner": { "name": "DaydayupV" },
   "plugins": [
     {
       "name": "codex-bridge",

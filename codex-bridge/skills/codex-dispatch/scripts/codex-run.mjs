@@ -10,7 +10,7 @@
 //                             [--brief <文件|->] (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
 //   node codex-run.mjs status [--run <run_id|last>] [--limit <n>]
 //   node codex-run.mjs watch  [--run <run_id|last>]
-//   node codex-run.mjs config [--cwd <目录>] [--init]
+//   node codex-run.mjs config [--cwd <目录>]
 //
 // watch 把 events.jsonl 实时翻译成可读进度；不给 --run 时跟踪正在运行的任务（没有就等新任务出现）。
 // 每次运行还会在记录目录下写一个 watch.mjs 启动器，方便在终端面板里直接运行（插件路径可能含非 ASCII 字符）。
@@ -22,7 +22,7 @@
 // 两者必须给一个，没有隐式默认。--model 临时覆盖模型。
 //
 // 配置：用户级 ~/.claude/codex-bridge.json（可用环境变量 CODEX_BRIDGE_CONFIG 改路径），
-// 项目级 <工作目录>/.claude/codex-bridge.json。字段见 DEFAULT_CONFIG，config --init 生成模板。
+// 项目级 <工作目录>/.claude/codex-bridge.json。字段见 DEFAULT_CONFIG；用户配置不存在时按 STARTER_CONFIG 自动生成。
 // 偏好文件（给 Claude 读的文字偏好）：~/.claude/codex-bridge.md 和 <工作目录>/.claude/codex-bridge.md，
 // 脚本不解析，只在 config 输出里报告路径和是否存在。
 
@@ -113,9 +113,32 @@ function mergeConfig(base, extra, keys = Object.keys(DEFAULT_CONFIG)) {
   return out;
 }
 
+// 首次使用时生成的用户配置：在内置默认值上套用 README 里的示例搭配。
+const STARTER_CONFIG = mergeConfig(DEFAULT_CONFIG, {
+  model: 'gpt-6.1-sol',
+  levels: {
+    run: { complex: { model: 'gpt-6-astra' } },
+    review: { complex: { model: 'gpt-6-astra' } },
+    discuss: { complex: { model: 'gpt-6-astra' } },
+  },
+});
+
+function writeStarterConfig() {
+  fs.mkdirSync(path.dirname(USER_CONFIG), { recursive: true });
+  fs.writeFileSync(USER_CONFIG, JSON.stringify(STARTER_CONFIG, null, 2) + '\n');
+}
+
 function loadConfig(cwd) {
   const sources = [];
   let cfg = DEFAULT_CONFIG;
+  if (!fs.existsSync(USER_CONFIG)) {
+    try {
+      writeStarterConfig();
+      process.stderr.write(`codex-run: 首次使用，已生成配置文件 ${USER_CONFIG}（默认模型 ${STARTER_CONFIG.model}，复杂任务用 ${STARTER_CONFIG.levels.run.complex.model}），可按需修改\n`);
+    } catch (e) {
+      process.stderr.write(`codex-run: 无法生成配置文件 ${USER_CONFIG}（${e.message}），本次按内置默认值运行\n`);
+    }
+  }
   const user = readJson(USER_CONFIG);
   if (user) { cfg = mergeConfig(cfg, user); sources.push(USER_CONFIG); }
   if (cwd) {
@@ -185,7 +208,7 @@ function die(msg) {
 function parseArgs(argv) {
   const [cmd, ...rest] = argv;
   const opts = { 'add-dir': [] };
-  const flags = new Set(['uncommitted', 'no-snapshot', 'init']);
+  const flags = new Set(['uncommitted', 'no-snapshot']);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (!a.startsWith('--')) die(`无法识别的参数：${a}`);
@@ -625,13 +648,6 @@ async function cmdReview(o) {
 }
 
 function cmdConfig(o) {
-  if (o.init) {
-    if (fs.existsSync(USER_CONFIG)) die(`配置文件已存在：${USER_CONFIG}`);
-    fs.mkdirSync(path.dirname(USER_CONFIG), { recursive: true });
-    fs.writeFileSync(USER_CONFIG, JSON.stringify(DEFAULT_CONFIG, null, 2) + '\n');
-    process.stdout.write(`已生成配置文件：${USER_CONFIG}\n`);
-    return;
-  }
   const { sources, ...effective } = loadConfig(o.cwd ? resolveDir(o.cwd) : null);
   process.stdout.write(JSON.stringify({
     user_config: USER_CONFIG,
