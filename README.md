@@ -119,6 +119,7 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 ## 安全提示
 
 - **沙箱以 Codex 的配置为准。** 如果你的 Codex 配置是 `danger-full-access`，Codex 能读写电脑上的任何目录。任务说明会限定它的改动范围，Claude 事后也会审查 diff，但这些都不是技术上的隔离。想要技术隔离，就在配置里把 `sandbox` 设成 `workspace-write` 或 `read-only`。注意 Codex 在 Windows 上的沙箱支持可能不完整，改了之后要实际测试。
+- **Claude 只能通过插件调用 Codex。** 插件带有一个钩子：Claude 直接运行 `codex exec` 或 `codex review` 的命令会被拦下，这样每次调用都有记录、改动追踪和明确的模型和推理强度。你自己在终端里运行 codex 不受影响。
 - **后台运行时审批策略要设成 `never`**，否则 Codex 会卡在等待确认上。
 - **你的代码和任务说明会发给 OpenAI。** 涉及敏感代码的项目，先确认这样做没问题。
 - **用 API key 计费时，每次派活都会产生费用。** 不想让 Claude 自动派活，就把 `auto_dispatch` 设成 `false`。
@@ -142,7 +143,7 @@ Windows 上已经实际测试过。macOS 和 Linux 的代码路径已经写好�
 
 ## 开发
 
-两个插件的脚本（`codex-run.mjs` 和 `messages.mjs`）是同一份。只改 `codex-bridge/` 里的那份，再运行同步工具复制到英文插件：
+两个插件的脚本（`codex-run.mjs`、`messages.mjs` 和钩子 `hooks/guard-codex.mjs`）是同一份。只改 `codex-bridge/` 里的那份，再运行同步工具复制到英文插件：
 
 ```bash
 node tools/sync-shared.mjs

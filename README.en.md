@@ -119,6 +119,7 @@ Preference files win over the plugin's built-in rules, and project level wins ov
 ## Safety notes
 
 - **The sandbox is whatever Codex is configured with.** If your Codex config uses `danger-full-access`, Codex can read and write any directory on your machine. The task brief limits what it should touch, and Claude reviews the diff afterwards, but that is not isolation. For real isolation, set `sandbox` to `workspace-write` or `read-only`. Codex's sandbox support on Windows may be incomplete, so test after changing it.
+- **Claude can only call Codex through the plugin.** The plugin includes a hook that blocks Claude's commands that run `codex exec` or `codex review` directly, so every call is recorded, has its changes tracked, and uses an explicit model and effort. Running codex yourself in a terminal isn't affected.
 - **Background runs need the approval policy set to `never`**, or Codex will hang waiting for a confirmation.
 - **Your code and task briefs are sent to OpenAI.** Check that this is acceptable for sensitive projects.
 - **With API-key billing, every handoff costs money.** Set `auto_dispatch` to `false` if you don't want Claude handing off work on its own.
@@ -142,7 +143,7 @@ Install just one. Both share the same config file, preference files and run reco
 
 ## Development
 
-Both plugins use the same scripts (`codex-run.mjs` and `messages.mjs`). Only edit the copy in `codex-bridge/`, then run the sync tool to copy it into the English plugin:
+Both plugins use the same scripts (`codex-run.mjs`, `messages.mjs` and the hook `hooks/guard-codex.mjs`). Only edit the copy in `codex-bridge/`, then run the sync tool to copy it into the English plugin:
 
 ```bash
 node tools/sync-shared.mjs

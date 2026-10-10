@@ -34,6 +34,9 @@ Codex 的文字表达弱，经常不说人话：术语堆砌、翻译腔、绕�
 ## 调用方式
 唯一入口是本 skill 目录下的 `scripts/codex-run.mjs`（即 `${CLAUDE_PLUGIN_ROOT}/skills/codex-dispatch/scripts/codex-run.mjs`）。不要手敲 `codex exec`。
 
+- **没有例外**：测试、验收、试跑、一次性问答，也都必须走这个脚本。只读的问答用 `discuss`。插件带有钩子，直接调用 `codex exec` 或 `codex review` 的命令会被拦下。
+- **遇到沙箱问题时停下来**：Codex 因为沙箱无法启动命令或报错时，把错误原文和你的判断告诉用户，由用户决定是否修改配置。不要自己换沙箱、改配置文件，也不要想办法绕开脚本。
+
 ```bash
 node "<脚本路径>" run    --cwd "<项目目录>" --brief "<任务说明.md>" --title "<短标题>" --level <simple|normal|complex> [--add-dir "<目录>"] [--timeout 分钟]
 node "<脚本路径>" resume --run <run_id|last> --brief "<返工说明.md>" --level <simple|normal|complex>
@@ -69,6 +72,7 @@ node "<脚本路径>" config [--cwd "<项目目录>"]
 | `codex_bin` | codex 可执行文件或 `codex.js` 路径（也可用环境变量 `CODEX_BIN`） | 自动查找 |
 | `runs_dir` | 运行记录目录（也可用环境变量 `CODEX_RUNS_DIR`） | `~/.claude/codex-runs` |
 
+- **Windows 上不要把 `sandbox` 设成 `read-only`**：Codex 的 Windows 沙箱在只读模式下可能连读文件的命令都启动不了。讨论和审查的只读要求靠脚本附加的规则约束，脚本事后也会检查有没有文件被改动。
 - 项目配置只认 `model`、`levels`、`timeout_min`、`stall_min`。`levels` 可以只写要改的那几项，比如只改 `run.complex.model`。`auto_dispatch`、`watch`、沙箱、审批、可执行文件和记录目录只能写在用户配置里，以免克隆来的仓库给自己提权或擅自花用户的额度。
 - 用户要改配置时，直接编辑对应的 JSON 文件，改完运行 `config` 确认生效。
 

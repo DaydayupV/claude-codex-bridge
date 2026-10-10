@@ -4,7 +4,7 @@
 //   node tools/sync-shared.mjs          同步
 //   node tools/sync-shared.mjs --check  只检查，不一致时退出码为 1（适合提交前或 CI 里跑）
 //
-// 共用文件以 codex-bridge/ 为准，改脚本时只改那一份。各插件自己的 language.json、
+// 共用文件以 codex-bridge/ 为准，改脚本时只改那一份。各插件自己的 language.json、hooks.json、
 // SKILL.md、命令说明和 schema 不同步。
 
 import fs from 'node:fs';
@@ -17,6 +17,7 @@ const TARGET = path.join(ROOT, 'codex-bridge-en');
 const SHARED = [
   'skills/codex-dispatch/scripts/codex-run.mjs',
   'skills/codex-dispatch/scripts/messages.mjs',
+  'hooks/guard-codex.mjs',
 ];
 
 const check = process.argv.includes('--check');

@@ -36,6 +36,9 @@ Codex's writing is weak: piles of jargon, stiff phrasing, roundabout sentences t
 ## How to call it
 The only entry point is `scripts/codex-run.mjs` in this skill's folder (that is, `${CLAUDE_PLUGIN_ROOT}/skills/codex-dispatch/scripts/codex-run.mjs`). Don't type `codex exec` by hand.
 
+- **No exceptions**: tests, checks, trial runs and one-off questions all go through this script too. Use `discuss` for read-only questions. The plugin includes a hook that blocks commands calling `codex exec` or `codex review` directly.
+- **Stop on sandbox problems**: if the sandbox stops Codex from starting commands or it errors, tell the user the exact error and your assessment, and let them decide whether to change the config. Don't switch the sandbox, edit config files or look for a way around the script yourself.
+
 ```bash
 node "<script path>" run    --cwd "<project dir>" --brief "<brief.md>" --title "<short title>" --level <simple|normal|complex> [--add-dir "<dir>"] [--timeout minutes]
 node "<script path>" resume --run <run_id|last> --brief "<rework.md>" --level <simple|normal|complex>
@@ -71,6 +74,7 @@ Config files are JSON, layered in this order, later ones overriding earlier ones
 | `codex_bin` | Path to the codex executable or `codex.js` (or the `CODEX_BIN` environment variable) | Found automatically |
 | `runs_dir` | Run record directory (or the `CODEX_RUNS_DIR` environment variable) | `~/.claude/codex-runs` |
 
+- **On Windows, don't set `sandbox` to `read-only`**: Codex's Windows sandbox may fail to start even file-reading commands in read-only mode. The read-only requirement for discussions and reviews is held by the rules the script appends, and the script checks afterwards whether any files changed.
 - Project config only accepts `model`, `levels`, `timeout_min` and `stall_min`. `levels` can contain just the parts to change, such as only `run.complex.model`. `auto_dispatch`, `watch`, sandbox, approval, executable and run directory can only be set in the user config, so a cloned repository can't raise its own permissions or spend the user's quota.
 - When the user wants to change settings, edit the relevant JSON file, then run `config` to confirm.
 

@@ -1,0 +1,17 @@
+{
+  "description": "拦下直接调用 codex exec / codex review 的命令，要求通过 codex-bridge 的脚本调用 Codex",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-codex.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
