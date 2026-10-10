@@ -1,0 +1,57 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["position", "options", "critiques", "risks", "open_questions", "confidence"],
+  "properties": {
+    "position": {
+      "type": "string",
+      "description": "Your core conclusion or recommendation, in a sentence or two"
+    },
+    "options": {
+      "type": "array",
+      "description": "The workable options you considered (including the one you recommend); may be empty when you're only assessing someone else's proposal",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "idea", "pros", "cons", "recommended"],
+        "properties": {
+          "name": { "type": "string", "description": "Short name for the option" },
+          "idea": { "type": "string", "description": "How it works, in a few sentences" },
+          "pros": { "type": "array", "items": { "type": "string" } },
+          "cons": { "type": "array", "items": { "type": "string" } },
+          "recommended": { "type": "boolean" }
+        }
+      }
+    },
+    "critiques": {
+      "type": "array",
+      "description": "Objections to and challenges of the given proposal or the previous round's points; may be empty if no proposal was given",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target", "issue", "severity", "suggestion"],
+        "properties": {
+          "target": { "type": "string", "description": "Which point this is about" },
+          "issue": { "type": "string", "description": "What the problem is and what it's based on" },
+          "severity": { "type": "string", "enum": ["high", "medium", "low"] },
+          "suggestion": { "type": "string", "description": "How to change it" }
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Risks to watch whichever option is chosen"
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Facts or assumptions to confirm first, and questions for the decision maker"
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"],
+      "description": "How sure you are of your conclusion"
+    }
+  }
+}

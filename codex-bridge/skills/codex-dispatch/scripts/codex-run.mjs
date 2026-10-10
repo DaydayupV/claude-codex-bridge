@@ -31,10 +31,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { MESSAGES } from './messages.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA = path.join(HERE, '..', 'schemas', 'report.schema.json');
 const DISCUSS_SCHEMA = path.join(HERE, '..', 'schemas', 'discuss.schema.json');
+
+// 输出语言由插件自带的 language.json 决定（中文插件 zh，英文插件 en），测试时可用环境变量 CODEX_BRIDGE_LANG 覆盖。
+const LANGUAGE = process.env.CODEX_BRIDGE_LANG || (() => {
+  try { return JSON.parse(fs.readFileSync(path.join(HERE, 'language.json'), 'utf8')).language; } catch { return 'zh'; }
+})();
+const M = MESSAGES[LANGUAGE] || MESSAGES.zh;
 
 // ---------- 配置 ----------
 
@@ -91,7 +98,7 @@ const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 function readJson(file) {
   if (!fs.existsSync(file)) return null;
   try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')); }
-  catch (e) { die(`配置文件不是合法 JSON：${file}（${e.message}）`); }
+  catch (e) { die(M.configBadJson(file, e.message)); }
 }
 
 function mergeConfig(base, extra, keys = Object.keys(DEFAULT_CONFIG)) {
@@ -134,9 +141,9 @@ function loadConfig(cwd) {
   if (!fs.existsSync(USER_CONFIG)) {
     try {
       writeStarterConfig();
-      process.stderr.write(`codex-run: 首次使用，已生成配置文件 ${USER_CONFIG}（默认模型 ${STARTER_CONFIG.model}，复杂任务用 ${STARTER_CONFIG.levels.run.complex.model}），可按需修改\n`);
+      process.stderr.write(`codex-run: ${M.starterCreated(USER_CONFIG, STARTER_CONFIG.model, STARTER_CONFIG.levels.run.complex.model)}\n`);
     } catch (e) {
-      process.stderr.write(`codex-run: 无法生成配置文件 ${USER_CONFIG}（${e.message}），本次按内置默认值运行\n`);
+      process.stderr.write(`codex-run: ${M.starterFailed(USER_CONFIG, e.message)}\n`);
     }
   }
   const user = readJson(USER_CONFIG);
@@ -146,7 +153,7 @@ function loadConfig(cwd) {
     const project = readJson(file);
     if (project) {
       const ignored = Object.keys(project).filter((k) => !PROJECT_KEYS.includes(k));
-      if (ignored.length) process.stderr.write(`codex-run: 项目配置里的 ${ignored.join('、')} 只能写在用户配置中，已忽略\n`);
+      if (ignored.length) process.stderr.write(`codex-run: ${M.projectIgnored(M.list(ignored))}\n`);
       cfg = mergeConfig(cfg, project, PROJECT_KEYS);
       sources.push(file);
     }
@@ -168,36 +175,6 @@ const SNAPSHOT_EXCLUDES = [
   '.ruff_cache/', '.tox/', '.next/', '.nuxt/', '.gradle/', '.idea/', '.vs/', 'target/', '*.pyc',
 ];
 
-const FOOTER = (cwd, addDirs) => `---
-## 固定约束（调度方自动附加）
-- 工作目录：${cwd}${addDirs.length ? `；另可改动：${addDirs.join('、')}` : ''}。只改任务说明列出的文件和范围；确实需要超出范围时先停下，写进报告，不要擅自扩大改动。
-- 只写必要的测试，不要过度防御：不加多余的参数校验、try/catch、兜底分支和重复测试。
-- 命名、注释和提示文字以任务说明为准，给了原文就照用。没有指定的：命名沿用项目现有风格，起直白、能看出用途的名字；注释只在不显而易见的地方用一句简短的话说明"为什么"，不要长篇解释，也不要逐行注释。
-- 不执行 git commit / git push / git reset --hard 或任何改写历史的操作；不删除范围外的文件；不读取或修改密钥、凭据、.env 等敏感文件。
-- 不安装全局依赖，不改系统配置；项目内确需新增依赖时在报告里说明。
-- 完成后按给定的 JSON schema 输出最终报告，如实填写：没做到或没验证的写进 open_issues，不要粉饰。`;
-
-const RESUME_FOOTER = `---
-（调度方提示：前面的固定约束仍然有效。完成后同样按 JSON schema 输出最终报告。）`;
-
-const DISCUSS_FOOTER = (cwd) => `---
-## 讨论规则（调度方自动附加）
-- 这是方案讨论，不是执行任务。可以阅读 ${cwd} 下的代码和数据、运行只读命令来支撑观点，但不要修改、创建或删除任何文件。
-- 独立思考，不要迎合。不同意就直说，并给出理由；同意也要说清楚为什么。
-- 结论先行，用短句和直白的话，像跟同事当面讲清楚一样。不要堆砌术语，不要套话。
-- 每个观点都要有依据：代码位置、数据或清楚的推理。拿不准的明确标出来。
-- 最后按给定的 JSON schema 输出。`;
-
-const DISCUSS_RESUME_FOOTER = `---
-（调度方提示：前面的讨论规则仍然有效：只读、不迎合、说人话、有依据。最后同样按 JSON schema 输出。）`;
-
-const REVIEW_FOOTER = `---
-## 审查要求（调度方自动附加）
-- 只审查，不要修改任何文件，不要执行会改动文件的命令。
-- 只报告真实存在的问题：正确性 bug、逻辑漏洞、边界条件、并发与数据一致性、安全问题、明显的性能问题。不报告纯风格偏好。
-- 每个问题写清：文件:行号、问题、触发场景（什么输入或状态会出错）、修复建议，按严重程度从高到低排列。
-- 没发现问题就明确说"未发现问题"，不要凑数。`;
-
 // ---------- 通用 ----------
 
 function die(msg) {
@@ -211,11 +188,11 @@ function parseArgs(argv) {
   const flags = new Set(['uncommitted', 'no-snapshot']);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
-    if (!a.startsWith('--')) die(`无法识别的参数：${a}`);
+    if (!a.startsWith('--')) die(M.badArg(a));
     const key = a.slice(2);
     if (flags.has(key)) { opts[key] = true; continue; }
     const val = rest[++i];
-    if (val === undefined) die(`缺少参数值：${a}`);
+    if (val === undefined) die(M.missingValue(a));
     if (key === 'add-dir') opts[key].push(val);
     else opts[key] = val;
   }
@@ -223,25 +200,25 @@ function parseArgs(argv) {
 }
 
 function need(o, key) {
-  if (!o[key]) die(`缺少 --${key}`);
+  if (!o[key]) die(M.missingOpt(key));
   return o[key];
 }
 
 // 返回 { level, model, effort }：level 是任务等级（直接给 --effort 时为 null），model 为 null 时沿用 Codex 配置。
 // 模型的优先级：--model > 该等级的 model > 顶层 model > fallbackModel（续接时为上一轮的模型）。
 function pickProfile(cfg, o, mode, fallbackModel = null) {
-  if (o.level && o.effort) die('--level 和 --effort 只能给一个');
+  if (o.level && o.effort) die(M.levelAndEffort);
   let level = null;
   let entry = {};
   if (o.effort) {
-    if (!CODEX_EFFORTS.includes(o.effort)) die(`--effort 只能是 ${CODEX_EFFORTS.join(' / ')}`);
+    if (!CODEX_EFFORTS.includes(o.effort)) die(M.effortChoices(CODEX_EFFORTS.join(' / ')));
     entry = { effort: o.effort };
   } else {
-    if (!o.level) die(`缺少 --level（${LEVELS.join(' / ')}）或 --effort（${CODEX_EFFORTS.join(' / ')}）`);
-    if (!LEVELS.includes(o.level)) die(`--level 只能是 ${LEVELS.join(' / ')}`);
+    if (!o.level) die(M.missingLevel(LEVELS.join(' / '), CODEX_EFFORTS.join(' / ')));
+    if (!LEVELS.includes(o.level)) die(M.levelChoices(LEVELS.join(' / ')));
     level = o.level;
     entry = cfg.levels[mode]?.[level] || {};
-    if (!CODEX_EFFORTS.includes(entry.effort)) die(`配置 levels.${mode}.${level}.effort 的值 ${JSON.stringify(entry.effort)} 无效，只能是 ${CODEX_EFFORTS.join(' / ')}`);
+    if (!CODEX_EFFORTS.includes(entry.effort)) die(M.badLevelConfig(`levels.${mode}.${level}.effort`, JSON.stringify(entry.effort), CODEX_EFFORTS.join(' / ')));
   }
   return { level, model: o.model || entry.model || cfg.model || fallbackModel, effort: entry.effort };
 }
@@ -258,17 +235,17 @@ function codexOptions(cfg, { model, effort, mode }) {
 
 function resolveDir(p) {
   const dir = path.resolve(p);
-  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) die(`目录不存在：${dir}`);
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) die(M.dirMissing(dir));
   return dir;
 }
 
 function readBrief(o, required = true) {
   if (!o.brief) {
-    if (required) die('缺少 --brief');
+    if (required) die(M.missingOpt('brief'));
     return '';
   }
   const text = o.brief === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(path.resolve(o.brief), 'utf8');
-  if (required && !text.trim()) die('任务说明为空');
+  if (required && !text.trim()) die(M.emptyBrief);
   return text.replace(/^﻿/, '').trim();
 }
 
@@ -323,9 +300,9 @@ function listRuns() {
 
 function findRun(ref) {
   const id = ref === 'last' ? listRuns()[0] : ref;
-  if (!id) die('还没有任何运行记录');
+  if (!id) die(M.noRuns);
   const dir = path.join(RUNS_ROOT, id);
-  if (!fs.existsSync(path.join(dir, 'meta.json'))) die(`找不到运行记录：${ref}`);
+  if (!fs.existsSync(path.join(dir, 'meta.json'))) die(M.runNotFound(ref));
   return { id, dir, meta: JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')) };
 }
 
@@ -358,7 +335,7 @@ function makeTracker(runDir, cwd) {
       cwd, input, encoding: 'utf8', maxBuffer: 1 << 30, timeout: 180000, windowsHide: true,
       env: index ? { ...process.env, GIT_INDEX_FILE: index } : process.env,
     });
-    if (r.error || r.status !== 0) throw new Error(`git ${args[0]} 失败：${r.error?.message || r.stderr.trim()}`);
+    if (r.error || r.status !== 0) throw new Error(M.gitFailed(args[0], r.error?.message || r.stderr.trim()));
     return r.stdout;
   };
 
@@ -369,7 +346,7 @@ function makeTracker(runDir, cwd) {
   function snap(label) {
     const index = path.join(gitDir, `index-${label}`);
     const files = git(['ls-files', '-z', '-o', '--exclude-standard']).split('\0').filter(Boolean);
-    if (files.length > MAX_SNAPSHOT_FILES) throw new Error(`文件数 ${files.length} 超过 ${MAX_SNAPSHOT_FILES}，跳过快照`);
+    if (files.length > MAX_SNAPSHOT_FILES) throw new Error(M.tooManyFiles(files.length, MAX_SNAPSHOT_FILES));
     const small = [];
     const large = {};
     for (const f of files) {
@@ -450,7 +427,7 @@ function runCodex({ args, cwd, prompt, runDir, timeoutMin, stallMin, onSession }
     const stallCheck = setInterval(() => {
       if (!stallMin || runningCommands.size || Date.now() - lastEventAt < stallMin * 60000) return;
       out.stalled = true;
-      out.errors.push(`超过 ${stallMin} 分钟没有任何活动，且没有命令在执行，判定为卡死并已终止`);
+      out.errors.push(M.stalled(stallMin));
       clearInterval(stallCheck);
       killTree(child.pid);
     }, 30000);
@@ -465,7 +442,7 @@ function runCodex({ args, cwd, prompt, runDir, timeoutMin, stallMin, onSession }
       out.code = code;
       resolve(out);
     };
-    child.on('error', (e) => { out.errors.push(`启动 codex 失败：${e.message}`); finish(-1); });
+    child.on('error', (e) => { out.errors.push(M.spawnFailed(e.message)); finish(-1); });
     child.on('close', (code) => finish(code));
     child.stdin.on('error', () => { /* codex 提前退出时忽略 EPIPE */ });
     child.stdin.end(prompt, 'utf8');
@@ -477,7 +454,7 @@ async function execute(ctx) {
   const started = Date.now();
   const sandbox = cfg.sandbox[kind === 'exec' ? 'run' : kind] || null;
   // model 为 null 时实际模型由 Codex 配置决定，model_shown 是给人看的实际模型名。
-  const modelShown = model || `${codexConfigModel() || '未知'}（来自 Codex 配置）`;
+  const modelShown = model || M.modelFromCodex(codexConfigModel() || M.unknownModel);
   const meta = {
     id, mode, kind, title: title || null, cwd, model, model_shown: modelShown, level, effort, sandbox,
     parent: parent || null,
@@ -486,14 +463,14 @@ async function execute(ctx) {
   const writeMeta = () => fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
   writeMeta();
   fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
-  process.stderr.write(`codex-run: ${mode} 开始｜模型 ${modelShown}｜推理强度 ${effort}${level ? `（等级 ${level}）` : '（直接指定）'}｜记录目录 ${dir}\n`);
+  process.stderr.write(`codex-run: ${M.started(mode, modelShown, effort, level, dir)}\n`);
 
   const warnings = [];
   let tracker = null;
   let before = null;
   if (!opts['no-snapshot']) {
     try { tracker = makeTracker(dir, cwd); before = tracker.snap('before'); }
-    catch (e) { warnings.push(`改动追踪不可用：${e.message}`); tracker?.cleanup(); tracker = null; }
+    catch (e) { warnings.push(M.trackingUnavailable(e.message)); tracker?.cleanup(); tracker = null; }
   }
 
   const r = await runCodex({
@@ -506,22 +483,22 @@ async function execute(ctx) {
   let changes = { available: false };
   if (tracker) {
     try { changes = { available: true, ...tracker.diff(before, tracker.snap('after'), path.join(dir, 'diff.patch')) }; }
-    catch (e) { warnings.push(`改动追踪失败：${e.message}`); }
+    catch (e) { warnings.push(M.trackingFailed(e.message)); }
     finally { tracker.cleanup(); }
   }
-  if (kind !== 'exec' && changes.files?.length) warnings.push(`${kind === 'discuss' ? '讨论' : '审查'}本应只读，但检测到 ${changes.files.length} 个文件被改动，请检查 diff.patch`);
+  if (kind !== 'exec' && changes.files?.length) warnings.push(M.readonlyChanged(kind, changes.files.length));
 
   const lastFile = path.join(dir, 'last-message.txt');
   const last = fs.existsSync(lastFile) ? fs.readFileSync(lastFile, 'utf8').trim() : '';
   let report = null;
-  if (expectReport && last) { try { report = JSON.parse(last); } catch { warnings.push('最终报告不是合法 JSON，见 last_message'); } }
+  if (expectReport && last) { try { report = JSON.parse(last); } catch { warnings.push(M.badReport); } }
 
   // 重连之类的 error 事件不一定致命，成败以退出码为准，errors 照常汇报。
   const ok = r.code === 0 && !r.timedOut && !r.stalled;
   if (!ok && !r.errors.length) {
     // 参数错误等情况 codex 不产生事件，只在 stderr 留信息，把末尾几行带出来。
     const tail = String(r.stderrTail || '').trim().split('\n').slice(-5).join('\n');
-    if (tail) r.errors.push(`codex 退出码 ${r.code}：${tail}`);
+    if (tail) r.errors.push(M.exitCode(r.code, tail));
   }
   meta.status = ok ? 'done' : r.stalled ? 'stalled' : r.timedOut ? 'timeout' : 'failed';
   meta.session_id = r.sessionId || meta.session_id;
@@ -550,7 +527,7 @@ async function execute(ctx) {
     report,
     last_message: report ? undefined : last.slice(0, 8000),
     changes: changes.available
-      ? { ...changes, files: changes.files.slice(0, 300), files_total: changes.files.length, note: '只追踪工作目录内的改动' }
+      ? { ...changes, files: changes.files.slice(0, 300), files_total: changes.files.length, note: M.trackNote }
       : changes,
     run_dir: dir,
   };
@@ -575,7 +552,7 @@ async function cmdRun(o) {
   ];
   for (const d of addDirs) args.push('--add-dir', d);
   args.push('-');
-  await execute({ cfg, model, mode: 'run', kind: 'exec', id, dir, cwd, level, effort, args, prompt: `${brief}\n\n${FOOTER(cwd, addDirs)}\n`, title: o.title, opts: o, expectReport: true });
+  await execute({ cfg, model, mode: 'run', kind: 'exec', id, dir, cwd, level, effort, args, prompt: `${brief}\n\n${M.footer(cwd, addDirs)}\n`, title: o.title, opts: o, expectReport: true });
 }
 
 async function cmdDiscuss(o) {
@@ -588,14 +565,14 @@ async function cmdDiscuss(o) {
     'exec', '--json', '--skip-git-repo-check', ...codexOptions(cfg, { model, effort, mode: 'discuss' }),
     '-C', cwd, '--output-schema', DISCUSS_SCHEMA, '-o', path.join(dir, 'last-message.txt'), '-',
   ];
-  await execute({ cfg, model, mode: 'discuss', kind: 'discuss', id, dir, cwd, level, effort, args, prompt: `${brief}\n\n${DISCUSS_FOOTER(cwd)}\n`, title: o.title, opts: o, expectReport: true });
+  await execute({ cfg, model, mode: 'discuss', kind: 'discuss', id, dir, cwd, level, effort, args, prompt: `${brief}\n\n${M.discussFooter(cwd)}\n`, title: o.title, opts: o, expectReport: true });
 }
 
 async function cmdResume(o) {
   const parent = findRun(need(o, 'run'));
-  if (!parent.meta.session_id) die(`运行 ${parent.id} 没有 session id，无法续接`);
+  if (!parent.meta.session_id) die(M.noSession(parent.id));
   const kind = parent.meta.kind || (parent.meta.mode === 'review' ? 'review' : 'exec');
-  if (kind === 'review') die('审查会话不支持续接，请用 run 发起修复任务');
+  if (kind === 'review') die(M.reviewNoResume);
   const discuss = kind === 'discuss';
   const cfg = loadConfig(parent.meta.cwd);
   const brief = readBrief(o);
@@ -608,7 +585,7 @@ async function cmdResume(o) {
   ];
   await execute({
     cfg, model, mode: 'resume', kind, id, dir, cwd: parent.meta.cwd, level, effort, args,
-    prompt: `${brief}\n\n${discuss ? DISCUSS_RESUME_FOOTER : RESUME_FOOTER}\n`,
+    prompt: `${brief}\n\n${discuss ? M.discussResumeFooter : M.resumeFooter}\n`,
     title: o.title || parent.meta.title, parent: parent.id, sessionId: parent.meta.session_id, opts: o, expectReport: true,
   });
 }
@@ -634,15 +611,13 @@ async function cmdReview(o) {
     prompt = '';
   } else if (git) {
     // 有审查重点时改用普通 exec，让 Codex 自己用 git 查看审查范围。
-    const scope = o.base ? `当前分支相对 ${o.base} 的改动（git diff ${o.base}...HEAD）`
-      : o.commit ? `提交 ${o.commit} 引入的改动（git show ${o.commit}）`
-      : '所有未提交的改动，包括已暂存、未暂存和未跟踪的文件（git status、git diff HEAD）';
+    const scope = o.base ? M.reviewScopeBase(o.base) : o.commit ? M.reviewScopeCommit(o.commit) : M.reviewScopeUncommitted;
     args = ['exec', '--json', '--skip-git-repo-check', ...codexOpts, '-C', cwd, '-o', last, '-'];
-    prompt = `请审查 ${cwd} 中${scope}。\n\n${brief}\n\n${REVIEW_FOOTER}\n`;
+    prompt = `${M.reviewPromptGit(cwd, scope)}\n\n${brief}\n\n${M.reviewFooter}\n`;
   } else {
     // 非 git 目录没有"改动"可言，审查范围由任务说明指定。
     args = ['exec', '--json', '--skip-git-repo-check', ...codexOpts, '-C', cwd, '-o', last, '-'];
-    prompt = `请审查以下内容（工作目录：${cwd}）：\n\n${brief}\n\n${REVIEW_FOOTER}\n`;
+    prompt = `${M.reviewPromptPlain(cwd)}\n\n${brief}\n\n${M.reviewFooter}\n`;
   }
   await execute({ cfg, model, mode: 'review', kind: 'review', id, dir, cwd, level, effort, args, prompt, title: o.title, opts: o, expectReport: false });
 }
@@ -664,7 +639,7 @@ function cmdConfig(o) {
 // 读 events.jsonl 末尾，给出最后活动时间和当前步骤，用来判断运行中的任务是活着还是卡住。
 function describeActivity(dir) {
   const file = path.join(dir, 'events.jsonl');
-  if (!fs.existsSync(file)) return { idle_min: null, step: '尚未产生事件' };
+  if (!fs.existsSync(file)) return { idle_min: null, step: M.noEvents };
   const st = fs.statSync(file);
   const len = Math.min(st.size, 256 * 1024);
   const chunk = Buffer.alloc(len);
@@ -682,11 +657,11 @@ function describeActivity(dir) {
     else if (ev.type === 'item.completed') running.delete(ev.item.id);
   }
   let step;
-  if (running.size) step = `执行命令：${clip(oneLine(plainCommand([...running.values()].pop())), 160)}`;
-  else if (last?.item?.type === 'agent_message') step = `刚说：${clip(oneLine(last.item.text), 160)}`;
-  else if (last?.item?.type === 'file_change') step = '刚改完文件，思考下一步';
-  else if (last?.type === 'item.completed' && last.item?.type === 'command_execution') step = '命令刚结束，思考下一步';
-  else step = last ? `上一个事件：${last.type}${last.item?.type ? `/${last.item.type}` : ''}` : '尚未产生事件';
+  if (running.size) step = M.stepCommand(clip(oneLine(plainCommand([...running.values()].pop())), 160));
+  else if (last?.item?.type === 'agent_message') step = M.stepSaid(clip(oneLine(last.item.text), 160));
+  else if (last?.item?.type === 'file_change') step = M.stepFileChanged;
+  else if (last?.type === 'item.completed' && last.item?.type === 'command_execution') step = M.stepCommandDone;
+  else step = last ? M.stepLastEvent(`${last.type}${last.item?.type ? `/${last.item.type}` : ''}`) : M.noEvents;
   return { idle_min: Number(((Date.now() - st.mtimeMs) / 60000).toFixed(1)), step };
 }
 
@@ -710,11 +685,11 @@ function cmdStatus(o) {
     let row = `${rid}  ${m.mode.padEnd(6)}  ${m.status.padEnd(11)}  ${m.model_shown || m.model || '-'}  ${(m.level ? `${m.level}/${m.effort}` : m.effort).padEnd(14)}  ${mins.padStart(6)}min  ${m.title || ''}  @ ${m.cwd}`;
     if (m.status === 'running') {
       const a = describeActivity(dir);
-      row += `\n    └ 最后活动 ${a.idle_min ?? '-'} 分钟前｜${a.step}`;
+      row += `\n    └ ${M.statusActivity(a.idle_min ?? '-', a.step)}`;
     }
     return row;
   });
-  process.stdout.write(rows.length ? rows.join('\n') + '\n' : '还没有任何运行记录\n');
+  process.stdout.write(rows.length ? rows.join('\n') + '\n' : `${M.noRuns}\n`);
 }
 
 // ---------- watch ----------
@@ -741,11 +716,11 @@ async function pickWatchRun(ref) {
     const running = ids.find((id) => isRunning(readMeta(path.join(RUNS_ROOT, id))));
     if (running) return findRun(running);
     if (waited >= 15000) {
-      if (!ids[0]) die('还没有任何运行记录');
-      process.stdout.write('没有正在运行的任务，显示最近一次：\n');
+      if (!ids[0]) die(M.noRuns);
+      process.stdout.write(`${M.watchFallback}\n`);
       return findRun(ids[0]);
     }
-    if (waited === 0) process.stdout.write('等待 Codex 任务开始…\n');
+    if (waited === 0) process.stdout.write(`${M.watchWaiting}\n`);
     await sleep(500);
   }
 }
@@ -756,17 +731,17 @@ async function cmdWatch(o) {
   const rel = (p) => { const r = path.relative(cwd, p); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r : p; };
   let live = false;
   const out = (sym, text) => process.stdout.write(`${live ? new Date().toTimeString().slice(0, 8) : '        '} ${sym} ${text}\n`);
-  process.stdout.write(`\nCodex ${meta.mode}｜${meta.title || id}｜模型 ${meta.model_shown || meta.model}｜推理强度 ${meta.effort}${meta.level ? `（等级 ${meta.level}）` : ''}\n工作目录 ${cwd}\n记录目录 ${dir}\n\n`);
+  process.stdout.write(`\n${M.watchHeader(meta.mode, meta.title || id, meta.model_shown || meta.model, meta.effort, meta.level, cwd, dir)}\n\n`);
 
   const show = (line) => {
     let ev;
     try { ev = JSON.parse(line); } catch { return; }
     const it = ev.item || {};
-    if (ev.type === 'thread.started') out('●', `会话 ${ev.thread_id}`);
-    else if (ev.type === 'turn.failed') out('✗', `本轮失败：${ev.error?.message || ''}`);
+    if (ev.type === 'thread.started') out('●', M.watchSession(ev.thread_id));
+    else if (ev.type === 'turn.failed') out('✗', M.watchTurnFailed(ev.error?.message || ''));
     else if (ev.type === 'error') out('⚠', clip(oneLine(ev.message), 300));
     else if (ev.type === 'turn.completed' && ev.usage) {
-      out('Σ', `tokens 输入 ${ev.usage.input_tokens}（缓存 ${ev.usage.cached_input_tokens}），输出 ${ev.usage.output_tokens}`);
+      out('Σ', M.watchTokens(ev.usage));
     } else if (ev.type === 'item.started' && it.type === 'command_execution') {
       out('▶', clip(oneLine(plainCommand(it.command)), 240));
     } else if (ev.type === 'item.completed') {
@@ -774,16 +749,16 @@ async function cmdWatch(o) {
         const t = it.text.trim();
         let report = null;
         if (t.startsWith('{')) try { report = JSON.parse(t); } catch { /* 普通消息 */ }
-        if (report?.position) out('■', `观点：${clip(oneLine(report.position), 400)}`);
-        else if (report?.status) out('■', `报告：${report.status}｜${clip(oneLine(report.summary), 300)}`);
+        if (report?.position) out('■', M.watchOpinion(clip(oneLine(report.position), 400)));
+        else if (report?.status) out('■', M.watchReport(report.status, clip(oneLine(report.summary), 300)));
         else out('💬', clip(oneLine(t), 600));
       } else if (it.type === 'reasoning') {
         out('…', clip(oneLine(it.text), 200));
       } else if (it.type === 'command_execution') {
         const lines = String(it.aggregated_output || '').replace(/\r/g, '').split('\n').map((x) => x.trimEnd()).filter(Boolean);
-        out(it.exit_code === 0 ? '✓' : '✗', `退出码 ${it.exit_code}${lines.length ? ` → ${clip(lines.slice(-3).join(' ⏎ '), 240)}` : ''}`);
+        out(it.exit_code === 0 ? '✓' : '✗', M.watchExit(it.exit_code, lines.length ? clip(lines.slice(-3).join(' ⏎ '), 240) : ''));
       } else if (it.type === 'file_change') {
-        for (const c of it.changes || []) out('✏', `${{ add: '新增', update: '修改', delete: '删除' }[c.kind] || c.kind} ${rel(c.path)}`);
+        for (const c of it.changes || []) out('✏', `${M.fileKinds[c.kind] || c.kind} ${rel(c.path)}`);
       } else if (it.type === 'error') {
         if (!/^Under-development features enabled/.test(it.message)) out('⚠', clip(oneLine(it.message), 300));
       } else if (it.type === 'web_search') {
@@ -826,14 +801,14 @@ async function cmdWatch(o) {
   const resFile = path.join(dir, 'result.json');
   if (fs.existsSync(resFile)) {
     const r = JSON.parse(fs.readFileSync(resFile, 'utf8'));
-    const changed = r.changes?.available ? `改动 ${r.changes.files_total} 个文件` : '改动未追踪';
-    out('■', `结束：${r.status}，用时 ${r.duration_s}s，${changed}`);
+    const changed = r.changes?.available ? M.watchChanged(r.changes.files_total) : M.watchNotTracked;
+    out('■', M.watchFinished(r.status, r.duration_s, changed));
   } else {
-    out('■', m?.status === 'running' ? '调度进程已退出，任务可能被中断' : `结束：${m?.status}`);
+    out('■', m?.status === 'running' ? M.watchInterrupted : M.watchEnded(m?.status));
   }
 }
 
 const { cmd, opts } = parseArgs(process.argv.slice(2));
 const commands = { run: cmdRun, discuss: cmdDiscuss, resume: cmdResume, review: cmdReview, status: cmdStatus, watch: cmdWatch, config: cmdConfig };
-if (!commands[cmd]) die('用法：codex-run.mjs <run|discuss|resume|review|status|watch|config> [选项]，详见文件头部注释');
+if (!commands[cmd]) die(M.usage);
 await commands[cmd](opts);

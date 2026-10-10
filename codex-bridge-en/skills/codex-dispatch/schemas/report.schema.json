@@ -1,0 +1,44 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "files_changed", "commands_run", "verification", "open_issues"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["completed", "partial", "blocked", "failed"],
+      "description": "completed = all done and verified; partial = partly done; blocked = missing information or out of scope, the dispatcher needs to decide; failed = not done"
+    },
+    "summary": { "type": "string", "description": "What was done and the key implementation decisions, briefly" },
+    "files_changed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "change"],
+        "properties": {
+          "path": { "type": "string" },
+          "change": { "type": "string", "description": "What changed in this file" }
+        }
+      }
+    },
+    "commands_run": {
+      "type": "array",
+      "description": "Build, test and script commands run, and their results",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "outcome"],
+        "properties": {
+          "command": { "type": "string" },
+          "outcome": { "type": "string", "description": "Passed/failed and key output" }
+        }
+      }
+    },
+    "verification": { "type": "string", "description": "How the result was verified; if it wasn't, say so and why" },
+    "open_issues": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Anything not done, not verified, in doubt, or needing the dispatcher's decision"
+    }
+  }
+}

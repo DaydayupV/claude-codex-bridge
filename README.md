@@ -131,7 +131,24 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 
 Windows 上已经实际测试过。macOS 和 Linux 的代码路径已经写好，但还没有测试，欢迎反馈问题。
 
-目前插件的规则和输出都是中文。
+## 中文版和英文版
+
+插件市场里有两个插件，规则和输出的语言不同，其余完全一样：
+
+- `codex-bridge`：中文版，命令是 `/codex-bridge:…`
+- `codex-bridge-en`：英文版，命令是 `/codex-bridge-en:…`
+
+只装其中一个就行。两者共用同一份配置文件、偏好文件和运行记录，换装另一个不用重新配置。
+
+## 开发
+
+两个插件的脚本（`codex-run.mjs` 和 `messages.mjs`）是同一份。只改 `codex-bridge/` 里的那份，再运行同步工具复制到英文插件：
+
+```bash
+node tools/sync-shared.mjs
+```
+
+提交前可以用 `node tools/sync-shared.mjs --check` 检查两份脚本和两个插件的版本号是否一致。终端提示和发给 Codex 的约束等文字都在 `messages.mjs` 里，中英文各一份；SKILL.md、命令说明和 schema 两个插件各写各的。
 
 ## 许可证
 

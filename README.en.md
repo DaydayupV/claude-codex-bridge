@@ -10,12 +10,12 @@ The idea is a split of roles: Claude does the planning, key decisions, design an
 
 | Command | What it does |
 |---|---|
-| `/codex-bridge:rescue <task>` | Hands a task to Codex. When it finishes, Claude reviews the diff, runs it to verify, and sends it back for rework if needed |
-| `/codex-bridge:discuss <topic>` | Discusses a complex design with Codex: up to 3 rounds of critiquing each other's proposals, then Claude rules on each point and writes up a decision record |
-| `/codex-bridge:review` | Has Codex review uncommitted changes, a branch or a commit. Claude checks each finding and filters out false positives |
-| `/codex-bridge:status` | Lists recent Codex runs, or shows the details of one |
-| `/codex-bridge:watch` | Shows what Codex is doing, live |
-| `/codex-bridge:config` | Shows or changes the plugin's settings |
+| `/codex-bridge-en:rescue <task>` | Hands a task to Codex. When it finishes, Claude reviews the diff, runs it to verify, and sends it back for rework if needed |
+| `/codex-bridge-en:discuss <topic>` | Discusses a complex design with Codex: up to 3 rounds of critiquing each other's proposals, then Claude rules on each point and writes up a decision record |
+| `/codex-bridge-en:review` | Has Codex review uncommitted changes, a branch or a commit. Claude checks each finding and filters out false positives |
+| `/codex-bridge-en:status` | Lists recent Codex runs, or shows the details of one |
+| `/codex-bridge-en:watch` | Shows what Codex is doing, live |
+| `/codex-bridge-en:config` | Shows or changes the plugin's settings |
 
 You don't have to use the commands. The bundled skill lets Claude decide on its own: hand off hands-on tasks that are big enough, discuss complex and uncertain designs with Codex first, and ask Codex to review risky changes before delivering them. You can turn this off with `auto_dispatch` (see below).
 
@@ -34,16 +34,16 @@ In Claude Code, run:
 
 ```
 /plugin marketplace add DaydayupV/claude-codex-bridge
-/plugin install codex-bridge@claude-codex-bridge
+/plugin install codex-bridge-en@claude-codex-bridge
 ```
 
-Then run `/codex-bridge:config` to see the settings in effect.
+Then run `/codex-bridge-en:config` to see the settings in effect.
 
 ## Configuration
 
 On first use, the plugin creates a user config at `~/.claude/codex-bridge.json` containing the example from "Task levels, models and reasoning effort" below: `gpt-6.1-sol` by default and `gpt-6-astra` for complex tasks. It doesn't set the sandbox or approval policy; those still come from Codex's own `~/.codex/config.toml`.
 
-To change things, edit that file, or tell Claude something like "use `/codex-bridge:config` to switch complex tasks to ultra".
+To change things, edit that file, or tell Claude something like "use `/codex-bridge-en:config` to switch complex tasks to ultra".
 
 Config files are JSON. Later ones override earlier ones:
 
@@ -125,13 +125,30 @@ Preference files win over the plugin's built-in rules, and project level wins ov
 
 ## Run records
 
-Each call is recorded in `~/.claude/codex-runs/<run_id>/`: the brief, Codex's event stream, the diff and the final report. `/codex-bridge:status` reads them. Change tracking uses a separate git repository inside that record folder and never touches your project's `.git`.
+Each call is recorded in `~/.claude/codex-runs/<run_id>/`: the brief, Codex's event stream, the diff and the final report. `/codex-bridge-en:status` reads them. Change tracking uses a separate git repository inside that record folder and never touches your project's `.git`.
 
 ## Platforms
 
 Tested on Windows. The macOS and Linux code paths are written but not yet tested; issue reports are welcome.
 
-The plugin's rules and output are currently in Chinese.
+## English and Chinese versions
+
+The marketplace has two plugins that differ only in the language of their rules and output:
+
+- `codex-bridge-en`: English, commands are `/codex-bridge-en:…`
+- `codex-bridge`: Chinese, commands are `/codex-bridge:…`
+
+Install just one. Both share the same config file, preference files and run records, so switching doesn't mean setting things up again.
+
+## Development
+
+Both plugins use the same scripts (`codex-run.mjs` and `messages.mjs`). Only edit the copy in `codex-bridge/`, then run the sync tool to copy it into the English plugin:
+
+```bash
+node tools/sync-shared.mjs
+```
+
+Before committing, `node tools/sync-shared.mjs --check` checks that both copies of the scripts and both plugin versions match. Terminal messages, the rules sent to Codex and other text live in `messages.mjs`, with a Chinese and an English set; each plugin has its own SKILL.md, command docs and schemas.
 
 ## License
 
