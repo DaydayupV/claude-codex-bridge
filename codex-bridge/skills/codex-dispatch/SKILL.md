@@ -1,6 +1,6 @@
 ---
 name: codex-dispatch
-description: 把执行类编码工作派给 OpenAI Codex（gpt-6-astra）并验收，让 Codex 独立审查代码，或在复杂方案上与 Codex 讨论。在开始实现功能、批量修改、写脚本、迁移重构、修 bug 等执行类工作前加载；面对复杂、不确定、有多种选择的方案设计或计划时加载；用户提到 Codex、/codex-bridge:rescue、/codex-bridge:discuss、/codex-bridge:review，或要决定是否请 Codex 审查时也加载。
+description: 把执行类编码工作派给 OpenAI Codex并验收，让 Codex 独立审查代码，或在复杂方案上与 Codex 讨论。在开始实现功能、批量修改、写脚本、迁移重构、修 bug 等执行类工作前加载；面对复杂、不确定、有多种选择的方案设计或计划时加载；用户提到 Codex、/codex-bridge:rescue、/codex-bridge:discuss、/codex-bridge:review，或要决定是否请 Codex 审查时也加载。
 ---
 
 # Codex 调度
@@ -27,41 +27,64 @@ Codex 的文字表达弱，经常不说人话：术语堆砌、翻译腔、绕�
 唯一入口是本 skill 目录下的 `scripts/codex-run.mjs`（即 `${CLAUDE_PLUGIN_ROOT}/skills/codex-dispatch/scripts/codex-run.mjs`）。不要手敲 `codex exec`。
 
 ```bash
-node "<脚本路径>" run    --cwd "<项目目录>" --brief "<任务说明.md>" --title "<短标题>" --effort <medium|high|max> [--add-dir "<目录>"] [--timeout 分钟]
-node "<脚本路径>" resume --run <run_id|last> --brief "<返工说明.md>" --effort <medium|high|max>
-node "<脚本路径>" discuss --cwd "<项目目录>" --brief "<议题.md>" --title "<短标题>" [--effort high|max]
-node "<脚本路径>" review --cwd "<项目目录>" [--uncommitted | --base <分支> | --commit <sha>] [--brief "<审查重点.md>"]
+node "<脚本路径>" run    --cwd "<项目目录>" --brief "<任务说明.md>" --title "<短标题>" --level <simple|normal|complex> [--add-dir "<目录>"] [--timeout 分钟]
+node "<脚本路径>" resume --run <run_id|last> --brief "<返工说明.md>" --level <simple|normal|complex>
+node "<脚本路径>" discuss --cwd "<项目目录>" --brief "<议题.md>" --title "<短标题>" --level <normal|complex>
+node "<脚本路径>" review --cwd "<项目目录>" [--uncommitted | --base <分支> | --commit <sha>] [--brief "<审查重点.md>"] --level <simple|normal|complex>
 node "<脚本路径>" status [--run <run_id|last>] [--limit n]
 node "<脚本路径>" watch  [--run <run_id|last>]
+node "<脚本路径>" config [--cwd "<项目目录>"]
 ```
 
-- 模型固定为 `gpt-6-astra`。沙箱和审批沿用 Codex 的全局配置（`danger-full-access` + `never`）：Codex 能写任何目录，`--cwd` 只决定它从哪里开始工作，**不限制写入范围**。范围只能靠任务说明约束，再靠事后审查 diff 把关。
+- 模型、推理强度、沙箱、审批、超时由配置文件决定（见"配置"一节）；没有配置的项沿用 Codex 自己的 `~/.codex/config.toml`。
+- 拿不准当前设置时先运行 `config --cwd "<项目目录>"`，它会列出实际生效的配置、记录目录和 watch 启动器的路径。
+- 沙箱不是 `read-only` / `workspace-write` 时（比如 `danger-full-access`），Codex 能写任何目录，`--cwd` 只决定它从哪里开始工作，**不限制写入范围**。这时范围只能靠任务说明约束，再靠事后审查 diff 把关。
 - 任务说明先写成 UTF-8 文件（放在 scratchpad 目录），脚本会自动附加固定约束：不越界、只写必要测试、不 commit/push、不碰密钥、按 schema 汇报。
 - **一律用后台方式运行**（Bash 的 `run_in_background`），跑完会自动通知。等待期间可以做别的，不要轮询。
+- **每次调用 Codex（`run`、`resume`、`discuss`、`review`）都必须在对话里明确告诉用户用的是什么模型和推理强度**，例如"已派给 Codex：模型 gpt-6-astra，推理强度 max（等级 complex）"。以脚本启动时输出的第一行（"开始｜模型 …｜推理强度 …"）为准，不要凭配置自己推断；模型来自 Codex 配置时照实说明。最终汇报里再写一次。
 - **启动 `run`、`discuss`、`resume` 后，下一步必须立即打开实时查看标签页**（见"实时查看"一节），测试和小任务也不例外。用户要靠它看到 Codex 在做什么，漏开就等于让用户干等。
 - 结果以 JSON 打印到 stdout：`report`（Codex 的结构化报告）、`changes`（脚本实际追踪到的工作目录内改动）、`session_id`、`run_dir`。完整 diff 在 `run_dir/diff.patch`。
 - 多个任务可以并行，但文件范围不能重叠。**Codex 正在改的文件，Claude 不碰。**
 
+## 配置
+配置文件是 JSON，按顺序叠加，后面的覆盖前面的：脚本内置默认值 → 用户配置 `~/.claude/codex-bridge.json`（可用环境变量 `CODEX_BRIDGE_CONFIG` 换路径）→ 项目配置 `<项目目录>/.claude/codex-bridge.json`。`config --init` 生成一份用户配置模板。
+
+| 字段 | 作用 | 默认 |
+|---|---|---|
+| `model` | 各等级没单独写模型时用的模型 | `null`，沿用 Codex 配置 |
+| `levels` | `run` / `review` / `discuss` 三种模式下，`simple` / `normal` / `complex` 三级任务各自的 `{ "model", "effort" }`。`model` 为 `null` 时用顶层 `model`；`effort` 只能是 `low` `medium` `high` `xhigh` `max` `ultra` | 模型都是 `null`；推理强度 run 和 review 为 medium / high / max，discuss 为 high / max / max |
+| `sandbox` | 三种模式各自的沙箱：`read-only` / `workspace-write` / `danger-full-access` | 全部 `null`，沿用 Codex 配置 |
+| `approval` | 审批策略，如 `never` | `null`，沿用 Codex 配置 |
+| `timeout_min` / `stall_min` | 总超时 / 卡死判定（分钟，`stall_min` 为 0 时关闭） | 240 / 20 |
+| `codex_bin` | codex 可执行文件或 `codex.js` 路径（也可用环境变量 `CODEX_BIN`） | 自动查找 |
+| `runs_dir` | 运行记录目录（也可用环境变量 `CODEX_RUNS_DIR`） | `~/.claude/codex-runs` |
+
+- 项目配置只认 `model`、`levels`、`timeout_min`、`stall_min`。`levels` 可以只写要改的那几项，比如只改 `run.complex.model`。沙箱、审批、可执行文件和记录目录只能写在用户配置里，以免克隆来的仓库给自己提权。
+- 用户要改配置时，直接编辑对应的 JSON 文件，改完运行 `config` 确认生效。
+
 ## 实时查看（每次派活都做）
 用后台方式启动 `run` 或 `resume` 之后，立即在用户的终端面板里打开实时进度，让用户能看着 Codex 干活：
 
-- 用 `run_in_terminal` 运行 `node C:\Users\<用户名>\.claude\codex-runs\watch.mjs`，标题写"Codex：<短标题>"。这个启动器由脚本自动生成，路径不含中文，可以满足 `run_in_terminal` 只接受 ASCII 的要求。用户主目录可以从 `run_dir` 推出来。
-- 不加参数时，它会自动跟踪正在运行的任务；同时跑多个任务时，加 `--run <run_id>` 指定要看哪一个。
+- 用 `run_in_terminal` 运行 `node <记录目录>/watch.mjs --run <run_id>`，标题写"Codex：<短标题>"。记录目录默认是 `~/.claude/codex-runs`，在 Windows 上写成 `C:\Users\<用户名>\.claude\codex-runs`，以 `config` 的输出为准。这个启动器由脚本自动生成，插件路径含非 ASCII 字符时也能满足 `run_in_terminal` 只接受 ASCII 的要求。
+- run_id 在启动后后台输出的第一行（"记录目录 …/<run_id>"）里。不加 `--run` 时它会跟踪正在运行的任务，但其他会话可能也在跑任务，所以尽量指定。
 - 打开后把标签页链接 `[Codex：<短标题>](#terminal/<tab_id>)` 发给用户。
 - 任务结束后 watch 会自动退出，标签页保留，供用户回看。不要关闭它。
 - `review` 只在用户要求时才打开实时查看。
 
-## 推理强度
-每次派活都要按任务等级显式指定 `--effort`。不指定时脚本默认用 high。
+## 任务等级与推理强度
+`run`、`resume`、`discuss`、`review` 每次都必须显式给出 `--level`，没有默认值，漏写脚本会直接报错。Claude 只判断任务属于哪一级，具体用哪个模型和推理强度由用户在配置的 `levels` 里决定，运行时会打印"模型 / 等级 → 推理强度"。
 
-| 等级 | 推理强度 | 什么样的任务 |
+| 等级 | `--level` | 什么样的任务 |
 |---|---|---|
-| 简单 | **medium** | 目标和做法都明确，几乎不需要判断：按清单批量改名或替换、套用现成模式补齐同类代码、格式或目录迁移、跑现成脚本整理数据、单文件的小功能 |
-| 常规 | **high** | 大多数执行任务：按规格实现功能、写脚本和工具、原因已经清楚的 bug 修复、常规重构、补测试 |
-| 复杂 | **max** | 跨多个模块的改动；根因不明、需要排查的 bug；对数值或逻辑正确性要求高的代码，比如因子计算、回测、交易和仓位逻辑；性能优化；并发 |
+| 简单 | `simple` | 目标和做法都明确，几乎不需要判断：按清单批量改名或替换、套用现成模式补齐同类代码、格式或目录迁移、跑现成脚本整理数据、单文件的小功能 |
+| 常规 | `normal` | 大多数执行任务：按规格实现功能、写脚本和工具、原因已经清楚的 bug 修复、常规重构、补测试 |
+| 复杂 | `complex` | 跨多个模块的改动；根因不明、需要排查的 bug；对数值或逻辑正确性要求高的代码，比如因子计算、回测、交易和仓位逻辑；性能优化；并发 |
 
 - 拿不准时往高一级选。
-- 审查（`review`）一般用 high；审查高风险代码时用 max。
+- 审查（`review`）一般用 `normal`；审查高风险代码时用 `complex`。
+- 用户点名要某个推理强度（比如"用 ultra 跑"）时，改用 `--effort <强度>` 直接指定，不再按等级换算，模型用顶层 `model`。`--level` 和 `--effort` 只能给一个。
+- 用户点名要某个模型时，加 `--model <模型>`，它覆盖配置里的模型，可以和 `--level` 或 `--effort` 一起用。
+- 续接时模型按新给的等级重新确定，所以返工升级时可能换成另一个模型；配置里哪里都没写模型时，沿用上一轮的模型。
 
 ## 写任务说明
 说得越细，Codex 做得越好。按下面的结构写：
@@ -107,7 +130,7 @@ Codex 偏爱防御性编程，容易写大量多余的校验和测试。任务�
 4. 确认无误后再向用户汇报。
 
 ## 返工与失败
-- 不合格时用 `resume` 返工一次，在返工说明里写清楚哪里不对、要怎么改。原因是任务难度估低了的话，返工时把推理强度升一级（medium → high → max）。
+- 不合格时用 `resume` 返工一次，在返工说明里写清楚哪里不对、要怎么改。原因是任务难度估低了的话，返工时把等级升一级（simple → normal → complex）。其余情况沿用原来的等级。
 - 返工后还不合格，或者 Codex 超时、报错，由 Claude 自己接手完成，并告诉用户原因。
 - 结果状态为 `stalled`（卡死：超过 20 分钟没有任何活动，且没有命令在执行，脚本已自动终止）时，多半是网络或服务的临时问题。用 `resume` 让它从断点继续一次；再卡死就由 Claude 接手。可以用 `--stall <分钟>` 调整阈值，`--stall 0` 关闭检测。总超时默认 240 分钟，用 `--timeout` 调整。
 - 怀疑任务卡住时，先运行 `status` 看"最后活动 X 分钟前"和当前步骤，不要凭感觉判断。正在执行命令（比如跑大计算）时，长时间没有新事件是正常的。`interrupted` 表示调度进程已经不在了（比如会话或应用被关闭），这时 Claude 收不到完成通知，需要手动查看 `status --run <run_id>`，再决定是续接还是重来。
@@ -130,7 +153,7 @@ Codex 偏爱防御性编程，容易写大量多余的校验和测试。任务�
 3. **第 3 轮（可选）**：只有关键分歧还没解决、并且多一轮确实可能改变结论时才做。
 4. **Claude 裁决**：逐条决定接受还是拒绝 Codex 的观点，写明理由，形成最终方案。
 
-- 推理强度默认 max；议题不算特别复杂时用 high。
+- 讨论一般用 `complex`；议题不算特别复杂时用 `normal`。续接下一轮时沿用第 1 轮的等级。
 - 讨论是只读的：Codex 可以读代码、跑只读命令来支撑观点，但不能改文件。脚本发现有文件改动会在 warnings 里报出来，这时要检查并还原。
 - 讨论同样会打开实时查看标签页。
 - 需要用户决定的问题，比如偏好、业务取舍、风险承受度，不要替用户拍板，把选项和 Claude 的推荐一起交给用户。
@@ -163,4 +186,4 @@ Codex 偏爱防御性编程，容易写大量多余的校验和测试。任务�
 审查结果同样要甄别：Codex 指出的问题逐条核实，确实存在的才修；误报直接忽略，在汇报中简要说明。
 
 ## 向用户汇报
-说明哪些部分是 Codex 做的（附 run_id）、Claude 审查了什么、怎么验证的、是否请 Codex 做了审查及结果，以及遗留问题。
+说明哪些部分是 Codex 做的（附 run_id，以及每次调用的模型和推理强度，以结果里的 `model_shown` 和 `effort` 为准）、Claude 审查了什么、怎么验证的、是否请 Codex 做了审查及结果，以及遗留问题。

@@ -1,21 +1,28 @@
 #!/usr/bin/env node
 // codex-run.mjs — Claude Code 调度 Codex 的唯一入口。
 //
-//   node codex-run.mjs run    --cwd <目录> --brief <文件|-> [--effort medium|high|max] [--title <标题>]
+//   node codex-run.mjs run    --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
 //                             [--add-dir <目录>]... [--timeout <分钟>] [--stall <分钟>] [--no-snapshot]
-//   node codex-run.mjs resume --run <run_id|last> --brief <文件|-> [--effort medium|high|max] [--timeout <分钟>] [--stall <分钟>]
-//   node codex-run.mjs discuss --cwd <目录> --brief <文件|-> [--effort medium|high|max] [--title <标题>]
+//   node codex-run.mjs resume --run <run_id|last> --brief <文件|-> (--level <等级> | --effort <强度>) [--model <模型>] [--timeout <分钟>] [--stall <分钟>]
+//   node codex-run.mjs discuss --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
 //                             方案讨论，只读；后续轮次用 resume --run <讨论的 run_id> 续接
 //   node codex-run.mjs review --cwd <目录> [--uncommitted | --base <分支> | --commit <sha>]
-//                             [--brief <文件|->] [--effort medium|high|max] [--title <标题>]
+//                             [--brief <文件|->] (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
 //   node codex-run.mjs status [--run <run_id|last>] [--limit <n>]
 //   node codex-run.mjs watch  [--run <run_id|last>]
+//   node codex-run.mjs config [--cwd <目录>] [--init]
 //
 // watch 把 events.jsonl 实时翻译成可读进度；不给 --run 时跟踪正在运行的任务（没有就等新任务出现）。
-// 每次运行还会写一个 ~/.claude/codex-runs/watch.mjs 启动器，路径不含中文，方便在终端面板里直接运行。
+// 每次运行还会在记录目录下写一个 watch.mjs 启动器，方便在终端面板里直接运行（插件路径可能含非 ASCII 字符）。
 //
-// 每次运行在 ~/.claude/codex-runs/<run_id>/ 留档：brief.md、events.jsonl、stderr.log、
+// 每次运行在 <记录目录>/<run_id>/ 留档：brief.md、events.jsonl、stderr.log、
 // last-message.txt、diff.patch、meta.json、result.json。最终结果以 JSON 打印到 stdout。
+//
+// --level 是任务复杂度（simple / normal / complex），按配置换算成模型和推理强度；--effort 直接指定推理强度。
+// 两者必须给一个，没有隐式默认。--model 临时覆盖模型。
+//
+// 配置：用户级 ~/.claude/codex-bridge.json（可用环境变量 CODEX_BRIDGE_CONFIG 改路径），
+// 项目级 <工作目录>/.claude/codex-bridge.json。字段见 DEFAULT_CONFIG，config --init 生成模板。
 
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -26,14 +33,101 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA = path.join(HERE, '..', 'schemas', 'report.schema.json');
 const DISCUSS_SCHEMA = path.join(HERE, '..', 'schemas', 'discuss.schema.json');
-const RUNS_ROOT = process.env.CODEX_RUNS_DIR || path.join(os.homedir(), '.claude', 'codex-runs');
 
-const MODEL = 'gpt-6-astra';
-const EFFORTS = ['medium', 'high', 'max'];
-const DEFAULT_EFFORT = 'high';
-const DEFAULT_TIMEOUT_MIN = 240;
-// 超过这么久没有任何事件、且没有命令在执行，判定为卡死。命令执行中不算（大计算本来就可能很久）。
-const DEFAULT_STALL_MIN = 20;
+// ---------- 配置 ----------
+
+const USER_CONFIG = process.env.CODEX_BRIDGE_CONFIG || path.join(os.homedir(), '.claude', 'codex-bridge.json');
+const PROJECT_CONFIG = path.join('.claude', 'codex-bridge.json');
+
+const DEFAULT_CONFIG = {
+  // 各等级没写模型时用的模型；null 表示沿用 Codex 自己的配置（~/.codex/config.toml）
+  model: null,
+  // 各模式下，简单 / 常规 / 复杂三级任务分别用的模型和推理强度（Codex 的 model_reasoning_effort）。
+  // 某一级的 model 为 null 时用上面的 model。
+  levels: {
+    run: {
+      simple: { model: null, effort: 'medium' },
+      normal: { model: null, effort: 'high' },
+      complex: { model: null, effort: 'max' },
+    },
+    review: {
+      simple: { model: null, effort: 'medium' },
+      normal: { model: null, effort: 'high' },
+      complex: { model: null, effort: 'max' },
+    },
+    discuss: {
+      simple: { model: null, effort: 'high' },
+      normal: { model: null, effort: 'max' },
+      complex: { model: null, effort: 'max' },
+    },
+  },
+  // 各模式的沙箱：read-only / workspace-write / danger-full-access；null 沿用 Codex 配置
+  sandbox: { run: null, discuss: null, review: null },
+  // 审批策略，如 never / on-request；null 沿用 Codex 配置
+  approval: null,
+  timeout_min: 240,
+  // 超过这么久没有任何事件、且没有命令在执行，判定为卡死；0 关闭。命令执行中不算（大计算本来就可能很久）。
+  stall_min: 20,
+  // codex 可执行文件或 codex.js 的路径；null 自动查找
+  codex_bin: null,
+  // 运行记录目录；null 为 ~/.claude/codex-runs
+  runs_dir: null,
+};
+
+// 项目配置来自仓库本身，不允许它改可执行文件、记录目录、沙箱和审批，以免克隆来的仓库给自己提权。
+const PROJECT_KEYS = ['model', 'levels', 'timeout_min', 'stall_min'];
+
+const LEVELS = ['simple', 'normal', 'complex'];
+const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+
+function readJson(file) {
+  if (!fs.existsSync(file)) return null;
+  try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')); }
+  catch (e) { die(`配置文件不是合法 JSON：${file}（${e.message}）`); }
+}
+
+function mergeConfig(base, extra, keys = Object.keys(DEFAULT_CONFIG)) {
+  const out = { ...base };
+  for (const k of keys) {
+    if (!extra || !(k in extra)) continue;
+    const v = extra[k];
+    if (k === 'levels' && v && typeof v === 'object') {
+      // 按模式、等级、字段逐层合并，只改某一级的推理强度也行。
+      out.levels = { ...base.levels };
+      for (const [mode, levels] of Object.entries(v)) {
+        out.levels[mode] = { ...base.levels[mode] };
+        for (const [lv, entry] of Object.entries(levels || {})) out.levels[mode][lv] = { ...base.levels[mode]?.[lv], ...entry };
+      }
+    } else {
+      out[k] = v && typeof v === 'object' && !Array.isArray(v) ? { ...base[k], ...v } : v;
+    }
+  }
+  return out;
+}
+
+function loadConfig(cwd) {
+  const sources = [];
+  let cfg = DEFAULT_CONFIG;
+  const user = readJson(USER_CONFIG);
+  if (user) { cfg = mergeConfig(cfg, user); sources.push(USER_CONFIG); }
+  if (cwd) {
+    const file = path.join(cwd, PROJECT_CONFIG);
+    const project = readJson(file);
+    if (project) {
+      const ignored = Object.keys(project).filter((k) => !PROJECT_KEYS.includes(k));
+      if (ignored.length) process.stderr.write(`codex-run: 项目配置里的 ${ignored.join('、')} 只能写在用户配置中，已忽略\n`);
+      cfg = mergeConfig(cfg, project, PROJECT_KEYS);
+      sources.push(file);
+    }
+  }
+  if (process.env.CODEX_BIN) cfg = { ...cfg, codex_bin: process.env.CODEX_BIN };
+  if (process.env.CODEX_RUNS_DIR) cfg = { ...cfg, runs_dir: process.env.CODEX_RUNS_DIR };
+  return { ...cfg, sources };
+}
+
+// 记录目录和可执行文件只认用户配置，status / watch 不知道工作目录时也能用。
+const CONFIG = loadConfig(null);
+const RUNS_ROOT = CONFIG.runs_dir ? path.resolve(CONFIG.runs_dir) : path.join(os.homedir(), '.claude', 'codex-runs');
 
 // 改动追踪：用放在记录目录里的影子 git 仓库给工作目录拍快照，不碰项目自己的 .git。
 const LARGE_FILE_BYTES = 5 * 1024 * 1024; // 超过的文件只比较大小和修改时间
@@ -83,7 +177,7 @@ function die(msg) {
 function parseArgs(argv) {
   const [cmd, ...rest] = argv;
   const opts = { 'add-dir': [] };
-  const flags = new Set(['uncommitted', 'no-snapshot']);
+  const flags = new Set(['uncommitted', 'no-snapshot', 'init']);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (!a.startsWith('--')) die(`无法识别的参数：${a}`);
@@ -102,10 +196,33 @@ function need(o, key) {
   return o[key];
 }
 
-function pickEffort(o, fallback = DEFAULT_EFFORT) {
-  const e = o.effort || fallback;
-  if (!EFFORTS.includes(e)) die(`--effort 只能是 ${EFFORTS.join(' / ')}`);
-  return e;
+// 返回 { level, model, effort }：level 是任务等级（直接给 --effort 时为 null），model 为 null 时沿用 Codex 配置。
+// 模型的优先级：--model > 该等级的 model > 顶层 model > fallbackModel（续接时为上一轮的模型）。
+function pickProfile(cfg, o, mode, fallbackModel = null) {
+  if (o.level && o.effort) die('--level 和 --effort 只能给一个');
+  let level = null;
+  let entry = {};
+  if (o.effort) {
+    if (!CODEX_EFFORTS.includes(o.effort)) die(`--effort 只能是 ${CODEX_EFFORTS.join(' / ')}`);
+    entry = { effort: o.effort };
+  } else {
+    if (!o.level) die(`缺少 --level（${LEVELS.join(' / ')}）或 --effort（${CODEX_EFFORTS.join(' / ')}）`);
+    if (!LEVELS.includes(o.level)) die(`--level 只能是 ${LEVELS.join(' / ')}`);
+    level = o.level;
+    entry = cfg.levels[mode]?.[level] || {};
+    if (!CODEX_EFFORTS.includes(entry.effort)) die(`配置 levels.${mode}.${level}.effort 的值 ${JSON.stringify(entry.effort)} 无效，只能是 ${CODEX_EFFORTS.join(' / ')}`);
+  }
+  return { level, model: o.model || entry.model || cfg.model || fallbackModel, effort: entry.effort };
+}
+
+// 模型、推理强度、沙箱、审批这几项 exec / resume / review 都接受 -m 和 -c。
+function codexOptions(cfg, { model, effort, mode }) {
+  const args = [];
+  if (model) args.push('-m', model);
+  args.push('-c', `model_reasoning_effort="${effort}"`);
+  if (cfg.sandbox[mode]) args.push('-c', `sandbox_mode="${cfg.sandbox[mode]}"`);
+  if (cfg.approval) args.push('-c', `approval_policy="${cfg.approval}"`);
+  return args;
 }
 
 function resolveDir(p) {
@@ -125,12 +242,29 @@ function readBrief(o, required = true) {
 }
 
 function codexCommand() {
-  const bin = process.env.CODEX_BIN;
+  const bin = CONFIG.codex_bin;
   if (bin) return /\.[cm]?js$/i.test(bin) ? { file: process.execPath, pre: [bin] } : { file: bin, pre: [] };
-  // npm 全局安装的 codex 在 Windows 上是 .ps1/.cmd 包装，直接用 node 跑入口脚本，避开 shell 引号问题。
-  const js = path.join(process.env.APPDATA || '', 'npm', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
-  if (fs.existsSync(js)) return { file: process.execPath, pre: [js] };
-  return { file: 'codex', pre: [] };
+  if (process.platform !== 'win32') return { file: 'codex', pre: [] };
+  // npm 全局安装的 codex 在 Windows 上是 .ps1/.cmd 包装，spawn 不经 shell 找不到它；
+  // 直接用 node 跑入口脚本，也避开 shell 引号问题。
+  const entry = (root) => path.join(root, '@openai', 'codex', 'bin', 'codex.js');
+  let js = entry(path.join(process.env.APPDATA || '', 'npm', 'node_modules'));
+  if (!fs.existsSync(js)) {
+    // 改过 npm prefix 或用 nvm 时不在默认位置，问 npm 要全局目录。
+    const npm = spawnSync('npm', ['root', '-g'], { encoding: 'utf8', shell: true, windowsHide: true });
+    js = npm.status === 0 && npm.stdout.trim() ? entry(npm.stdout.trim()) : '';
+  }
+  if (js && fs.existsSync(js)) return { file: process.execPath, pre: [js] };
+  return { file: 'codex.exe', pre: [] };
+}
+
+// 没配置模型时从 Codex 的 config.toml 读出实际模型名，只用于显示，让用户知道用的是哪个模型。
+function codexConfigModel() {
+  const file = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'config.toml');
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return null; }
+  const top = text.split(/^\s*\[/m)[0]; // 只看第一个 [表] 之前的顶层键
+  return /^\s*model\s*=\s*["']([^"']+)["']/m.exec(top)?.[1] || null;
 }
 
 function writeWatchLauncher() {
@@ -175,7 +309,8 @@ function pidAlive(pid) {
 
 function killTree(pid) {
   if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true });
-  else try { process.kill(pid, 'SIGTERM'); } catch { /* 已退出 */ }
+  // codex 以独立进程组启动，负 pid 连同它起的子进程一起结束。
+  else try { process.kill(-pid, 'SIGTERM'); } catch { try { process.kill(pid, 'SIGTERM'); } catch { /* 已退出 */ } }
 }
 
 // ---------- 改动追踪 ----------
@@ -246,7 +381,9 @@ function runCodex({ args, cwd, prompt, runDir, timeoutMin, stallMin, onSession }
     const out = { code: null, sessionId: null, usage: null, errors: [], warnings: [], timedOut: false, stalled: false, commands: 0 };
     const runningCommands = new Set();
     let lastEventAt = Date.now();
-    const child = spawn(file, [...pre, ...args], { cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(file, [...pre, ...args], {
+      cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32',
+    });
 
     const onSignal = () => { killTree(child.pid); process.exit(130); };
     process.once('SIGINT', onSignal);
@@ -305,16 +442,20 @@ function runCodex({ args, cwd, prompt, runDir, timeoutMin, stallMin, onSession }
 }
 
 async function execute(ctx) {
-  const { mode, kind, id, dir, cwd, effort, args, prompt, title, parent, opts, expectReport } = ctx;
+  const { cfg, model, mode, kind, id, dir, cwd, level, effort, args, prompt, title, parent, opts, expectReport } = ctx;
   const started = Date.now();
+  const sandbox = cfg.sandbox[kind === 'exec' ? 'run' : kind] || null;
+  // model 为 null 时实际模型由 Codex 配置决定，model_shown 是给人看的实际模型名。
+  const modelShown = model || `${codexConfigModel() || '未知'}（来自 Codex 配置）`;
   const meta = {
-    id, mode, kind, title: title || null, cwd, model: MODEL, effort, parent: parent || null,
+    id, mode, kind, title: title || null, cwd, model, model_shown: modelShown, level, effort, sandbox,
+    parent: parent || null,
     started_at: new Date(started).toISOString(), status: 'running', pid: process.pid, session_id: ctx.sessionId || null,
   };
   const writeMeta = () => fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
   writeMeta();
   fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
-  process.stderr.write(`codex-run: ${mode} 开始（${MODEL} / ${effort}），记录目录 ${dir}\n`);
+  process.stderr.write(`codex-run: ${mode} 开始｜模型 ${modelShown}｜推理强度 ${effort}${level ? `（等级 ${level}）` : '（直接指定）'}｜记录目录 ${dir}\n`);
 
   const warnings = [];
   let tracker = null;
@@ -326,8 +467,8 @@ async function execute(ctx) {
 
   const r = await runCodex({
     args, cwd, prompt, runDir: dir,
-    timeoutMin: Number(opts.timeout) || DEFAULT_TIMEOUT_MIN,
-    stallMin: opts.stall === undefined ? DEFAULT_STALL_MIN : Number(opts.stall),
+    timeoutMin: Number(opts.timeout) || cfg.timeout_min,
+    stallMin: Number(opts.stall ?? cfg.stall_min),
     onSession: (sid) => { meta.session_id = sid; writeMeta(); },
   });
 
@@ -362,8 +503,11 @@ async function execute(ctx) {
     status: meta.status,
     title: meta.title,
     cwd,
-    model: MODEL,
+    model,
+    model_shown: modelShown,
+    level,
     effort,
+    sandbox,
     parent: meta.parent,
     session_id: meta.session_id,
     exit_code: r.code,
@@ -389,30 +533,31 @@ async function execute(ctx) {
 
 async function cmdRun(o) {
   const cwd = resolveDir(need(o, 'cwd'));
+  const cfg = loadConfig(cwd);
   const addDirs = o['add-dir'].map(resolveDir);
   const brief = readBrief(o);
-  const effort = pickEffort(o);
+  const { level, model, effort } = pickProfile(cfg, o, 'run');
   const { id, dir } = newRunDir();
   const args = [
-    'exec', '--json', '--skip-git-repo-check', '-m', MODEL, '-c', `model_reasoning_effort="${effort}"`,
+    'exec', '--json', '--skip-git-repo-check', ...codexOptions(cfg, { model, effort, mode: 'run' }),
     '-C', cwd, '--output-schema', SCHEMA, '-o', path.join(dir, 'last-message.txt'),
   ];
   for (const d of addDirs) args.push('--add-dir', d);
   args.push('-');
-  await execute({ mode: 'run', kind: 'exec', id, dir, cwd, effort, args, prompt: `${brief}\n\n${FOOTER(cwd, addDirs)}\n`, title: o.title, opts: o, expectReport: true });
+  await execute({ cfg, model, mode: 'run', kind: 'exec', id, dir, cwd, level, effort, args, prompt: `${brief}\n\n${FOOTER(cwd, addDirs)}\n`, title: o.title, opts: o, expectReport: true });
 }
 
 async function cmdDiscuss(o) {
   const cwd = resolveDir(need(o, 'cwd'));
+  const cfg = loadConfig(cwd);
   const brief = readBrief(o);
-  // 讨论只在复杂、不确定的议题上发起，默认给足推理强度。
-  const effort = pickEffort(o, 'max');
+  const { level, model, effort } = pickProfile(cfg, o, 'discuss');
   const { id, dir } = newRunDir();
   const args = [
-    'exec', '--json', '--skip-git-repo-check', '-m', MODEL, '-c', `model_reasoning_effort="${effort}"`,
+    'exec', '--json', '--skip-git-repo-check', ...codexOptions(cfg, { model, effort, mode: 'discuss' }),
     '-C', cwd, '--output-schema', DISCUSS_SCHEMA, '-o', path.join(dir, 'last-message.txt'), '-',
   ];
-  await execute({ mode: 'discuss', kind: 'discuss', id, dir, cwd, effort, args, prompt: `${brief}\n\n${DISCUSS_FOOTER(cwd)}\n`, title: o.title, opts: o, expectReport: true });
+  await execute({ cfg, model, mode: 'discuss', kind: 'discuss', id, dir, cwd, level, effort, args, prompt: `${brief}\n\n${DISCUSS_FOOTER(cwd)}\n`, title: o.title, opts: o, expectReport: true });
 }
 
 async function cmdResume(o) {
@@ -421,15 +566,17 @@ async function cmdResume(o) {
   const kind = parent.meta.kind || (parent.meta.mode === 'review' ? 'review' : 'exec');
   if (kind === 'review') die('审查会话不支持续接，请用 run 发起修复任务');
   const discuss = kind === 'discuss';
+  const cfg = loadConfig(parent.meta.cwd);
   const brief = readBrief(o);
-  const effort = pickEffort(o, discuss ? parent.meta.effort : DEFAULT_EFFORT);
+  // 什么模型都没配置时沿用上一轮记录的模型，同一会话不中途换模型。
+  const { level, model, effort } = pickProfile(cfg, o, discuss ? 'discuss' : 'run', parent.meta.model);
   const { id, dir } = newRunDir();
   const args = [
-    'exec', 'resume', '--json', '--skip-git-repo-check', '-m', MODEL, '-c', `model_reasoning_effort="${effort}"`,
+    'exec', 'resume', '--json', '--skip-git-repo-check', ...codexOptions(cfg, { model, effort, mode: discuss ? 'discuss' : 'run' }),
     '--output-schema', discuss ? DISCUSS_SCHEMA : SCHEMA, '-o', path.join(dir, 'last-message.txt'), parent.meta.session_id, '-',
   ];
   await execute({
-    mode: 'resume', kind, id, dir, cwd: parent.meta.cwd, effort, args,
+    cfg, model, mode: 'resume', kind, id, dir, cwd: parent.meta.cwd, level, effort, args,
     prompt: `${brief}\n\n${discuss ? DISCUSS_RESUME_FOOTER : RESUME_FOOTER}\n`,
     title: o.title || parent.meta.title, parent: parent.id, sessionId: parent.meta.session_id, opts: o, expectReport: true,
   });
@@ -437,7 +584,9 @@ async function cmdResume(o) {
 
 async function cmdReview(o) {
   const cwd = resolveDir(need(o, 'cwd'));
-  const effort = pickEffort(o);
+  const cfg = loadConfig(cwd);
+  const { level, model, effort } = pickProfile(cfg, o, 'review');
+  const codexOpts = codexOptions(cfg, { model, effort, mode: 'review' });
   const git = isGitRepo(cwd);
   const brief = readBrief(o, !git);
   const { id, dir } = newRunDir();
@@ -446,7 +595,7 @@ async function cmdReview(o) {
   let prompt;
   if (git && !brief) {
     // codex exec review 的 --uncommitted/--base/--commit 不能和自定义提示同时用，没有审查重点时走原生审查。
-    args = ['exec', 'review', '--json', '-m', MODEL, '-c', `model_reasoning_effort="${effort}"`, '-o', last];
+    args = ['exec', 'review', '--json', ...codexOpts, '-o', last];
     if (o.base) args.push('--base', o.base);
     else if (o.commit) args.push('--commit', o.commit);
     else args.push('--uncommitted');
@@ -457,14 +606,33 @@ async function cmdReview(o) {
     const scope = o.base ? `当前分支相对 ${o.base} 的改动（git diff ${o.base}...HEAD）`
       : o.commit ? `提交 ${o.commit} 引入的改动（git show ${o.commit}）`
       : '所有未提交的改动，包括已暂存、未暂存和未跟踪的文件（git status、git diff HEAD）';
-    args = ['exec', '--json', '--skip-git-repo-check', '-m', MODEL, '-c', `model_reasoning_effort="${effort}"`, '-C', cwd, '-o', last, '-'];
+    args = ['exec', '--json', '--skip-git-repo-check', ...codexOpts, '-C', cwd, '-o', last, '-'];
     prompt = `请审查 ${cwd} 中${scope}。\n\n${brief}\n\n${REVIEW_FOOTER}\n`;
   } else {
     // 非 git 目录没有"改动"可言，审查范围由任务说明指定。
-    args = ['exec', '--json', '--skip-git-repo-check', '-m', MODEL, '-c', `model_reasoning_effort="${effort}"`, '-C', cwd, '-o', last, '-'];
+    args = ['exec', '--json', '--skip-git-repo-check', ...codexOpts, '-C', cwd, '-o', last, '-'];
     prompt = `请审查以下内容（工作目录：${cwd}）：\n\n${brief}\n\n${REVIEW_FOOTER}\n`;
   }
-  await execute({ mode: 'review', kind: 'review', id, dir, cwd, effort, args, prompt, title: o.title, opts: o, expectReport: false });
+  await execute({ cfg, model, mode: 'review', kind: 'review', id, dir, cwd, level, effort, args, prompt, title: o.title, opts: o, expectReport: false });
+}
+
+function cmdConfig(o) {
+  if (o.init) {
+    if (fs.existsSync(USER_CONFIG)) die(`配置文件已存在：${USER_CONFIG}`);
+    fs.mkdirSync(path.dirname(USER_CONFIG), { recursive: true });
+    fs.writeFileSync(USER_CONFIG, JSON.stringify(DEFAULT_CONFIG, null, 2) + '\n');
+    process.stdout.write(`已生成配置文件：${USER_CONFIG}\n`);
+    return;
+  }
+  const { sources, ...effective } = loadConfig(o.cwd ? resolveDir(o.cwd) : null);
+  process.stdout.write(JSON.stringify({
+    user_config: USER_CONFIG,
+    loaded_from: sources,
+    effective,
+    runs_dir: RUNS_ROOT,
+    watch_launcher: path.join(RUNS_ROOT, 'watch.mjs'),
+    codex: codexCommand(),
+  }, null, 2) + '\n');
 }
 
 // 读 events.jsonl 末尾，给出最后活动时间和当前步骤，用来判断运行中的任务是活着还是卡住。
@@ -513,7 +681,7 @@ function cmdStatus(o) {
     if (m.status === 'running' && !pidAlive(m.pid)) m.status = 'interrupted';
     const end = m.ended_at ? new Date(m.ended_at) : new Date();
     const mins = ((end - new Date(m.started_at)) / 60000).toFixed(1);
-    let row = `${rid}  ${m.mode.padEnd(6)}  ${m.status.padEnd(11)}  ${m.effort.padEnd(5)}  ${mins.padStart(6)}min  ${m.title || ''}  @ ${m.cwd}`;
+    let row = `${rid}  ${m.mode.padEnd(6)}  ${m.status.padEnd(11)}  ${m.model_shown || m.model || '-'}  ${(m.level ? `${m.level}/${m.effort}` : m.effort).padEnd(14)}  ${mins.padStart(6)}min  ${m.title || ''}  @ ${m.cwd}`;
     if (m.status === 'running') {
       const a = describeActivity(dir);
       row += `\n    └ 最后活动 ${a.idle_min ?? '-'} 分钟前｜${a.step}`;
@@ -533,7 +701,7 @@ const oneLine = (s) => String(s ?? '').replace(/\r/g, '').split('\n').map((x) =>
 
 function plainCommand(cmd) {
   // Codex 在 Windows 上把命令包成 "...powershell.exe" -Command "<实际命令>"，去掉外壳便于阅读。
-  const m = /^"?[^"]*?(?:powershell|pwsh|bash|cmd)(?:\.exe)?"?\s+(?:-Command|-c|\/c)\s+([\s\S]*)$/i.exec(cmd);
+  const m = /^"?[^"]*?(?:powershell|pwsh|bash|cmd)(?:\.exe)?"?\s+(?:-Command|-l?c|\/c)\s+([\s\S]*)$/i.exec(cmd);
   let inner = m ? m[1] : cmd;
   if (/^(["'])[\s\S]*\1$/.test(inner)) inner = inner.slice(1, -1);
   return inner;
@@ -562,7 +730,7 @@ async function cmdWatch(o) {
   const rel = (p) => { const r = path.relative(cwd, p); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r : p; };
   let live = false;
   const out = (sym, text) => process.stdout.write(`${live ? new Date().toTimeString().slice(0, 8) : '        '} ${sym} ${text}\n`);
-  process.stdout.write(`\nCodex ${meta.mode}｜${meta.title || id}｜${meta.model} / ${meta.effort}\n工作目录 ${cwd}\n记录目录 ${dir}\n\n`);
+  process.stdout.write(`\nCodex ${meta.mode}｜${meta.title || id}｜模型 ${meta.model_shown || meta.model}｜推理强度 ${meta.effort}${meta.level ? `（等级 ${meta.level}）` : ''}\n工作目录 ${cwd}\n记录目录 ${dir}\n\n`);
 
   const show = (line) => {
     let ev;
@@ -640,6 +808,6 @@ async function cmdWatch(o) {
 }
 
 const { cmd, opts } = parseArgs(process.argv.slice(2));
-const commands = { run: cmdRun, discuss: cmdDiscuss, resume: cmdResume, review: cmdReview, status: cmdStatus, watch: cmdWatch };
-if (!commands[cmd]) die('用法：codex-run.mjs <run|discuss|resume|review|status|watch> [选项]，详见文件头部注释');
+const commands = { run: cmdRun, discuss: cmdDiscuss, resume: cmdResume, review: cmdReview, status: cmdStatus, watch: cmdWatch, config: cmdConfig };
+if (!commands[cmd]) die('用法：codex-run.mjs <run|discuss|resume|review|status|watch|config> [选项]，详见文件头部注释');
 await commands[cmd](opts);

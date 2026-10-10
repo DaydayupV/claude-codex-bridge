@@ -1,6 +1,6 @@
 ---
 description: 让 Codex 对代码改动做一次独立审查
-argument-hint: [--base <分支> | --commit <sha>] [审查重点]
+argument-hint: [--base <分支> | --commit <sha>] [--level simple|normal|complex | --effort <推理强度>] [--model <模型>] [审查重点]
 ---
 
 用户要求让 Codex 审查代码。参数：
@@ -11,5 +11,5 @@ $ARGUMENTS
 
 1. 确定工作目录和审查对象：默认审查未提交的改动（`--uncommitted`）；参数里给了 `--base` 或 `--commit` 就照用。目录不是 git 仓库时，把要审查的文件和关注点写进审查说明。
 2. **总是写一份审查说明**，通过 `--brief` 传入：写明本次改动的意图、风险点和参数里给的审查重点。只有带审查说明时，审查结果才是中文，并且遵守"只审查不改动、说人话"的要求；不带的话会走 Codex 原生审查，输出是英文。
-3. 用 `codex-run.mjs review` 在后台运行。
+3. 用 `codex-run.mjs review` 在后台运行，并在对话里告诉用户这次用的模型和推理强度（以脚本启动时输出的第一行为准）。用户写了 `--level`、`--effort` 或 `--model` 就照用，否则一般用 `--level normal`，高风险代码用 `--level complex`。
 4. 拿到结果后逐条核实 Codex 指出的问题：确实存在的列出来，并说明打算怎么修；误报说明为什么不成立。修复前先问用户是否要修，除非用户已经说过要修。
