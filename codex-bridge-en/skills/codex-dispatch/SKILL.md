@@ -136,6 +136,24 @@ Anything that needs special mention in the report.
 
 Codex leans toward defensive coding and tends to write lots of unneeded checks and tests. Say "only write the tests that are needed, don't code defensively" in the brief (the script already appends it; repeat it when the task invites overdoing it).
 
+## Research and analysis tasks
+Research tasks are work whose conclusions rest on experiments and data, such as strategy and factor research, data analysis, comparison experiments and performance investigations. The risk here isn't buggy code; it's conclusions that go beyond the evidence.
+
+### Checklist for research briefs
+When handing research to Codex, the brief must cover the items below on top of the general structure above. If an item doesn't apply, say so and why instead of leaving it out. Questions and hypotheses already settled in a discussion go straight in; don't discuss them again.
+- **Questions and hypotheses**: the questions to answer, and each hypothesis with the criteria for judging it. Fix the criteria in advance; don't change them after seeing results.
+- **Controls**: which controls and baselines are needed, and what each one answers.
+- **Robustness**: how to check that a result isn't a fluke of one parameter point or one period, for example parameter neighborhoods, splitting time periods, different starting points.
+- **Confounders**: list what could distort the conclusions, and require each to be ruled out or explained as not applicable. Common ones: capital or size path (changing capital, round-lot limits), sample exposure (choosing after seeing results), multiple testing, survivorship bias, changes in how data is defined.
+- **Statistics**: how to judge whether a difference is significant, and how to correct for comparing many groups.
+- **Deliverables**: the evidence behind each conclusion (files, numbers, a way to recompute it), and anything that couldn't be verified.
+
+### Evidence review before conclusions are recorded
+Before research conclusions go into long-term records, reports or docs, or are handed to the user as settled, whether Claude or Codex did the research, start an evidence review with `discuss` (`--level complex`, in a new session, not the one that did the research):
+- The topic brief lists each conclusion with where its evidence is and the key numbers.
+- Ask Codex to judge each one: is the evidence enough for this conclusion, does it overstate, are there uncontrolled confounders, does it hold up statistically.
+- Claude rules on each point as in discussion mode and corrects the conclusions before recording them. If a conclusion already recorded is overturned, correct it with an appended revision rather than editing the original.
+
 ## Checking the result (every time)
 1. Look at `status` and `report.status` first. If it isn't `completed`, read `open_issues` first.
 2. Read `run_dir/diff.patch` and compare it with `changes.files`:
@@ -193,6 +211,7 @@ Do it directly when the user asks. Otherwise judge by the task:
 - Complex core features Claude wrote itself: an independent check by another model before delivering
 - High-risk code: money and billing calculations, data deletion and migration, concurrency, authentication and security, irreversible operations
 - Large changes (roughly over 300 lines or 5+ files), or a fix for a bug whose root cause was unclear
+- Research conclusions before they're recorded or reported: an evidence review with `discuss`, see "Evidence review before conclusions are recorded"
 - High-risk changes delivered by Codex: start a **new session** with `review`; don't have it review its own work in the original session
 
 **Not worth reviewing**
