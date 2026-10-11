@@ -809,12 +809,25 @@ function verboseRenderer(cwd, rel) {
 // 简洁模式（默认）：只显示 Codex 说的话、执行的命令、改动的文件、计划和最终结果，失败的命令才显示输出。
 function conciseRenderer(cwd, rel) {
   const width = () => Math.max(40, (process.stdout.columns || 100) - 1);
-  const write = (s = '') => process.stdout.write(`${s}\n`);
+  // 实时跟踪时，折叠行留在最后一行原地刷新（不换行），写别的内容前先擦掉。
+  let foldLineShown = false;
+  const clearFoldLine = () => {
+    if (foldLineShown) process.stdout.write('\r\x1b[2K');
+    foldLineShown = false;
+  };
+  const write = (s = '') => { clearFoldLine(); process.stdout.write(`${s}\n`); };
   let lastKind = null; // 连续的命令或文件改动挤在一起，换类型时空一行
   // 连续的命令只显示前几条，其余折叠成一行；折叠里的命令失败了照样显示。
   const MAX_COMMANDS = 3;
   let shownCommands = 0;
   const foldedCommands = new Map(); // item id → 命令文字
+  let latestFolded = '';
+  const drawFoldLine = () => {
+    if (!live || !process.stdout.isTTY || !foldedCommands.size) return;
+    clearFoldLine();
+    process.stdout.write(C.dim(`  ${fitWidth(M.watchFoldedLive(foldedCommands.size, latestFolded), width() - 3)}`));
+    foldLineShown = true;
+  };
   const flushFolded = () => {
     if (foldedCommands.size) write(C.dim(`  ${M.watchFoldedCommands(foldedCommands.size)}`));
     foldedCommands.clear();
@@ -845,7 +858,7 @@ function conciseRenderer(cwd, rel) {
       block('command');
       const text = oneLine(plainCommand(it.command));
       if (shownCommands < MAX_COMMANDS) { write(commandLine(text)); shownCommands++; }
-      else foldedCommands.set(it.id, text);
+      else { foldedCommands.set(it.id, text); latestFolded = text; drawFoldLine(); }
     } else if (ev.type === 'item.completed') {
       if (it.type === 'agent_message') {
         const t = it.text.trim();
@@ -857,6 +870,7 @@ function conciseRenderer(cwd, rel) {
         const lines = String(it.aggregated_output || '').replace(/\r/g, '').split('\n').map((x) => x.trim()).filter(Boolean);
         if (foldedCommands.has(it.id)) { write(commandLine(foldedCommands.get(it.id))); foldedCommands.delete(it.id); }
         write(C.red(`    ${fitWidth(M.watchExit(it.exit_code, lines.length ? lines.slice(-2).join(' ⏎ ') : ''), width() - 4)}`));
+        drawFoldLine();
       } else if (it.type === 'file_change') {
         for (const c of it.changes || []) {
           const line = `  ✎ ${M.fileKinds[c.kind] || c.kind} ${fitWidth(rel(c.path), width() - 10)}`;
@@ -903,7 +917,7 @@ function conciseRenderer(cwd, rel) {
     }
     for (const e of r.errors || []) write(C.red(`✗ ${fitWidth(oneLine(e), width() - 2)}`));
   };
-  return { show, finish, goLive: () => { live = true; } };
+  return { show, finish, goLive: () => { live = true; drawFoldLine(); } };
 }
 
 async function cmdWatch(o) {

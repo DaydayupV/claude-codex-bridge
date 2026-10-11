@@ -104,6 +104,7 @@ const zh = {
   watchMoreLines: (n) => `（还有 ${n} 行，加 --verbose 看完整内容）`,
   watchPlan: '计划',
   watchFoldedCommands: (n) => `… 另有 ${n} 条命令（加 --verbose 查看）`,
+  watchFoldedLive: (n, cmd) => `… 另有 ${n} 条命令，最新：$ ${cmd}`,
   watchOpenIssues: '遗留问题',
 };
 
@@ -211,6 +212,7 @@ const en = {
   watchMoreLines: (n) => `(${n} more lines; add --verbose to see everything)`,
   watchPlan: 'Plan',
   watchFoldedCommands: (n) => `… ${n} more commands (add --verbose to see them)`,
+  watchFoldedLive: (n, cmd) => `… ${n} more commands, latest: $ ${cmd}`,
   watchOpenIssues: 'Open issues',
 };
 
