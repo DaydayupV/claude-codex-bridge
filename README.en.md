@@ -25,7 +25,7 @@ Every time Claude calls Codex, it tells you in the chat which model and reasonin
 
 - [Claude Code](https://claude.com/claude-code)
 - [Codex CLI](https://github.com/openai/codex), installed and signed in. If `codex exec "hello"` gets a reply in your terminal, you're set
-- Node.js 18 or later
+- Node.js 18 or later. If you run Claude Code inside WSL, Node.js must be installed inside WSL too, or the plugin's hooks will error before every command
 - Git 2.25 or later (used to track which files Codex changed)
 
 ## Install

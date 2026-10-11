@@ -25,7 +25,7 @@
 
 - [Claude Code](https://claude.com/claude-code)
 - [Codex CLI](https://github.com/openai/codex)，已安装并登录。在终端里运行 `codex exec "hello"` 能正常回复就行
-- Node.js 18 或更高版本
+- Node.js 18 或更高版本。在 WSL 里运行 Claude Code 时，WSL 里也要装 Node.js，否则插件的钩子会在每条命令前报错
 - Git 2.25 或更高版本，用来追踪 Codex 改了哪些文件
 
 ## 安装
