@@ -162,6 +162,8 @@ Start one directly when the user uses `/codex-bridge-en:discuss`. Starting one o
 2. **Uncertain**: there's no obvious best answer and several workable options to weigh; or key assumptions haven't been checked.
 3. **Costly to get wrong**: a wrong choice means large-scale rework, or affects the correctness of results.
 
+**Apply the same three conditions when the user only asks for advice and hasn't decided whether to do anything yet**, for example "what research directions do you suggest?" or "which architecture should we pick?". If all three hold, discuss first and give the user the conclusion after ruling on it; don't answer directly yourself. To write the topic brief, you may first read code and data and run read-only statistics to get the facts straight.
+
 Don't start one for ordinary implementation details, tasks with a clear plan, or decisions the user has already made. When you start one on your own, tell the user in one sentence: "I'll talk this through with Codex first."
 
 ### Process (at most 3 rounds)

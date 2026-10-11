@@ -17,7 +17,7 @@ The idea is a split of roles: Claude does the planning, key decisions, design an
 | `/codex-bridge-en:watch` | Shows what Codex is doing, live |
 | `/codex-bridge-en:config` | Shows or changes the plugin's settings |
 
-You don't have to use the commands. The bundled skill lets Claude decide on its own: hand off hands-on tasks that are big enough, discuss complex and uncertain designs with Codex first, and ask Codex to review risky changes before delivering them. You can turn this off with `auto_dispatch` (see below). So that Claude doesn't forget (easy when a project has its own skills), the plugin reminds it once at the start of every session.
+You don't have to use the commands. The bundled skill lets Claude decide on its own: hand off hands-on tasks that are big enough, discuss complex and uncertain designs with Codex first, and ask Codex to review risky changes before delivering them. You can turn this off with `auto_dispatch` (see below). So that Claude doesn't forget (easy when a project has its own skills), the plugin reminds it once at the start of every session and includes your preference files.
 
 Every time Claude calls Codex, it tells you in the chat which model and reasoning effort it is using.
 
