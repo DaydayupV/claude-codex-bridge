@@ -86,6 +86,7 @@ Right after starting `run`, `discuss` or `resume` in the background, let the use
 - Once it's open, send the user the tab link `[Codex: <short title>](#terminal/<tab_id>)`.
 - **If `run_in_terminal` isn't available** (for example in the Claude Code CLI), send the user the full watch command in a bash code block and ask them to run it in another terminal.
 - When the run ends, watch exits on its own and the tab stays for the user to look back at. Don't close it.
+- The default view is concise. Add `--verbose` when the user wants every detail.
 - For `review`, open the live view only if the user asks.
 
 ## Task levels and reasoning effort

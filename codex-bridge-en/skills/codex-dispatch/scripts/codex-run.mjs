@@ -9,7 +9,7 @@
 //   node codex-run.mjs review --cwd <目录> [--uncommitted | --base <分支> | --commit <sha>]
 //                             [--brief <文件|->] (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
 //   node codex-run.mjs status [--run <run_id|last>] [--limit <n>]
-//   node codex-run.mjs watch  [--run <run_id|last>]
+//   node codex-run.mjs watch  [--run <run_id|last>] [--verbose]
 //   node codex-run.mjs config [--cwd <目录>]
 //
 // watch 把 events.jsonl 实时翻译成可读进度；不给 --run 时跟踪正在运行的任务（没有就等新任务出现）。
@@ -185,7 +185,7 @@ function die(msg) {
 function parseArgs(argv) {
   const [cmd, ...rest] = argv;
   const opts = { 'add-dir': [] };
-  const flags = new Set(['uncommitted', 'no-snapshot']);
+  const flags = new Set(['uncommitted', 'no-snapshot', 'verbose']);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (!a.startsWith('--')) die(M.badArg(a));
@@ -705,8 +705,43 @@ function plainCommand(cmd) {
   const m = /^"?[^"]*?(?:powershell|pwsh|bash|cmd)(?:\.exe)?"?\s+(?:-Command|-l?c|\/c)\s+([\s\S]*)$/i.exec(cmd);
   let inner = m ? m[1] : cmd;
   if (/^(["'])[\s\S]*\1$/.test(inner)) inner = inner.slice(1, -1);
-  return inner;
+  return inner.replace(/\\(["\\])/g, '$1'); // 记录里的命令转义过反斜杠和引号
 }
+
+// 终端里中日韩字符和全角符号占两格，按显示宽度截断和换行，避免折行错位。
+const charWidth = (ch) => (/[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(ch) ? 2 : 1);
+const textWidth = (s) => [...s].reduce((w, ch) => w + charWidth(ch), 0);
+
+function fitWidth(s, width) {
+  if (textWidth(s) <= width) return s;
+  let out = '';
+  let w = 0;
+  for (const ch of s) {
+    if (w + charWidth(ch) > width - 1) break;
+    out += ch;
+    w += charWidth(ch);
+  }
+  return `${out}…`;
+}
+
+function wrapWidth(s, width) {
+  const lines = [];
+  for (const para of String(s).replace(/\r/g, '').split('\n')) {
+    let line = '';
+    let w = 0;
+    for (const ch of para) {
+      if (w + charWidth(ch) > width) { lines.push(line); line = ''; w = 0; }
+      line += ch;
+      w += charWidth(ch);
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+const paint = (code) => (s) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
+const C = { dim: paint('2'), bold: paint('1'), red: paint('31'), green: paint('32'), yellow: paint('33'), cyan: paint('36') };
 
 async function pickWatchRun(ref) {
   if (ref) return findRun(ref);
@@ -725,17 +760,11 @@ async function pickWatchRun(ref) {
   }
 }
 
-async function cmdWatch(o) {
-  const { id, dir, meta } = await pickWatchRun(o.run);
-  const cwd = meta.cwd;
-  const rel = (p) => { const r = path.relative(cwd, p); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r : p; };
+// 详细模式（--verbose）：每个事件一行，带时间戳，包括思考过程、命令输出和 token 用量。
+function verboseRenderer(cwd, rel) {
   let live = false;
   const out = (sym, text) => process.stdout.write(`${live ? new Date().toTimeString().slice(0, 8) : '        '} ${sym} ${text}\n`);
-  process.stdout.write(`\n${M.watchHeader(meta.mode, meta.title || id, meta.model_shown || meta.model, meta.effort, meta.level, cwd, dir)}\n\n`);
-
-  const show = (line) => {
-    let ev;
-    try { ev = JSON.parse(line); } catch { return; }
+  const show = (ev) => {
     const it = ev.item || {};
     if (ev.type === 'thread.started') out('●', M.watchSession(ev.thread_id));
     else if (ev.type === 'turn.failed') out('✗', M.watchTurnFailed(ev.error?.message || ''));
@@ -770,6 +799,120 @@ async function cmdWatch(o) {
       }
     }
   };
+  const finish = (r, m) => {
+    if (r) out('■', M.watchFinished(r.status, r.duration_s, r.changes?.available ? M.watchChanged(r.changes.files_total) : M.watchNotTracked));
+    else out('■', m?.status === 'running' ? M.watchInterrupted : M.watchEnded(m?.status));
+  };
+  return { show, finish, goLive: () => { live = true; } };
+}
+
+// 简洁模式（默认）：只显示 Codex 说的话、执行的命令、改动的文件、计划和最终结果，失败的命令才显示输出。
+function conciseRenderer(cwd, rel) {
+  const width = () => Math.max(40, (process.stdout.columns || 100) - 1);
+  const write = (s = '') => process.stdout.write(`${s}\n`);
+  let lastKind = null; // 连续的命令或文件改动挤在一起，换类型时空一行
+  // 连续的命令只显示前几条，其余折叠成一行；折叠里的命令失败了照样显示。
+  const MAX_COMMANDS = 3;
+  let shownCommands = 0;
+  const foldedCommands = new Map(); // item id → 命令文字
+  const flushFolded = () => {
+    if (foldedCommands.size) write(C.dim(`  ${M.watchFoldedCommands(foldedCommands.size)}`));
+    foldedCommands.clear();
+  };
+  const block = (kind) => {
+    if (lastKind === 'command' && kind !== 'command') flushFolded();
+    if (lastKind !== 'command' && kind === 'command') shownCommands = 0;
+    if (lastKind && (kind !== lastKind || kind === 'message')) write();
+    lastKind = kind;
+  };
+  const commandLine = (text) => C.dim(`  $ ${fitWidth(text, width() - 4)}`);
+  let live = false; // 回放已有事件时没有真实时间，只在实时跟踪时显示
+  const time = () => (live ? ` ${C.dim(new Date().toTimeString().slice(0, 5))}` : '');
+  const paragraph = (text, indent = '  ', maxLines = 20) => {
+    const lines = wrapWidth(text.trim(), width() - textWidth(indent));
+    for (const l of lines.slice(0, maxLines)) write(indent + l);
+    if (lines.length > maxLines) write(indent + C.dim(M.watchMoreLines(lines.length - maxLines)));
+  };
+  let lastPlan = '';
+  let lastFile = '';
+
+  const show = (ev) => {
+    const it = ev.item || {};
+    if (ev.type === 'turn.failed' || ev.type === 'error') {
+      block('error');
+      write(C.red(`✗ ${fitWidth(oneLine(ev.error?.message || ev.message || ''), width() - 2)}`));
+    } else if (ev.type === 'item.started' && it.type === 'command_execution') {
+      block('command');
+      const text = oneLine(plainCommand(it.command));
+      if (shownCommands < MAX_COMMANDS) { write(commandLine(text)); shownCommands++; }
+      else foldedCommands.set(it.id, text);
+    } else if (ev.type === 'item.completed') {
+      if (it.type === 'agent_message') {
+        const t = it.text.trim();
+        if (t.startsWith('{')) { try { JSON.parse(t); return; } catch { /* 普通消息 */ } } // 最终报告在结束时单独显示
+        block('message');
+        write(`${C.cyan(C.bold('Codex'))}${time()}`);
+        paragraph(t);
+      } else if (it.type === 'command_execution' && it.exit_code !== 0) {
+        const lines = String(it.aggregated_output || '').replace(/\r/g, '').split('\n').map((x) => x.trim()).filter(Boolean);
+        if (foldedCommands.has(it.id)) { write(commandLine(foldedCommands.get(it.id))); foldedCommands.delete(it.id); }
+        write(C.red(`    ${fitWidth(M.watchExit(it.exit_code, lines.length ? lines.slice(-2).join(' ⏎ ') : ''), width() - 4)}`));
+      } else if (it.type === 'file_change') {
+        for (const c of it.changes || []) {
+          const line = `  ✎ ${M.fileKinds[c.kind] || c.kind} ${fitWidth(rel(c.path), width() - 10)}`;
+          if (lastKind === 'file' && line === lastFile) continue; // 同一个文件连着改几次只显示一行
+          block('file');
+          write(C.green(line));
+          lastFile = line;
+        }
+      } else if (it.type === 'todo_list') {
+        const plan = (it.items || []).map((x) => `${x.completed ? '✔' : '○'} ${x.text}`);
+        if (plan.join('\n') === lastPlan) return;
+        lastPlan = plan.join('\n');
+        block('plan');
+        write(C.yellow(M.watchPlan));
+        for (const p of plan) write(`  ${fitWidth(p, width() - 2)}`);
+      } else if (it.type === 'web_search') {
+        block('command');
+        write(C.dim(`  🔎 ${fitWidth(oneLine(it.query), width() - 5)}`));
+      } else if (it.type === 'error' && !/^Under-development features enabled/.test(it.message)) {
+        block('error');
+        write(C.yellow(`⚠ ${fitWidth(oneLine(it.message), width() - 2)}`));
+      }
+    }
+  };
+
+  const finish = (r, m) => {
+    flushFolded();
+    write();
+    write(C.dim('─'.repeat(Math.min(width(), 60))));
+    if (!r) {
+      write(m?.status === 'running' ? C.red(M.watchInterrupted) : M.watchEnded(m?.status));
+      return;
+    }
+    const ok = r.status === 'done' && (!r.report?.status || r.report.status === 'completed');
+    const changed = r.changes?.available ? M.watchChanged(r.changes.files_total) : M.watchNotTracked;
+    write((ok ? C.green : C.red)(C.bold(M.watchFinished(r.report?.status || r.status, r.duration_s, changed))));
+    const summary = r.report?.summary || r.report?.position;
+    if (summary) { write(); paragraph(summary, '  ', 12); }
+    const issues = r.report?.open_issues || r.report?.open_questions || [];
+    if (issues.length) {
+      write();
+      write(C.yellow(M.watchOpenIssues));
+      for (const x of issues) paragraph(`· ${x}`, '  ', 4);
+    }
+    for (const e of r.errors || []) write(C.red(`✗ ${fitWidth(oneLine(e), width() - 2)}`));
+  };
+  return { show, finish, goLive: () => { live = true; } };
+}
+
+async function cmdWatch(o) {
+  const { id, dir, meta } = await pickWatchRun(o.run);
+  const cwd = meta.cwd;
+  const rel = (p) => { const r = path.relative(cwd, p); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r : p; };
+  const view = (o.verbose ? verboseRenderer : conciseRenderer)(cwd, rel);
+  const header = M.watchHeader(meta.mode, meta.title || id, meta.model_shown || meta.model, meta.effort, meta.level, cwd, dir).split('\n');
+  process.stdout.write(`\n${C.bold(header[0])}\n${C.dim(header.slice(1).join('\n'))}\n\n`);
 
   const file = path.join(dir, 'events.jsonl');
   const decoder = new TextDecoder('utf-8');
@@ -785,11 +928,17 @@ async function cmdWatch(o) {
     offset = size;
     buf += decoder.decode(chunk, { stream: true });
     let i;
-    while ((i = buf.indexOf('\n')) >= 0) { show(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i);
+      buf = buf.slice(i + 1);
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; } // 非 JSON 的行
+      view.show(ev);
+    }
   };
 
   drain();
-  live = true;
+  view.goLive();
   let m = readMeta(dir);
   while (isRunning(m)) {
     await sleep(500);
@@ -799,13 +948,7 @@ async function cmdWatch(o) {
   drain();
 
   const resFile = path.join(dir, 'result.json');
-  if (fs.existsSync(resFile)) {
-    const r = JSON.parse(fs.readFileSync(resFile, 'utf8'));
-    const changed = r.changes?.available ? M.watchChanged(r.changes.files_total) : M.watchNotTracked;
-    out('■', M.watchFinished(r.status, r.duration_s, changed));
-  } else {
-    out('■', m?.status === 'running' ? M.watchInterrupted : M.watchEnded(m?.status));
-  }
+  view.finish(fs.existsSync(resFile) ? JSON.parse(fs.readFileSync(resFile, 'utf8')) : null, m);
 }
 
 const { cmd, opts } = parseArgs(process.argv.slice(2));

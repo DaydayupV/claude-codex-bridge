@@ -14,7 +14,7 @@ The idea is a split of roles: Claude does the planning, key decisions, design an
 | `/codex-bridge-en:discuss <topic>` | Discusses a complex design with Codex: up to 3 rounds of critiquing each other's proposals, then Claude rules on each point and writes up a decision record |
 | `/codex-bridge-en:review` | Has Codex review uncommitted changes, a branch or a commit. Claude checks each finding and filters out false positives |
 | `/codex-bridge-en:status` | Lists recent Codex runs, or shows the details of one |
-| `/codex-bridge-en:watch` | Shows what Codex is doing, live |
+| `/codex-bridge-en:watch` | Shows what Codex is doing, live. The default view is concise (what Codex says, folded commands, file changes, the result); add `--verbose` for every detail |
 | `/codex-bridge-en:config` | Shows or changes the plugin's settings |
 
 You don't have to use the commands. The bundled skill lets Claude decide on its own: hand off hands-on tasks that are big enough, discuss complex and uncertain designs with Codex first, and ask Codex to review risky changes before delivering them. You can turn this off with `auto_dispatch` (see below). So that Claude doesn't forget (easy when a project has its own skills), the plugin reminds it once at the start of every session and includes your preference files.

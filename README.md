@@ -14,7 +14,7 @@
 | `/codex-bridge:discuss <议题>` | 就复杂的方案和 Codex 讨论，最多 3 轮交叉挑错，由 Claude 逐条裁决，最后给出决策记录 |
 | `/codex-bridge:review` | 让 Codex 审查未提交的改动、某个分支或某次提交，Claude 逐条核实，排除误报 |
 | `/codex-bridge:status` | 查看最近的 Codex 任务，或某次任务的详细结果 |
-| `/codex-bridge:watch` | 实时查看 Codex 正在做什么 |
+| `/codex-bridge:watch` | 实时查看 Codex 正在做什么。默认简洁显示：Codex 说的话、折叠后的命令、文件改动和结果；加 `--verbose` 看全部细节 |
 | `/codex-bridge:config` | 查看或修改插件配置 |
 
 不用命令也可以。插件自带的 skill 会让 Claude 自己判断：执行类任务达到一定规模时主动派给 Codex，遇到复杂又不确定的方案时先和 Codex 讨论，高风险改动交付前请 Codex 审查。这个行为可以关掉，见下文的 `auto_dispatch`。为了不让 Claude 忘了这件事（项目里有自己的 skill 时尤其容易漏），插件会在每个会话开始时提醒它一次，并附上你的偏好文件。

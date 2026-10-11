@@ -101,6 +101,10 @@ const zh = {
   watchFinished: (status, seconds, changed) => `结束：${status}，用时 ${seconds}s，${changed}`,
   watchInterrupted: '调度进程已退出，任务可能被中断',
   watchEnded: (status) => `结束：${status}`,
+  watchMoreLines: (n) => `（还有 ${n} 行，加 --verbose 看完整内容）`,
+  watchPlan: '计划',
+  watchFoldedCommands: (n) => `… 另有 ${n} 条命令（加 --verbose 查看）`,
+  watchOpenIssues: '遗留问题',
 };
 
 const en = {
@@ -204,6 +208,10 @@ const en = {
   watchFinished: (status, seconds, changed) => `Finished: ${status}, took ${seconds}s, ${changed}`,
   watchInterrupted: 'The dispatcher process has exited; the run may have been interrupted',
   watchEnded: (status) => `Finished: ${status}`,
+  watchMoreLines: (n) => `(${n} more lines; add --verbose to see everything)`,
+  watchPlan: 'Plan',
+  watchFoldedCommands: (n) => `… ${n} more commands (add --verbose to see them)`,
+  watchOpenIssues: 'Open issues',
 };
 
 export const MESSAGES = { zh, en };
