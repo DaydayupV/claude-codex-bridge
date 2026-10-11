@@ -1,6 +1,17 @@
 {
-  "description": "Blocks commands that call codex exec / codex review directly, so Codex is always called through the codex-bridge-en script",
+  "description": "Reminds Claude at session start to load the codex-dispatch skill, and blocks commands that call codex exec / codex review directly so Codex is always called through the codex-bridge-en script",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-reminder.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash|PowerShell",

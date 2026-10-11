@@ -1,6 +1,17 @@
 {
-  "description": "拦下直接调用 codex exec / codex review 的命令，要求通过 codex-bridge 的脚本调用 Codex",
+  "description": "会话开始时提醒 Claude 加载 codex-dispatch skill；拦下直接调用 codex exec / codex review 的命令，要求通过 codex-bridge 的脚本调用 Codex",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-reminder.mjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash|PowerShell",

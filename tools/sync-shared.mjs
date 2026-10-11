@@ -18,6 +18,7 @@ const SHARED = [
   'skills/codex-dispatch/scripts/codex-run.mjs',
   'skills/codex-dispatch/scripts/messages.mjs',
   'hooks/guard-codex.mjs',
+  'hooks/session-reminder.mjs',
 ];
 
 const check = process.argv.includes('--check');
