@@ -700,8 +700,38 @@ const isRunning = (m) => m?.status === 'running' && pidAlive(m.pid);
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const oneLine = (s) => String(s ?? '').replace(/\r/g, '').split('\n').map((x) => x.trim()).filter(Boolean).join(' ⏎ ');
 
+// 按 POSIX shell 规则拆分命令行；引号不配对时返回 null。
+function shellSplit(s) {
+  const args = [];
+  let cur = null;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (/\s/.test(ch)) { if (cur !== null) args.push(cur); cur = null; continue; }
+    cur ??= '';
+    if (ch === "'") {
+      const j = s.indexOf("'", i + 1);
+      if (j < 0) return null;
+      cur += s.slice(i + 1, j);
+      i = j;
+    } else if (ch === '"') {
+      for (i++; i < s.length && s[i] !== '"'; i++) {
+        if (s[i] === '\\' && '"\\$`'.includes(s[i + 1])) i++;
+        cur += s[i];
+      }
+      if (i >= s.length) return null;
+    } else if (ch === '\\' && i + 1 < s.length) {
+      cur += s[++i];
+    } else cur += ch;
+  }
+  if (cur !== null) args.push(cur);
+  return args;
+}
+
 function plainCommand(cmd) {
-  // Codex 在 Windows 上把命令包成 "...powershell.exe" -Command "<实际命令>"，去掉外壳便于阅读。
+  // Codex 记录的命令是按 shell 规则转义后的整行，比如 "...powershell.exe" -Command "<实际命令>"。
+  // 先按规则还原，再去掉外壳，只留实际命令。
+  const args = shellSplit(String(cmd ?? ''));
+  if (args?.length >= 3 && /(?:^|[\\/])(?:powershell|pwsh|bash|sh|zsh|cmd)(?:\.exe)?$/i.test(args[0]) && /^(?:-Command|-l?c|\/c)$/i.test(args.at(-2))) return args.at(-1);
   const m = /^"?[^"]*?(?:powershell|pwsh|bash|cmd)(?:\.exe)?"?\s+(?:-Command|-l?c|\/c)\s+([\s\S]*)$/i.exec(cmd);
   let inner = m ? m[1] : cmd;
   if (/^(["'])[\s\S]*\1$/.test(inner)) inner = inner.slice(1, -1);
@@ -724,13 +754,27 @@ function fitWidth(s, width) {
   return `${out}…`;
 }
 
+const NO_LINE_START = /[、，。．！？：；）】』」》〉’”…—,.!?:;)\]}%]/;
+
 function wrapWidth(s, width) {
   const lines = [];
   for (const para of String(s).replace(/\r/g, '').split('\n')) {
     let line = '';
     let w = 0;
     for (const ch of para) {
-      if (w + charWidth(ch) > width) { lines.push(line); line = ''; w = 0; }
+      if (w + charWidth(ch) > width) {
+        // 逗号、句号这类标点不放在行首：把上一行末尾的字（连同它后面的标点）一起带到下一行。
+        const chars = [...line];
+        let carry = '';
+        if (NO_LINE_START.test(ch)) {
+          let k = chars.length;
+          while (k > 0 && NO_LINE_START.test(chars[k - 1])) k--;
+          if (k > 1) carry = chars.splice(k - 1).join('');
+        }
+        lines.push(chars.join(''));
+        line = carry;
+        w = textWidth(carry);
+      }
       line += ch;
       w += charWidth(ch);
     }
