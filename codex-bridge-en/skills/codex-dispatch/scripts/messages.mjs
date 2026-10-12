@@ -83,6 +83,11 @@ const zh = {
   stepCommandDone: '命令刚结束，思考下一步',
   stepLastEvent: (ev) => `上一个事件：${ev}`,
   statusActivity: (min, step) => `最后活动 ${min} 分钟前｜${step}`,
+  tokenCount: (n) => (n >= 1e8 ? `${(n / 1e8).toFixed(2)} 亿` : n >= 1e4 ? `${(n / 1e4).toFixed(1)} 万` : String(n)),
+  tokenSummary: (u, ctx, fmt) => `token：输入 ${fmt(u.input_tokens)}（缓存 ${u.input_tokens ? Math.round((u.cached_input_tokens / u.input_tokens) * 100) : 0}%），输出 ${fmt(u.output_tokens)}`
+    + (ctx ? `｜对话长度 ${fmt(ctx.tokens)} / ${fmt(ctx.window)}` : ''),
+  contextNow: (ctx, fmt) => `｜对话长度 ${fmt(ctx.tokens)} / ${fmt(ctx.window)}`,
+  rateLimit: (r) => `Codex 额度：${r.window_minutes >= 1440 ? `${Math.round(r.window_minutes / 1440)} 天` : `${Math.round(r.window_minutes / 60)} 小时`}窗口已用 ${r.used_percent}%`,
 
   // ---------- watch ----------
   watchFallback: '没有正在运行的任务，显示最近一次：',
@@ -191,6 +196,11 @@ const en = {
   stepCommandDone: 'Command just finished, deciding what to do next',
   stepLastEvent: (ev) => `Last event: ${ev}`,
   statusActivity: (min, step) => `last activity ${min} min ago | ${step}`,
+  tokenCount: (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n)),
+  tokenSummary: (u, ctx, fmt) => `tokens: in ${fmt(u.input_tokens)} (${u.input_tokens ? Math.round((u.cached_input_tokens / u.input_tokens) * 100) : 0}% cached), out ${fmt(u.output_tokens)}`
+    + (ctx ? ` | context ${fmt(ctx.tokens)} / ${fmt(ctx.window)}` : ''),
+  contextNow: (ctx, fmt) => ` | context ${fmt(ctx.tokens)} / ${fmt(ctx.window)}`,
+  rateLimit: (r) => `Codex quota: ${r.used_percent}% of the ${r.window_minutes >= 1440 ? `${Math.round(r.window_minutes / 1440)}-day` : `${Math.round(r.window_minutes / 60)}-hour`} window used`,
 
   // ---------- watch ----------
   watchFallback: 'No run in progress; showing the most recent one:',

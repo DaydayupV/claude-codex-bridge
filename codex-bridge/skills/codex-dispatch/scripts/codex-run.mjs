@@ -449,6 +449,40 @@ function runCodex({ args, cwd, prompt, runDir, timeoutMin, stallMin, onSession }
   });
 }
 
+// 从 Codex 自己的会话记录里读最后一次 token 统计：对话当前长度、上下文窗口和额度。
+// exec --json 只在结尾给一次总用量，这些数只有会话记录里有。找不到就返回 null。
+function codexSessionStats(sessionId, startedAt) {
+  if (!sessionId) return null;
+  const root = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions');
+  let file = null;
+  // 会话记录按开始日期放在 sessions/年/月/日 下；续接的会话还在最初那天的目录里，所以从开始日期往前找。
+  const day = new Date(startedAt || Date.now());
+  for (let i = -1; i <= 60 && !file; i++) {
+    const d = new Date(day.getTime() - i * 86400000);
+    const dir = path.join(root, String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'));
+    try { file = fs.readdirSync(dir).filter((f) => f.includes(sessionId)).map((f) => path.join(dir, f))[0] || null; } catch { /* 没有这天的目录 */ }
+  }
+  if (!file) return null;
+  const st = fs.statSync(file);
+  const len = Math.min(st.size, 1024 * 1024);
+  const chunk = Buffer.alloc(len);
+  const fd = fs.openSync(file, 'r');
+  try { fs.readSync(fd, chunk, 0, len, st.size - len); } finally { fs.closeSync(fd); }
+  const lines = chunk.toString('utf8').split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('"token_count"')) continue;
+    let p;
+    try { p = JSON.parse(lines[i]).payload; } catch { continue; }
+    const last = p?.info?.last_token_usage;
+    const rl = p?.rate_limits?.primary;
+    return {
+      context: last && p.info.model_context_window ? { tokens: last.total_tokens ?? last.input_tokens, window: p.info.model_context_window } : null,
+      rate_limit: rl ? { used_percent: rl.used_percent, window_minutes: rl.window_minutes, resets_at: rl.resets_at } : null,
+    };
+  }
+  return null;
+}
+
 async function execute(ctx) {
   const { cfg, model, mode, kind, id, dir, cwd, level, effort, args, prompt, title, parent, opts, expectReport } = ctx;
   const started = Date.now();
@@ -521,6 +555,7 @@ async function execute(ctx) {
     exit_code: r.code,
     duration_s: Math.round((Date.now() - started) / 1000),
     usage: r.usage,
+    ...(() => { const s = codexSessionStats(meta.session_id, meta.started_at); return { context: s?.context || null, rate_limit: s?.rate_limit || null }; })(),
     commands_executed: r.commands,
     errors: r.errors,
     warnings: [...warnings, ...r.warnings.filter((w) => !/^Under-development features enabled/.test(w))],
@@ -676,7 +711,8 @@ function cmdStatus(o) {
     }
     return;
   }
-  const rows = listRuns().slice(0, Number(o.limit) || 10).map((rid) => {
+  const runs = listRuns().slice(0, Number(o.limit) || 10);
+  const rows = runs.map((rid) => {
     const dir = path.join(RUNS_ROOT, rid);
     const m = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
     if (m.status === 'running' && !pidAlive(m.pid)) m.status = 'interrupted';
@@ -685,11 +721,23 @@ function cmdStatus(o) {
     let row = `${rid}  ${m.mode.padEnd(6)}  ${m.status.padEnd(11)}  ${m.model_shown || m.model || '-'}  ${(m.level ? `${m.level}/${m.effort}` : m.effort).padEnd(14)}  ${mins.padStart(6)}min  ${m.title || ''}  @ ${m.cwd}`;
     if (m.status === 'running') {
       const a = describeActivity(dir);
-      row += `\n    └ ${M.statusActivity(a.idle_min ?? '-', a.step)}`;
+      const ctx = codexSessionStats(m.session_id, m.started_at)?.context;
+      row += `\n    └ ${M.statusActivity(a.idle_min ?? '-', a.step)}${ctx ? M.contextNow(ctx, M.tokenCount) : ''}`;
+    } else {
+      let r = null;
+      try { r = JSON.parse(fs.readFileSync(path.join(dir, 'result.json'), 'utf8')); } catch { /* 没有结果 */ }
+      if (r?.usage) row += `\n    └ ${M.tokenSummary(r.usage, r.context, M.tokenCount)}`;
     }
     return row;
   });
-  process.stdout.write(rows.length ? rows.join('\n') + '\n' : `${M.noRuns}\n`);
+  // 额度是账号级的，取最近一次有记录的任务显示一行
+  let quota = null;
+  for (const rid of runs) {
+    const m = readMeta(path.join(RUNS_ROOT, rid));
+    quota = codexSessionStats(m?.session_id, m?.started_at)?.rate_limit;
+    if (quota) break;
+  }
+  process.stdout.write(rows.length ? rows.join('\n') + '\n' + (quota ? `\n${M.rateLimit(quota)}\n` : '') : `${M.noRuns}\n`);
 }
 
 // ---------- watch ----------
@@ -951,6 +999,7 @@ function conciseRenderer(cwd, rel) {
     const ok = r.status === 'done' && (!r.report?.status || r.report.status === 'completed');
     const changed = r.changes?.available ? M.watchChanged(r.changes.files_total) : M.watchNotTracked;
     write((ok ? C.green : C.red)(C.bold(M.watchFinished(r.report?.status || r.status, r.duration_s, changed))));
+    if (r.usage) write(C.dim(M.tokenSummary(r.usage, r.context, M.tokenCount)));
     const summary = r.report?.summary || r.report?.position;
     if (summary) { write(); paragraph(summary, '  ', 12); }
     const issues = r.report?.open_issues || r.report?.open_questions || [];

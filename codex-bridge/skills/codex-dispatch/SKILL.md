@@ -54,7 +54,7 @@ node "<脚本路径>" config [--cwd "<项目目录>"]
 - **一律用后台方式运行**（Bash 的 `run_in_background`），跑完会自动通知。等待期间可以做别的，不要轮询。
 - **每次调用 Codex（`run`、`resume`、`discuss`、`review`）都必须在对话里明确告诉用户用的是什么模型和推理强度**，例如"已派给 Codex：模型 gpt-6-astra，推理强度 max（等级 complex）"。以脚本启动时输出的第一行（"开始｜模型 …｜推理强度 …"）为准，不要凭配置自己推断；模型来自 Codex 配置时照实说明。最终汇报里再写一次。
 - **启动 `run`、`discuss`、`resume` 后，下一步必须立即处理实时查看**（见"实时查看"一节），测试和小任务也不例外。用户要靠它看到 Codex 在做什么，漏掉就等于让用户干等。
-- 结果以 JSON 打印到 stdout：`report`（Codex 的结构化报告）、`changes`（脚本实际追踪到的工作目录内改动）、`session_id`、`run_dir`。完整 diff 在 `run_dir/diff.patch`。
+- 结果以 JSON 打印到 stdout：`report`（Codex 的结构化报告）、`changes`（脚本实际追踪到的工作目录内改动）、`session_id`、`run_dir`，以及 token 消耗：`usage`（本次的输入、缓存、输出 token）、`context`（结束时的对话长度和模型上下文窗口）、`rate_limit`（Codex 额度已用比例）。完整 diff 在 `run_dir/diff.patch`。
 - 多个任务可以并行，但文件范围不能重叠。**Codex 正在改的文件，Claude 不碰。**
 
 ## 配置
@@ -223,4 +223,4 @@ Codex 偏爱防御性编程，容易写大量多余的校验和测试。任务�
 审查结果同样要甄别：Codex 指出的问题逐条核实，确实存在的才修；误报直接忽略，在汇报中简要说明。
 
 ## 向用户汇报
-说明哪些部分是 Codex 做的（附 run_id，以及每次调用的模型和推理强度，以结果里的 `model_shown` 和 `effort` 为准）、Claude 审查了什么、怎么验证的、是否请 Codex 做了审查及结果，以及遗留问题。
+说明哪些部分是 Codex 做的（附 run_id，以及每次调用的模型和推理强度，以结果里的 `model_shown` 和 `effort` 为准）、每次调用的 token 消耗（输入和缓存比例、输出、结束时的对话长度）、Claude 审查了什么、怎么验证的、是否请 Codex 做了审查及结果，以及遗留问题。

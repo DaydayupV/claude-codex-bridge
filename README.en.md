@@ -13,7 +13,7 @@ The idea is a split of roles: Claude does the planning, key decisions, design an
 | `/codex-bridge-en:rescue <task>` | Hands a task to Codex. When it finishes, Claude reviews the diff, runs it to verify, and sends it back for rework if needed |
 | `/codex-bridge-en:discuss <topic>` | Discusses a complex design with Codex: up to 3 rounds of critiquing each other's proposals, then Claude rules on each point and writes up a decision record |
 | `/codex-bridge-en:review` | Has Codex review uncommitted changes, a branch or a commit. Claude checks each finding and filters out false positives |
-| `/codex-bridge-en:status` | Lists recent Codex runs, or shows the details of one |
+| `/codex-bridge-en:status` | Lists recent Codex runs, or shows the details of one, with each run's token use, conversation length and how much of the Codex quota is used |
 | `/codex-bridge-en:watch` | Shows what Codex is doing, live. The default view is concise (what Codex says, folded commands, file changes, the result); add `--verbose` for every detail |
 | `/codex-bridge-en:config` | Shows or changes the plugin's settings |
 

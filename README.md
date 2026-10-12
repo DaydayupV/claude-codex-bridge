@@ -13,7 +13,7 @@
 | `/codex-bridge:rescue <任务>` | 把一个执行任务派给 Codex，完成后 Claude 审查改动、实际运行验证，不合格就返工 |
 | `/codex-bridge:discuss <议题>` | 就复杂的方案和 Codex 讨论，最多 3 轮交叉挑错，由 Claude 逐条裁决，最后给出决策记录 |
 | `/codex-bridge:review` | 让 Codex 审查未提交的改动、某个分支或某次提交，Claude 逐条核实，排除误报 |
-| `/codex-bridge:status` | 查看最近的 Codex 任务，或某次任务的详细结果 |
+| `/codex-bridge:status` | 查看最近的 Codex 任务，或某次任务的详细结果。会列出每次任务的 token 消耗、对话长度和 Codex 额度已用比例 |
 | `/codex-bridge:watch` | 实时查看 Codex 正在做什么。默认简洁显示：Codex 说的话、折叠后的命令、文件改动和结果；加 `--verbose` 看全部细节 |
 | `/codex-bridge:config` | 查看或修改插件配置 |
 

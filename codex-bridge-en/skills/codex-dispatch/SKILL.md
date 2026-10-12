@@ -56,7 +56,7 @@ node "<script path>" config [--cwd "<project dir>"]
 - **Always run it in the background** (Bash `run_in_background`). You get notified when it finishes. Do other things meanwhile; don't poll.
 - **Every time you call Codex (`run`, `resume`, `discuss`, `review`), tell the user in the chat which model and reasoning effort it uses**, for example "Handed off to Codex: model gpt-6-astra, effort max (level complex)". Take it from the first line the script prints ("started | model … | effort …"), not from your own reading of the config. If the model comes from Codex's config, say so. Repeat it in the final report.
 - **After starting `run`, `discuss` or `resume`, your very next step is the live view** (see "Live view"), even for tests and small tasks. The user relies on it to see what Codex is doing; skipping it leaves them waiting in the dark.
-- The result is printed to stdout as JSON: `report` (Codex's structured report), `changes` (changes inside the working directory, as tracked by the script), `session_id`, `run_dir`. The full diff is in `run_dir/diff.patch`.
+- The result is printed to stdout as JSON: `report` (Codex's structured report), `changes` (changes inside the working directory, as tracked by the script), `session_id`, `run_dir`, and token use: `usage` (input, cached and output tokens for this call), `context` (conversation length at the end, and the model's context window) and `rate_limit` (how much of the Codex quota is used). The full diff is in `run_dir/diff.patch`.
 - Several runs can go in parallel, but their file scopes must not overlap. **Claude doesn't touch files Codex is changing.**
 
 ## Configuration
@@ -225,4 +225,4 @@ Always pass a review brief with `--brief` (intent of the change, risky spots, wh
 Check the review findings too: verify each issue Codex raises and fix only the real ones. Drop false positives and mention them briefly in your report.
 
 ## Reporting to the user
-Say which parts Codex did (with run_ids, and the model and effort of each call, taken from `model_shown` and `effort` in the result), what Claude reviewed, how it was verified, whether Codex reviewed it and with what result, and any open issues.
+Say which parts Codex did (with run_ids, and the model and effort of each call, taken from `model_shown` and `effort` in the result), the token use of each call (input and how much was cached, output, conversation length at the end), what Claude reviewed, how it was verified, whether Codex reviewed it and with what result, and any open issues.
