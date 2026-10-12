@@ -40,8 +40,8 @@ The only entry point is `scripts/codex-run.mjs` in this skill's folder (that is,
 - **Stop on sandbox problems**: if the sandbox stops Codex from starting commands or it errors, tell the user the exact error and your assessment, and let them decide whether to change the config. Don't switch the sandbox, edit config files or look for a way around the script yourself.
 
 ```bash
-node "<script path>" run    --cwd "<project dir>" --brief "<brief.md>" --title "<short title>" --level <simple|normal|complex> [--add-dir "<dir>"] [--timeout minutes]
-node "<script path>" resume --run <run_id|last> --brief "<rework.md>" --level <simple|normal|complex>
+node "<script path>" run    --cwd "<project dir>" --brief "<brief.md>" --title "<short title>" --level <simple|normal|complex> [--add-dir "<dir>"] [--track "<path>"] [--timeout minutes]
+node "<script path>" resume --run <run_id|last> --brief "<rework.md>" --level <simple|normal|complex> [--track "<path>"]
 node "<script path>" discuss --cwd "<project dir>" --brief "<topic.md>" --title "<short title>" --level <normal|complex>
 node "<script path>" review --cwd "<project dir>" [--uncommitted | --base <branch> | --commit <sha>] [--brief "<review-focus.md>"] --level <simple|normal|complex>
 node "<script path>" status [--run <run_id|last>] [--limit n]
@@ -51,31 +51,24 @@ node "<script path>" config [--cwd "<project dir>"]
 
 - The model, reasoning effort, sandbox, approval policy and time limits come from the config file (see "Configuration"). Anything not configured comes from Codex's own `~/.codex/config.toml`.
 - If you're unsure of the current settings, run `config --cwd "<project dir>"` first. It shows the settings in effect, the run directory and the path of the watch launcher.
-- When the sandbox isn't `read-only` / `workspace-write` (for example `danger-full-access`), Codex can write to any directory. `--cwd` only sets where it starts working; **it doesn't limit what it can write**. The scope is then held only by the brief and by reviewing the diff afterwards.
-- Write the brief to a UTF-8 file first (in the scratchpad directory if there is one, otherwise in the system temp directory). The script appends standing rules: stay in scope, only necessary tests, no commit/push, no secrets, report in the schema.
+- When the sandbox isn't `read-only` / `workspace-write` (for example `danger-full-access`), `--cwd` **doesn't limit what Codex can write**. The scope is then held only by the brief and by reviewing the diff afterwards.
+- If the allowed scope includes paths ignored by `.gitignore` (such as `tests/` or a results folder), pass them with `--track "<path>"` (can be given more than once); otherwise change tracking can't see those files. Resume keeps the previous round's `--track`.
+- Write the brief to a UTF-8 file first (in the scratchpad directory if there is one, otherwise in the system temp directory). The script appends standing rules: stay in scope, do a preflight check, when to stop and ask, only necessary tests, no commit/push, no secrets, report in the schema.
 - **Always run it in the background** (Bash `run_in_background`). You get notified when it finishes. Do other things meanwhile; don't poll.
 - **Every time you call Codex (`run`, `resume`, `discuss`, `review`), tell the user in the chat which model and reasoning effort it uses**, for example "Handed off to Codex: model gpt-6-astra, effort max (level complex)". Take it from the first line the script prints ("started | model … | effort …"), not from your own reading of the config. If the model comes from Codex's config, say so. Repeat it in the final report.
 - **After starting `run`, `discuss` or `resume`, your very next step is the live view** (see "Live view"), even for tests and small tasks. The user relies on it to see what Codex is doing; skipping it leaves them waiting in the dark.
-- The result is printed to stdout as JSON: `report` (Codex's structured report), `changes` (changes inside the working directory, as tracked by the script), `session_id`, `run_dir`, and token use: `usage` (input, cached and output tokens for this call), `context` (conversation length at the end, and the model's context window) and `rate_limit` (how much of the Codex quota is used). The full diff is in `run_dir/diff.patch`.
+- The result is printed to stdout as JSON. The main fields:
+  - `report`: Codex's structured report.
+  - `changes`: changes inside the working directory, as tracked by the script. Each file has `by`: `codex` means there is evidence Codex changed it, `unknown` means it isn't known who did.
+  - `notes`: informational messages, such as changes of unknown origin, or files Codex reported but tracking didn't see.
+  - `session_id`, `run_dir`: the full diff is in `run_dir/diff.patch`.
+  - Token use: `usage` is this call's input, cached and output tokens (when `usage_scope` is `session_total`, it's the whole session's total); `last_request` is the size of the latest request and the model's context window; `rate_limit` is how much of the Codex quota is used.
 - Several runs can go in parallel, but their file scopes must not overlap. **Claude doesn't touch files Codex is changing.**
 
 ## Configuration
-Config files are JSON, layered in this order, later ones overriding earlier ones: the script's built-in defaults → user config `~/.claude/codex-bridge.json` (change the path with the `CODEX_BRIDGE_CONFIG` environment variable) → project config `<project dir>/.claude/codex-bridge.json`. If the user config doesn't exist, the script's first run (any subcommand) creates one: default model `gpt-6.1-sol`, with `gpt-6-astra` for complex tasks in all three modes. When the script prints "First run: created config file", tell the user that a config file was created, where it is and which models it uses, and that they can edit it.
-
-| Setting | What it does | Default |
-|---|---|---|
-| `auto_dispatch` | Whether to hand off work on your own (see "Permission") | `true` |
-| `watch` | `auto`: open the live view after a handoff; `off`: don't open it | `auto` |
-| `model` | Model for levels that don't set their own | `null` (use Codex config) |
-| `levels` | For each of the `run` / `review` / `discuss` modes, a `{ "model", "effort" }` for each of the `simple` / `normal` / `complex` levels. A `null` `model` uses the top-level `model`; `effort` must be one of `low` `medium` `high` `xhigh` `max` `ultra` | All models `null`; effort medium / high / max for run and review, high / max / max for discuss |
-| `sandbox` | Sandbox for each mode: `read-only` / `workspace-write` / `danger-full-access` | All `null` (use Codex config) |
-| `approval` | Approval policy, e.g. `never` | `null` (use Codex config) |
-| `timeout_min` / `stall_min` | Total time limit / stuck detection, in minutes (`stall_min` 0 turns it off) | 240 / 20 |
-| `codex_bin` | Path to the codex executable or `codex.js` (or the `CODEX_BIN` environment variable) | Found automatically |
-| `runs_dir` | Run record directory (or the `CODEX_RUNS_DIR` environment variable) | `~/.claude/codex-runs` |
-
+The user config is `~/.claude/codex-bridge.json` and the project config is `<project dir>/.claude/codex-bridge.json`; the latter overrides the former. What each setting means and its default are in `references/config.md`; read it when the user asks about or wants to change settings.
+- When the script prints "First run: created config file", tell the user that a config file was created, where it is and which models it uses, and that they can edit it.
 - **On Windows, don't set `sandbox` to `read-only`**: Codex's Windows sandbox may fail to start even file-reading commands in read-only mode. The read-only requirement for discussions and reviews is held by the rules the script appends, and the script checks afterwards whether any files changed.
-- Project config only accepts `model`, `levels`, `timeout_min` and `stall_min`. `levels` can contain just the parts to change, such as only `run.complex.model`. `auto_dispatch`, `watch`, sandbox, approval, executable and run directory can only be set in the user config, so a cloned repository can't raise its own permissions or spend the user's quota.
 - When the user wants to change settings, edit the relevant JSON file, then run `config` to confirm.
 
 ## Live view (every handoff)
@@ -119,6 +112,12 @@ What to build and why (a sentence or two of background).
 # Requirements and constraints
 Interface signatures, data formats, existing patterns and helpers to reuse, performance needs, compatibility, etc.
 
+# Allowed adaptations
+Things Codex may handle without stopping to ask. For example:
+- If the given test entry point won't run, use an equivalent one that covers the same tests
+- May fix a particular test fixture, but must not weaken any assertion
+(Write "none" if there are none.)
+
 # Names and text
 - Names: what new files, classes, functions, key parameters and settings are called
 - Comments: where they're needed and what they say
@@ -136,6 +135,8 @@ Anything that needs special mention in the report.
 ```
 
 Codex leans toward defensive coding and tends to write lots of unneeded checks and tests. Say "only write the tests that are needed, don't code defensively" in the brief (the script already appends it; repeat it when the task invites overdoing it).
+
+Grant "Allowed adaptations" by meaning, not by size: a one-line change can move an out-of-sample boundary, a fee rate or an assertion. Anything beyond the scope that isn't in this section makes the standing rules tell Codex to stop and ask in the report's `decision_requests`. Write foreseeable environment problems (such as a same-named `tests` package in the project) into this section up front to save a stop.
 
 ## Research and analysis tasks
 Research tasks are work whose conclusions rest on experiments and data, such as strategy and factor research, data analysis, comparison experiments and performance investigations. The risk here isn't buggy code; it's conclusions that go beyond the evidence.
@@ -159,6 +160,7 @@ Before research conclusions go into long-term records, reports or docs, or are h
 1. Look at `status` and `report.status` first. If it isn't `completed`, read `open_issues` first.
 2. Read `run_dir/diff.patch` and compare it with `changes.files`:
    - Any files changed outside the scope? Does `report.files_changed` match the actual changes?
+   - Files with `by` set to `unknown` may have been changed by Claude itself or another session, or written by Codex through commands or scripts. Find out who changed them first; **don't just revert them**.
    - Is the logic right? Any defensive overkill, needless abstraction, redundant tests?
    - Do names, comments and messages follow the brief, and are they plain and readable (see "Claude owns all text meant for people")?
    - Only changes inside the working directory are tracked; if the task involved paths outside it, check those separately.
@@ -170,7 +172,9 @@ Before research conclusions go into long-term records, reports or docs, or are h
 - If it still isn't good enough after the rework, or Codex times out or errors, Claude takes over and finishes it, and tells the user why.
 - A `stalled` result (stuck: no activity for over 20 minutes and no command running, so the script stopped it) is usually a temporary network or service problem. `resume` once to continue from where it stopped; if it stalls again, Claude takes over. `--stall <minutes>` changes the threshold and `--stall 0` turns it off. The total time limit defaults to 240 minutes; change it with `--timeout`.
 - If you suspect a run is stuck, run `status` and look at "last activity X min ago" and the current step instead of guessing. Long gaps between events are normal while a command is running (such as a big computation). `interrupted` means the dispatcher process is gone (for example the session or app was closed); Claude won't get a completion notice, so check `status --run <run_id>` by hand and decide whether to resume or start over.
-- When `report.status` is `blocked`: if it's something Claude can decide, add the information and continue with resume; if the user needs to decide, ask them.
+- When `report.status` is `blocked`, read `report.decision_requests` and go through each one: if it's within the user's existing permission and Claude can decide, write down the decision and continue with resume; if the user needs to decide, give them the question, the options and Claude's recommendation. A resume to answer questions doesn't count as a rework.
+- A `quota_exhausted` status means the Codex quota is used up. Don't retry, and don't switch to Claude redoing the work on your own. Tell the user the quota is used up and when it should reset (`quota_resets_at`), and let them decide whether to resume once it resets or have Claude take over.
+- If the reminder at the start of the session lists runs that didn't finish normally, mention it to the user at a suitable moment and handle them as the user wants.
 
 ## Discussion mode (/codex-bridge-en:discuss)
 For complex plans, designs or ideas, discuss them with Codex first, without carrying anything out. **Claude stays in charge of the conclusions**: Codex's views are input only. Claude accepts or rejects them on the strength of the arguments and doesn't give in just because Codex insists.
@@ -187,12 +191,12 @@ Don't start one for ordinary implementation details, tasks with a clear plan, or
 
 ### Process (at most 3 rounds)
 1. **Round 1, independent proposals**: start it with `discuss`. The topic brief only gives the background, the problem to solve, constraints, known facts, relevant code locations, and the specific questions to answer. **Don't include Claude's own leaning**, so Codex doesn't just go along with it. Before reading Codex's result, Claude writes its own proposal to a file (scratchpad directory or system temp directory), so it isn't swayed the other way either.
-2. **Round 2, critique each other**: continue with `resume --run <round 1 run_id>`. Send Claude's proposal and ask Codex to find its weakest points and compare it with its own. Claude also writes up its challenges to Codex's proposal.
+2. **Round 2, critique each other**: only when the two proposals really disagree, or Codex's conclusions include something Claude hasn't checked that would change the outcome; if the two broadly agree, go straight to deciding. Continue with `resume --run <round 1 run_id>`. Send Claude's proposal and ask Codex to find its weakest points and compare it with its own. Claude also writes up its challenges to Codex's proposal.
 3. **Round 3 (optional)**: only when a key disagreement is unresolved and another round could really change the conclusion.
 4. **Claude decides**: accept or reject each of Codex's points with reasons, and settle the final plan.
 
 - Discussions usually use `complex`; use `normal` when the topic isn't especially complex. Later rounds keep round 1's level.
-- Discussion is read-only: Codex can read code and run read-only commands to back up its points, but can't change files. If the script detects changed files it reports them in warnings; check and revert them.
+- Discussion is read-only: Codex can read code and run read-only commands to back up its points, but can't change files. If `warnings` says Codex changed files, check the diff and revert what Codex changed. Don't revert changes of unknown origin listed in `notes`; most likely someone else made them.
 - Discussions get the live view too.
 - Don't decide for the user on things that are theirs to decide, such as preferences, business trade-offs and risk tolerance. Give them the options with Claude's recommendation.
 
@@ -225,4 +229,4 @@ Always pass a review brief with `--brief` (intent of the change, risky spots, wh
 Check the review findings too: verify each issue Codex raises and fix only the real ones. Drop false positives and mention them briefly in your report.
 
 ## Reporting to the user
-Say which parts Codex did (with run_ids, and the model and effort of each call, taken from `model_shown` and `effort` in the result), the token use of each call (input and how much was cached, output, conversation length at the end), what Claude reviewed, how it was verified, whether Codex reviewed it and with what result, and any open issues.
+Say which parts Codex did (with run_ids, and the model and effort of each call, taken from `model_shown` and `effort` in the result), the token use of each call (this call's input and how much was cached, and output; say so when `usage_scope` is `session_total`), what Claude reviewed, how it was verified, whether Codex reviewed it and with what result, and any open issues.

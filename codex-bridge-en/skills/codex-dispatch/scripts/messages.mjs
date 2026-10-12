@@ -11,7 +11,7 @@ const zh = {
   projectIgnored: (keys) => `项目配置里的 ${keys} 只能写在用户配置中，已忽略`,
 
   // ---------- 参数 ----------
-  usage: '用法：codex-run.mjs <run|discuss|resume|review|status|watch|config> [选项]，详见文件头部注释',
+  usage: '用法：codex-run.mjs <run|discuss|resume|review|status|watch|config> [选项]，run / resume / discuss / review 支持 [--track <路径>]...，详见文件头部注释',
   badArg: (a) => `无法识别的参数：${a}`,
   missingValue: (a) => `缺少参数值：${a}`,
   missingOpt: (key) => `缺少 --${key}`,
@@ -39,14 +39,21 @@ const zh = {
     `${mode} 开始｜模型 ${model}｜推理强度 ${effort}${level ? `（等级 ${level}）` : '（直接指定）'}｜记录目录 ${dir}`,
   trackingUnavailable: (err) => `改动追踪不可用：${err}`,
   trackingFailed: (err) => `改动追踪失败：${err}`,
-  readonlyChanged: (kind, n) => `${kind === 'discuss' ? '讨论' : '审查'}本应只读，但检测到 ${n} 个文件被改动，请检查 diff.patch`,
+  readonlyChanged: (kind, n) => `${kind === 'discuss' ? '讨论' : '审查'}本应只读，但 Codex 改动了 ${n} 个文件，请检查 diff.patch`,
+  unattributedChanges: (n) => `任务期间工作目录里另有 ${n} 个文件发生变化，没有证据表明是 Codex 改的，可能来自 Claude 或其他会话；Codex 用命令或脚本写的文件也会归到这里。不要直接还原，先确认是谁改的`,
+  reportedNotTracked: (paths) => `Codex 报告改动了这些文件，但它们不在追踪范围内（可能被忽略规则排除），diff.patch 里没有：${paths.join('、')}。需要追踪时，派活时用 --track 指定`,
+  quotaExhausted: (resets) => `Codex 额度已用完${resets ? `，预计 ${resets} 恢复` : ''}。不要重试；会话已保留，额度恢复后可以用 resume 继续`,
+  lastMessageTruncated: (file) => `last_message 只保留了前 8000 字，全文见 ${file}`,
   badReport: '最终报告不是合法 JSON，见 last_message',
   trackNote: '只追踪工作目录内的改动',
 
   // ---------- 发给 Codex 的约束 ----------
   footer: (cwd, addDirs) => `---
 ## 固定约束（调度方自动附加）
-- 工作目录：${cwd}${addDirs.length ? `；另可改动：${addDirs.join('、')}` : ''}。只改任务说明列出的文件和范围；确实需要超出范围时先停下，写进报告，不要擅自扩大改动。
+- 工作目录：${cwd}${addDirs.length ? `；另可改动：${addDirs.join('、')}` : ''}。只改任务说明列出的文件和范围。任务说明"允许的适配"一节写明的事可以直接做，在报告里说明做了什么、为什么等效；没写明的越界都不要做。
+- 开始前先花很少的成本做预检：解释器和依赖能用、测试能被发现、任务需要的输入存在。只做检查，不要因此跑耗时的完整验收。
+- 遇到下面的情况，停在当前位置，把问题写进报告的 decision_requests，status 填 blocked：需要突破上面的范围或授权；需要改变研究口径、样本外纪律或验收标准；要做不可逆的操作；问题的答案不同会让后面耗时的工作作废。
+- 其他拿不准的地方，选保守、可逆的做法继续，并在报告里写明；能先做不受这个问题影响的部分就先做，问题攒到一起再提，不要每个小疑问都停下。
 - 只写必要的测试，不要过度防御：不加多余的参数校验、try/catch、兜底分支和重复测试。
 - 命名、注释和提示文字以任务说明为准，给了原文就照用。没有指定的：命名沿用项目现有风格，起直白、能看出用途的名字；注释只在不显而易见的地方用一句简短的话说明"为什么"，不要长篇解释，也不要逐行注释。
 - 不执行 git commit / git push / git reset --hard 或任何改写历史的操作；不删除范围外的文件；不读取或修改密钥、凭据、.env 等敏感文件。
@@ -84,9 +91,10 @@ const zh = {
   stepLastEvent: (ev) => `上一个事件：${ev}`,
   statusActivity: (min, step) => `最后活动 ${min} 分钟前｜${step}`,
   tokenCount: (n) => (n >= 1e8 ? `${(n / 1e8).toFixed(2)} 亿` : n >= 1e4 ? `${(n / 1e4).toFixed(1)} 万` : String(n)),
-  tokenSummary: (u, ctx, fmt) => `token：输入 ${fmt(u.input_tokens)}（缓存 ${u.input_tokens ? Math.round((u.cached_input_tokens / u.input_tokens) * 100) : 0}%），输出 ${fmt(u.output_tokens)}`
-    + (ctx ? `｜对话长度 ${fmt(ctx.tokens)} / ${fmt(ctx.window)}` : ''),
-  contextNow: (ctx, fmt) => `｜对话长度 ${fmt(ctx.tokens)} / ${fmt(ctx.window)}`,
+  tokenSummary: (u, last, fmt, sessionTotal) => `token：输入 ${fmt(u.input_tokens)}（缓存 ${u.input_tokens ? Math.round((u.cached_input_tokens / u.input_tokens) * 100) : 0}%），输出 ${fmt(u.output_tokens)}`
+    + (sessionTotal ? '（会话累计）' : '')
+    + (last ? `｜最近一次请求 ${fmt(last.tokens)} / 窗口 ${fmt(last.window)}` : ''),
+  lastRequestNow: (last, fmt) => `｜最近一次请求 ${fmt(last.tokens)} / 窗口 ${fmt(last.window)}`,
   rateLimit: (r) => `Codex 额度：${r.window_minutes >= 1440 ? `${Math.round(r.window_minutes / 1440)} 天` : `${Math.round(r.window_minutes / 60)} 小时`}窗口已用 ${r.used_percent}%`,
 
   // ---------- watch ----------
@@ -123,7 +131,7 @@ const en = {
   projectIgnored: (keys) => `${keys} can only be set in the user config; ignored in the project config`,
 
   // ---------- arguments ----------
-  usage: 'Usage: codex-run.mjs <run|discuss|resume|review|status|watch|config> [options]; see the comment at the top of the file',
+  usage: 'Usage: codex-run.mjs <run|discuss|resume|review|status|watch|config> [options]; run / resume / discuss / review support [--track <path>]...; see the comment at the top of the file',
   badArg: (a) => `Unknown argument: ${a}`,
   missingValue: (a) => `Missing value for ${a}`,
   missingOpt: (key) => `Missing --${key}`,
@@ -151,14 +159,21 @@ const en = {
     `${mode} started | model ${model} | effort ${effort}${level ? ` (level ${level})` : ' (set directly)'} | run dir ${dir}`,
   trackingUnavailable: (err) => `Change tracking unavailable: ${err}`,
   trackingFailed: (err) => `Change tracking failed: ${err}`,
-  readonlyChanged: (kind, n) => `The ${kind === 'discuss' ? 'discussion' : 'review'} should be read-only, but ${n} files were changed; check diff.patch`,
+  readonlyChanged: (kind, n) => `The ${kind === 'discuss' ? 'discussion' : 'review'} should be read-only, but Codex changed ${n} files; check diff.patch`,
+  unattributedChanges: (n) => `${n} other files changed in the working directory during the run, with no evidence that Codex changed them. They may come from Claude or another session; files Codex wrote through commands or scripts also land here. Don't revert them before finding out who changed them`,
+  reportedNotTracked: (paths) => `Codex reported changing these files, but they are outside tracking (probably excluded by ignore rules) and are not in diff.patch: ${paths.join(', ')}. Pass them with --track to track them`,
+  quotaExhausted: (resets) => `The Codex quota is used up${resets ? `; it should reset at ${resets}` : ''}. Don't retry; the session is kept and can be resumed once the quota resets`,
+  lastMessageTruncated: (file) => `last_message keeps only the first 8000 characters; the full text is in ${file}`,
   badReport: 'The final report is not valid JSON; see last_message',
   trackNote: 'Only changes inside the working directory are tracked',
 
   // ---------- constraints sent to Codex ----------
   footer: (cwd, addDirs) => `---
 ## Standing rules (added by the dispatcher)
-- Working directory: ${cwd}${addDirs.length ? `; you may also change: ${addDirs.join(', ')}` : ''}. Only change the files and areas listed in the brief. If you really need to go beyond them, stop and say so in the report instead of widening the change yourself.
+- Working directory: ${cwd}${addDirs.length ? `; you may also change: ${addDirs.join(', ')}` : ''}. Only change the files and scope listed in the brief. Things written in the brief's "Allowed adaptations" section may be done directly; say in the report what you did and why it is equivalent. Don't go beyond the scope in any other way.
+- Before starting, do a cheap preflight: the interpreter and dependencies work, tests can be discovered, and the inputs the task needs exist. Only check; don't run a long full verification for this.
+- In these cases, stop where you are, put the question in the report's decision_requests and set status to blocked: you would need to go beyond the scope or authorization above; the research definitions, out-of-sample discipline or acceptance criteria would change; an irreversible operation is needed; or different answers would make later time-consuming work wasted.
+- For anything else you are unsure about, take the conservative, reversible option, keep going and note it in the report. Do the parts the question doesn't affect first, and collect questions to ask together; don't stop for every small doubt.
 - Write only the tests that are needed, and don't code defensively: no extra argument checks, try/catch, fallback branches or duplicate tests.
 - Follow the brief for names, comments and user-facing text; if it gives exact wording, use it as is. Otherwise, follow the project's existing naming style and pick plain names that show what things are for. Comment only where something isn't obvious, with one short sentence on why. No long explanations, no line-by-line comments.
 - Don't run git commit / git push / git reset --hard or anything that rewrites history. Don't delete files outside the scope. Don't read or change keys, credentials, .env or other secrets.
@@ -197,9 +212,10 @@ const en = {
   stepLastEvent: (ev) => `Last event: ${ev}`,
   statusActivity: (min, step) => `last activity ${min} min ago | ${step}`,
   tokenCount: (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n)),
-  tokenSummary: (u, ctx, fmt) => `tokens: in ${fmt(u.input_tokens)} (${u.input_tokens ? Math.round((u.cached_input_tokens / u.input_tokens) * 100) : 0}% cached), out ${fmt(u.output_tokens)}`
-    + (ctx ? ` | context ${fmt(ctx.tokens)} / ${fmt(ctx.window)}` : ''),
-  contextNow: (ctx, fmt) => ` | context ${fmt(ctx.tokens)} / ${fmt(ctx.window)}`,
+  tokenSummary: (u, last, fmt, sessionTotal) => `tokens: in ${fmt(u.input_tokens)} (${u.input_tokens ? Math.round((u.cached_input_tokens / u.input_tokens) * 100) : 0}% cached), out ${fmt(u.output_tokens)}`
+    + (sessionTotal ? ' (session total)' : '')
+    + (last ? ` | last request ${fmt(last.tokens)} / window ${fmt(last.window)}` : ''),
+  lastRequestNow: (last, fmt) => ` | last request ${fmt(last.tokens)} / window ${fmt(last.window)}`,
   rateLimit: (r) => `Codex quota: ${r.used_percent}% of the ${r.window_minutes >= 1440 ? `${Math.round(r.window_minutes / 1440)}-day` : `${Math.round(r.window_minutes / 60)}-hour`} window used`,
 
   // ---------- watch ----------

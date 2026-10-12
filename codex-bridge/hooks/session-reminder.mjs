@@ -26,6 +26,10 @@ const REMINDERS = {
 项目自带的领域 skill 照常使用，两者不冲突：领域 skill 管怎么做，codex-dispatch 管由谁来做、要不要先讨论、做完怎么验收和审查。调用 Codex 只能通过该 skill 的脚本。`,
     prefs: (file, text) => `用户偏好文件 ${file}（与 skill 冲突时以偏好文件为准）：\n${text}`,
     truncated: '（内容过长，后面已截断，完整内容请读原文件）',
+    unfinishedHeading: '当前项目里有执行没有正常结束的 Codex 任务，可能需要处理：',
+    unfinishedRun: (m, status) => `- ${m.id}｜${m.mode}｜${m.title || '-'}｜${status}`,
+    unfinishedStatuses: { interrupted: '调度进程已退出，没有结果', quota_exhausted: '额度用完', stalled: '卡死已终止', timeout: '超时已终止' },
+    unfinishedFooter: '用 status --run <run_id> 查看详情，再决定续接、重来还是放弃。用户没提起时，在合适的时候简短告诉用户一句。',
   },
   en: {
     intro: (auto) => `The codex-bridge-en plugin is enabled. In these two cases, load the \`codex-bridge-en:codex-dispatch\` skill first and follow its thresholds:
@@ -34,8 +38,32 @@ const REMINDERS = {
 Keep using the project's own domain skills as usual; they don't conflict: domain skills say how to do the work, codex-dispatch decides who does it, whether to discuss first, and how it gets checked and reviewed. Codex may only be called through that skill's script.`,
     prefs: (file, text) => `User preference file ${file} (wins over the skill where they conflict):\n${text}`,
     truncated: '(Truncated because it is long; read the file for the rest)',
+    unfinishedHeading: 'Some Codex runs in this project did not finish normally and may need attention:',
+    unfinishedRun: (m, status) => `- ${m.id} | ${m.mode} | ${m.title || '-'} | ${status}`,
+    unfinishedStatuses: { interrupted: 'the dispatcher exited, no result', quota_exhausted: 'quota used up', stalled: 'stuck and stopped', timeout: 'timed out and stopped' },
+    unfinishedFooter: "Use status --run <run_id> for details, then decide whether to resume, start over or drop it. If the user hasn't brought it up, mention it to them briefly at a suitable moment.",
   },
 };
+
+function unfinishedRuns(root, cwd) {
+  if (!cwd || !fs.existsSync(root)) return [];
+  const directoryKey = (dir) => {
+    const resolved = path.resolve(dir);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  const runs = fs.readdirSync(root).map((id) => readJson(path.join(root, id, 'meta.json'))).filter(Boolean);
+  const resumed = new Set(runs.map((m) => m.parent).filter(Boolean));
+  const now = Date.now();
+  return runs.filter((m) => {
+    if (!m.cwd || directoryKey(m.cwd) !== directoryKey(cwd) || resumed.has(m.id)) return false;
+    const age = now - new Date(m.started_at).getTime();
+    if (!(age >= 0 && age <= 7 * 86400000)) return false;
+    if (m.status === 'running') {
+      try { process.kill(m.pid, 0); } catch { m.status = 'interrupted'; }
+    }
+    return ['interrupted', 'quota_exhausted', 'stalled', 'timeout'].includes(m.status);
+  }).sort((a, b) => new Date(b.started_at) - new Date(a.started_at)).slice(0, 5);
+}
 
 let input = '';
 process.stdin.setEncoding('utf8');
@@ -46,7 +74,8 @@ process.stdin.on('end', () => {
 
   const language = readJson(path.join(SCRIPTS, 'language.json'))?.language || 'zh';
   const t = REMINDERS[language] || REMINDERS.zh;
-  const autoDispatch = readJson(USER_CONFIG)?.auto_dispatch !== false;
+  const config = readJson(USER_CONFIG);
+  const autoDispatch = config?.auto_dispatch !== false;
 
   const parts = [t.intro(autoDispatch)];
   for (const file of [USER_PREFS, ...(cwd ? [path.join(cwd, '.claude', 'codex-bridge.md')] : [])]) {
@@ -55,6 +84,14 @@ process.stdin.on('end', () => {
     if (text.length > MAX_PREFS_CHARS) text = `${text.slice(0, MAX_PREFS_CHARS)}\n${t.truncated}`;
     parts.push(t.prefs(file, text));
   }
+
+  const runsRoot = process.env.CODEX_RUNS_DIR || config?.runs_dir || path.join(os.homedir(), '.claude', 'codex-runs');
+  const unfinished = unfinishedRuns(runsRoot, cwd);
+  if (unfinished.length) parts.push([
+    t.unfinishedHeading,
+    ...unfinished.map((m) => t.unfinishedRun(m, t.unfinishedStatuses[m.status])),
+    t.unfinishedFooter,
+  ].join('\n'));
 
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: parts.join('\n\n') },

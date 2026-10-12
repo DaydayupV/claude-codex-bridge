@@ -45,5 +45,20 @@ if (version(SOURCE) !== version(TARGET)) {
   problems++;
 }
 
+// schema 的描述文字分中英文，不同步；只检查两边的结构（字段、类型、枚举、必填项）一致。
+const SCHEMAS = ['report.schema.json', 'discuss.schema.json'];
+const shape = (node) => {
+  if (Array.isArray(node)) return node.map(shape);
+  if (!node || typeof node !== 'object') return node;
+  return Object.fromEntries(Object.entries(node).filter(([k]) => k !== 'description').map(([k, v]) => [k, shape(v)]));
+};
+for (const name of SCHEMAS) {
+  const read = (dir) => shape(JSON.parse(fs.readFileSync(path.join(dir, 'skills', 'codex-dispatch', 'schemas', name), 'utf8')));
+  if (JSON.stringify(read(SOURCE)) !== JSON.stringify(read(TARGET))) {
+    console.log(`schema 结构不一致：${name}（英文版需要手动对照修改）`);
+    problems++;
+  }
+}
+
 if (problems) process.exit(1);
-console.log(check ? '两个插件的共用文件和版本号一致' : '同步完成');
+console.log(check ? '两个插件的共用文件、schema 结构和版本号一致' : '同步完成');

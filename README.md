@@ -13,7 +13,7 @@
 | `/codex-bridge:rescue <任务>` | 把一个执行任务派给 Codex，完成后 Claude 审查改动、实际运行验证，不合格就返工 |
 | `/codex-bridge:discuss <议题>` | 就复杂的方案和 Codex 讨论，最多 3 轮交叉挑错，由 Claude 逐条裁决，最后给出决策记录 |
 | `/codex-bridge:review` | 让 Codex 审查未提交的改动、某个分支或某次提交，Claude 逐条核实，排除误报 |
-| `/codex-bridge:status` | 查看最近的 Codex 任务，或某次任务的详细结果。会列出每次任务的 token 消耗、对话长度和 Codex 额度已用比例 |
+| `/codex-bridge:status` | 查看最近的 Codex 任务，或某次任务的详细结果。会列出每次任务的 token 消耗、最近一次请求的用量和 Codex 额度已用比例 |
 | `/codex-bridge:watch` | 实时查看 Codex 正在做什么。默认简洁显示：Codex 说的话、折叠后的命令、文件改动和结果；加 `--verbose` 看全部细节 |
 | `/codex-bridge:config` | 查看或修改插件配置 |
 
@@ -128,6 +128,10 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 
 每次调用都会在 `~/.claude/codex-runs/<run_id>/` 留档：任务说明、Codex 的事件流、diff、最终报告。`/codex-bridge:status` 可以查看。改动追踪用的是放在这个记录目录里的独立 git 仓库，不会碰你项目里的 `.git`。
 
+改动追踪比较的是任务开始和结束时的整个工作目录，所以同一时间你、Claude 或别的会话改的文件也会被看到。脚本会把有证据是 Codex 改的文件（Codex 的文件改动事件和报告里列出的文件）和归属未知的文件分开标出，Claude 不会直接还原归属未知的改动。被 `.gitignore` 忽略的路径默认不追踪，派活时用 `--track` 指定后才会追踪。
+
+Codex 额度用完时，任务会标记为 `quota_exhausted`，并带上预计恢复时间，不会自动重试。调度进程意外退出、卡死或超时的任务，下次在这个项目里开会话时，Claude 会收到提醒。
+
 ## 平台支持
 
 Windows 上已经实际测试过。macOS 和 Linux 的代码路径已经写好，但还没有测试，欢迎反馈问题。
@@ -149,7 +153,7 @@ Windows 上已经实际测试过。macOS 和 Linux 的代码路径已经写好�
 node tools/sync-shared.mjs
 ```
 
-提交前可以用 `node tools/sync-shared.mjs --check` 检查两份脚本和两个插件的版本号是否一致。终端提示和发给 Codex 的约束等文字都在 `messages.mjs` 里，中英文各一份；SKILL.md、命令说明和 schema 两个插件各写各的。
+提交前可以用 `node tools/sync-shared.mjs --check` 检查两份脚本、两份 schema 的结构和两个插件的版本号是否一致。终端提示和发给 Codex 的约束等文字都在 `messages.mjs` 里，中英文各一份；SKILL.md、`references/`、命令说明和 schema 两个插件各写各的。
 
 ## 许可证
 

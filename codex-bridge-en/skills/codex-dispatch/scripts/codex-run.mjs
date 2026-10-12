@@ -2,12 +2,15 @@
 // codex-run.mjs — Claude Code 调度 Codex 的唯一入口。
 //
 //   node codex-run.mjs run    --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
-//                             [--add-dir <目录>]... [--timeout <分钟>] [--stall <分钟>] [--no-snapshot]
+//                             [--add-dir <目录>]... [--track <路径>]... [--timeout <分钟>] [--stall <分钟>] [--no-snapshot]
 //   node codex-run.mjs resume --run <run_id|last> --brief <文件|-> (--level <等级> | --effort <强度>) [--model <模型>] [--timeout <分钟>] [--stall <分钟>]
+//                             [--track <路径>]...
 //   node codex-run.mjs discuss --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
+//                             [--track <路径>]...
 //                             方案讨论，只读；后续轮次用 resume --run <讨论的 run_id> 续接
 //   node codex-run.mjs review --cwd <目录> [--uncommitted | --base <分支> | --commit <sha>]
 //                             [--brief <文件|->] (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
+//                             [--track <路径>]...
 //   node codex-run.mjs status [--run <run_id|last>] [--limit <n>]
 //   node codex-run.mjs watch  [--run <run_id|last>] [--verbose]
 //   node codex-run.mjs config [--cwd <目录>]
@@ -184,7 +187,7 @@ function die(msg) {
 
 function parseArgs(argv) {
   const [cmd, ...rest] = argv;
-  const opts = { 'add-dir': [] };
+  const opts = { 'add-dir': [], track: [] };
   const flags = new Set(['uncommitted', 'no-snapshot', 'verbose']);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -193,7 +196,7 @@ function parseArgs(argv) {
     if (flags.has(key)) { opts[key] = true; continue; }
     const val = rest[++i];
     if (val === undefined) die(M.missingValue(a));
-    if (key === 'add-dir') opts[key].push(val);
+    if (key === 'add-dir' || key === 'track') opts[key].push(val);
     else opts[key] = val;
   }
   return { cmd, opts };
@@ -323,7 +326,13 @@ function killTree(pid) {
 
 // ---------- 改动追踪 ----------
 
-function makeTracker(runDir, cwd) {
+function relativePath(cwd, file) {
+  return path.relative(cwd, path.resolve(cwd, file.replace(/\\/g, '/'))).replace(/\\/g, '/') || '.';
+}
+
+const pathKey = (file) => process.platform === 'win32' ? file.toLowerCase() : file;
+
+function makeTracker(runDir, cwd, track) {
   const gitDir = path.join(runDir, '.shadow');
   const base = [
     '--git-dir', gitDir, '--work-tree', cwd, '--literal-pathspecs',
@@ -345,7 +354,10 @@ function makeTracker(runDir, cwd) {
 
   function snap(label) {
     const index = path.join(gitDir, `index-${label}`);
-    const files = git(['ls-files', '-z', '-o', '--exclude-standard']).split('\0').filter(Boolean);
+    const files = [...new Set([
+      ...git(['ls-files', '-z', '-o', '--exclude-standard']).split('\0').filter(Boolean),
+      ...(track.length ? git(['ls-files', '-z', '-o', '--', ...track]).split('\0').filter(Boolean) : []),
+    ])];
     if (files.length > MAX_SNAPSHOT_FILES) throw new Error(M.tooManyFiles(files.length, MAX_SNAPSHOT_FILES));
     const small = [];
     const large = {};
@@ -356,7 +368,7 @@ function makeTracker(runDir, cwd) {
       if (st.size > LARGE_FILE_BYTES) large[f] = `${st.size}:${Math.round(st.mtimeMs)}`;
       else small.push(f);
     }
-    if (small.length) git(['add', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: small.join('\0'), index });
+    if (small.length) git(['add', '-f', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: small.join('\0'), index });
     return { tree: git(['write-tree'], { index }).trim(), large };
   }
 
@@ -386,7 +398,7 @@ function runCodex({ args, cwd, prompt, runDir, timeoutMin, stallMin, onSession }
     const { file, pre } = codexCommand();
     const events = fs.createWriteStream(path.join(runDir, 'events.jsonl'));
     const errLog = fs.createWriteStream(path.join(runDir, 'stderr.log'));
-    const out = { code: null, sessionId: null, usage: null, errors: [], warnings: [], timedOut: false, stalled: false, commands: 0 };
+    const out = { code: null, sessionId: null, usage: null, errors: [], warnings: [], fileChanges: new Set(), quotaExhausted: false, timedOut: false, stalled: false, commands: 0 };
     const runningCommands = new Set();
     let lastEventAt = Date.now();
     const child = spawn(file, [...pre, ...args], {
@@ -402,6 +414,9 @@ function runCodex({ args, cwd, prompt, runDir, timeoutMin, stallMin, onSession }
       let ev;
       try { ev = JSON.parse(line); } catch { return; }
       lastEventAt = Date.now();
+      if (ev.item?.type === 'file_change') {
+        for (const change of ev.item.changes || []) out.fileChanges.add(change.path);
+      }
       if (ev.item?.type === 'command_execution') {
         if (ev.type === 'item.started') runningCommands.add(ev.item.id);
         else if (ev.type === 'item.completed') runningCommands.delete(ev.item.id);
@@ -421,7 +436,12 @@ function runCodex({ args, cwd, prompt, runDir, timeoutMin, stallMin, onSession }
       while ((i = buf.indexOf('\n')) >= 0) { handle(buf.slice(0, i)); buf = buf.slice(i + 1); }
     });
     child.stderr.pipe(errLog);
-    child.stderr.on('data', (c) => { out.stderrTail = ((out.stderrTail || '') + c).slice(-4000); });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (c) => {
+      const text = (out.stderrTail || '') + c;
+      if (/usage limit|quota/i.test(text)) out.quotaExhausted = true;
+      out.stderrTail = text.slice(-4000);
+    });
 
     const timer = setTimeout(() => { out.timedOut = true; killTree(child.pid); }, timeoutMin * 60000);
     const stallCheck = setInterval(() => {
@@ -449,7 +469,7 @@ function runCodex({ args, cwd, prompt, runDir, timeoutMin, stallMin, onSession }
   });
 }
 
-// 从 Codex 自己的会话记录里读最后一次 token 统计：对话当前长度、上下文窗口和额度。
+// 从 Codex 自己的会话记录里读最后一次 token 统计：累计用量、最近一次请求、窗口和额度。
 // exec --json 只在结尾给一次总用量，这些数只有会话记录里有。找不到就返回 null。
 function codexSessionStats(sessionId, startedAt) {
   if (!sessionId) return null;
@@ -476,7 +496,8 @@ function codexSessionStats(sessionId, startedAt) {
     const last = p?.info?.last_token_usage;
     const rl = p?.rate_limits?.primary;
     return {
-      context: last && p.info.model_context_window ? { tokens: last.total_tokens ?? last.input_tokens, window: p.info.model_context_window } : null,
+      total_token_usage: p?.info?.total_token_usage || null,
+      last_request: last && p.info.model_context_window ? { tokens: last.total_tokens ?? last.input_tokens, window: p.info.model_context_window } : null,
       rate_limit: rl ? { used_percent: rl.used_percent, window_minutes: rl.window_minutes, resets_at: rl.resets_at } : null,
     };
   }
@@ -486,12 +507,17 @@ function codexSessionStats(sessionId, startedAt) {
 async function execute(ctx) {
   const { cfg, model, mode, kind, id, dir, cwd, level, effort, args, prompt, title, parent, opts, expectReport } = ctx;
   const started = Date.now();
+  const track = [...new Map(opts.track.map((file) => {
+    const rel = relativePath(cwd, file);
+    if (rel === '..' || rel.startsWith('../') || path.isAbsolute(rel)) die(M.badArg(`--track ${file}`));
+    return [pathKey(rel), rel];
+  })).values()];
   const sandbox = cfg.sandbox[kind === 'exec' ? 'run' : kind] || null;
   // model 为 null 时实际模型由 Codex 配置决定，model_shown 是给人看的实际模型名。
   const modelShown = model || M.modelFromCodex(codexConfigModel() || M.unknownModel);
   const meta = {
     id, mode, kind, title: title || null, cwd, model, model_shown: modelShown, level, effort, sandbox,
-    parent: parent || null,
+    parent: parent || null, track,
     started_at: new Date(started).toISOString(), status: 'running', pid: process.pid, session_id: ctx.sessionId || null,
   };
   const writeMeta = () => fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
@@ -500,13 +526,15 @@ async function execute(ctx) {
   process.stderr.write(`codex-run: ${M.started(mode, modelShown, effort, level, dir)}\n`);
 
   const warnings = [];
+  const notes = [];
   let tracker = null;
   let before = null;
   if (!opts['no-snapshot']) {
-    try { tracker = makeTracker(dir, cwd); before = tracker.snap('before'); }
+    try { tracker = makeTracker(dir, cwd, track); before = tracker.snap('before'); }
     catch (e) { warnings.push(M.trackingUnavailable(e.message)); tracker?.cleanup(); tracker = null; }
   }
 
+  const baseline = mode === 'resume' ? codexSessionStats(ctx.sessionId, meta.started_at)?.total_token_usage : {};
   const r = await runCodex({
     args, cwd, prompt, runDir: dir,
     timeoutMin: Number(opts.timeout) || cfg.timeout_min,
@@ -514,18 +542,30 @@ async function execute(ctx) {
     onSession: (sid) => { meta.session_id = sid; writeMeta(); },
   });
 
-  let changes = { available: false };
+  const lastFile = path.join(dir, 'last-message.txt');
+  const last = fs.existsSync(lastFile) ? fs.readFileSync(lastFile, 'utf8').trim() : '';
+  let report = null;
+  if (expectReport && last) { try { report = JSON.parse(last); } catch { warnings.push(M.badReport); } }
+  if (!report && last.length > 8000) notes.push(M.lastMessageTruncated(lastFile));
+
+  const reported = (report?.files_changed || []).map((f) => relativePath(cwd, f.path));
+  const codexPaths = new Set([...r.fileChanges].map((f) => pathKey(relativePath(cwd, f))));
+  for (const file of reported) codexPaths.add(pathKey(file));
+  let changes = { available: false, codex_total: 0, unknown_total: 0 };
   if (tracker) {
     try { changes = { available: true, ...tracker.diff(before, tracker.snap('after'), path.join(dir, 'diff.patch')) }; }
     catch (e) { warnings.push(M.trackingFailed(e.message)); }
     finally { tracker.cleanup(); }
   }
-  if (kind !== 'exec' && changes.files?.length) warnings.push(M.readonlyChanged(kind, changes.files.length));
-
-  const lastFile = path.join(dir, 'last-message.txt');
-  const last = fs.existsSync(lastFile) ? fs.readFileSync(lastFile, 'utf8').trim() : '';
-  let report = null;
-  if (expectReport && last) { try { report = JSON.parse(last); } catch { warnings.push(M.badReport); } }
+  const tracked = [...(changes.files || []), ...(changes.large_files_changed || [])];
+  for (const file of tracked) file.by = codexPaths.has(pathKey(relativePath(cwd, file.path))) ? 'codex' : 'unknown';
+  changes.codex_total = tracked.filter((f) => f.by === 'codex').length;
+  changes.unknown_total = tracked.length - changes.codex_total;
+  if (kind !== 'exec' && changes.codex_total) warnings.push(M.readonlyChanged(kind, changes.codex_total));
+  if (changes.unknown_total) notes.push(M.unattributedChanges(changes.unknown_total));
+  const trackedPaths = new Set(tracked.map((f) => pathKey(relativePath(cwd, f.path))));
+  const untracked = [...new Map(reported.filter((f) => !trackedPaths.has(pathKey(f))).map((f) => [pathKey(f), f])).values()];
+  if (untracked.length) notes.push(M.reportedNotTracked(untracked));
 
   // 重连之类的 error 事件不一定致命，成败以退出码为准，errors 照常汇报。
   const ok = r.code === 0 && !r.timedOut && !r.stalled;
@@ -534,9 +574,24 @@ async function execute(ctx) {
     const tail = String(r.stderrTail || '').trim().split('\n').slice(-5).join('\n');
     if (tail) r.errors.push(M.exitCode(r.code, tail));
   }
-  meta.status = ok ? 'done' : r.stalled ? 'stalled' : r.timedOut ? 'timeout' : 'failed';
+  const quotaExhausted = !ok && (r.quotaExhausted || r.errors.some((e) => /usage limit|quota/i.test(e)));
+  meta.status = ok ? 'done' : quotaExhausted ? 'quota_exhausted' : r.stalled ? 'stalled' : r.timedOut ? 'timeout' : 'failed';
   meta.session_id = r.sessionId || meta.session_id;
   meta.ended_at = new Date().toISOString();
+  const stats = codexSessionStats(meta.session_id, meta.started_at);
+  const total = stats?.total_token_usage || r.usage;
+  const usage = total && (baseline ? Object.fromEntries(
+    ['input_tokens', 'cached_input_tokens', 'output_tokens', 'reasoning_output_tokens']
+      .map((key) => [key, (total[key] || 0) - (baseline[key] || 0)]),
+  ) : total);
+  const resetsAt = stats?.rate_limit?.resets_at;
+  const quotaResetsAt = resetsAt == null ? null : new Date(resetsAt * 1000).toISOString();
+  if (quotaExhausted) {
+    const date = quotaResetsAt && new Date(quotaResetsAt);
+    const pad = (n) => String(n).padStart(2, '0');
+    const local = date && `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    r.errors.push(M.quotaExhausted(local));
+  }
 
   const result = {
     run_id: id,
@@ -545,6 +600,7 @@ async function execute(ctx) {
     status: meta.status,
     title: meta.title,
     cwd,
+    track,
     model,
     model_shown: modelShown,
     level,
@@ -554,10 +610,14 @@ async function execute(ctx) {
     session_id: meta.session_id,
     exit_code: r.code,
     duration_s: Math.round((Date.now() - started) / 1000),
-    usage: r.usage,
-    ...(() => { const s = codexSessionStats(meta.session_id, meta.started_at); return { context: s?.context || null, rate_limit: s?.rate_limit || null }; })(),
+    usage,
+    usage_scope: total ? (baseline ? 'this_run' : 'session_total') : null,
+    last_request: stats?.last_request || null,
+    rate_limit: stats?.rate_limit || null,
+    quota_resets_at: quotaResetsAt,
     commands_executed: r.commands,
     errors: r.errors,
+    notes,
     warnings: [...warnings, ...r.warnings.filter((w) => !/^Under-development features enabled/.test(w))],
     report,
     last_message: report ? undefined : last.slice(0, 8000),
@@ -605,6 +665,7 @@ async function cmdDiscuss(o) {
 
 async function cmdResume(o) {
   const parent = findRun(need(o, 'run'));
+  o.track = [...(parent.meta.track || []), ...o.track];
   if (!parent.meta.session_id) die(M.noSession(parent.id));
   const kind = parent.meta.kind || (parent.meta.mode === 'review' ? 'review' : 'exec');
   if (kind === 'review') die(M.reviewNoResume);
@@ -721,12 +782,12 @@ function cmdStatus(o) {
     let row = `${rid}  ${m.mode.padEnd(6)}  ${m.status.padEnd(11)}  ${m.model_shown || m.model || '-'}  ${(m.level ? `${m.level}/${m.effort}` : m.effort).padEnd(14)}  ${mins.padStart(6)}min  ${m.title || ''}  @ ${m.cwd}`;
     if (m.status === 'running') {
       const a = describeActivity(dir);
-      const ctx = codexSessionStats(m.session_id, m.started_at)?.context;
-      row += `\n    └ ${M.statusActivity(a.idle_min ?? '-', a.step)}${ctx ? M.contextNow(ctx, M.tokenCount) : ''}`;
+      const last = codexSessionStats(m.session_id, m.started_at)?.last_request;
+      row += `\n    └ ${M.statusActivity(a.idle_min ?? '-', a.step)}${last ? M.lastRequestNow(last, M.tokenCount) : ''}`;
     } else {
       let r = null;
       try { r = JSON.parse(fs.readFileSync(path.join(dir, 'result.json'), 'utf8')); } catch { /* 没有结果 */ }
-      if (r?.usage) row += `\n    └ ${M.tokenSummary(r.usage, r.context, M.tokenCount)}`;
+      if (r?.usage) row += `\n    └ ${M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total')}`;
     }
     return row;
   });
@@ -894,6 +955,7 @@ function verboseRenderer(cwd, rel) {
   const finish = (r, m) => {
     if (r) out('■', M.watchFinished(r.status, r.duration_s, r.changes?.available ? M.watchChanged(r.changes.files_total) : M.watchNotTracked));
     else out('■', m?.status === 'running' ? M.watchInterrupted : M.watchEnded(m?.status));
+    if (r?.usage) out('Σ', M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total'));
   };
   return { show, finish, goLive: () => { live = true; } };
 }
@@ -998,8 +1060,8 @@ function conciseRenderer(cwd, rel) {
     }
     const ok = r.status === 'done' && (!r.report?.status || r.report.status === 'completed');
     const changed = r.changes?.available ? M.watchChanged(r.changes.files_total) : M.watchNotTracked;
-    write((ok ? C.green : C.red)(C.bold(M.watchFinished(r.report?.status || r.status, r.duration_s, changed))));
-    if (r.usage) write(C.dim(M.tokenSummary(r.usage, r.context, M.tokenCount)));
+    write((ok ? C.green : C.red)(C.bold(M.watchFinished(r.status === 'done' ? r.report?.status || r.status : r.status, r.duration_s, changed))));
+    if (r.usage) write(C.dim(M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total')));
     const summary = r.report?.summary || r.report?.position;
     if (summary) { write(); paragraph(summary, '  ', 12); }
     const issues = r.report?.open_issues || r.report?.open_questions || [];

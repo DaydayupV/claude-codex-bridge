@@ -13,7 +13,7 @@ The idea is a split of roles: Claude does the planning, key decisions, design an
 | `/codex-bridge-en:rescue <task>` | Hands a task to Codex. When it finishes, Claude reviews the diff, runs it to verify, and sends it back for rework if needed |
 | `/codex-bridge-en:discuss <topic>` | Discusses a complex design with Codex: up to 3 rounds of critiquing each other's proposals, then Claude rules on each point and writes up a decision record |
 | `/codex-bridge-en:review` | Has Codex review uncommitted changes, a branch or a commit. Claude checks each finding and filters out false positives |
-| `/codex-bridge-en:status` | Lists recent Codex runs, or shows the details of one, with each run's token use, conversation length and how much of the Codex quota is used |
+| `/codex-bridge-en:status` | Lists recent Codex runs, or shows the details of one, with each run's token use, the size of its latest request and how much of the Codex quota is used |
 | `/codex-bridge-en:watch` | Shows what Codex is doing, live. The default view is concise (what Codex says, folded commands, file changes, the result); add `--verbose` for every detail |
 | `/codex-bridge-en:config` | Shows or changes the plugin's settings |
 
@@ -128,6 +128,10 @@ Preference files win over the plugin's built-in rules, and project level wins ov
 
 Each call is recorded in `~/.claude/codex-runs/<run_id>/`: the brief, Codex's event stream, the diff and the final report. `/codex-bridge-en:status` reads them. Change tracking uses a separate git repository inside that record folder and never touches your project's `.git`.
 
+Change tracking compares the whole working directory at the start and end of a run, so files that you, Claude or another session change at the same time are seen too. The script marks files with evidence that Codex changed them (Codex's file-change events and the files listed in its report) separately from files of unknown origin, and Claude won't simply revert changes of unknown origin. Paths ignored by `.gitignore` aren't tracked unless you pass them with `--track` when handing off.
+
+When the Codex quota runs out, the run is marked `quota_exhausted` with the expected reset time and isn't retried automatically. Runs whose dispatcher exited unexpectedly, got stuck or timed out are flagged to Claude the next time you start a session in that project.
+
 ## Platforms
 
 Tested on Windows. The macOS and Linux code paths are written but not yet tested; issue reports are welcome.
@@ -149,7 +153,7 @@ Both plugins use the same scripts (`codex-run.mjs`, `messages.mjs` and the hooks
 node tools/sync-shared.mjs
 ```
 
-Before committing, `node tools/sync-shared.mjs --check` checks that both copies of the scripts and both plugin versions match. Terminal messages, the rules sent to Codex and other text live in `messages.mjs`, with a Chinese and an English set; each plugin has its own SKILL.md, command docs and schemas.
+Before committing, `node tools/sync-shared.mjs --check` checks that both copies of the scripts, the structure of both sets of schemas and both plugin versions match. Terminal messages, the rules sent to Codex and other text live in `messages.mjs`, with a Chinese and an English set; each plugin has its own SKILL.md, `references/`, command docs and schemas.
 
 ## License
 

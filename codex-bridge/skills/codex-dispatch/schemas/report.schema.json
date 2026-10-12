@@ -1,12 +1,12 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["status", "summary", "files_changed", "commands_run", "verification", "open_issues"],
+  "required": ["status", "summary", "files_changed", "commands_run", "verification", "open_issues", "decision_requests"],
   "properties": {
     "status": {
       "type": "string",
       "enum": ["completed", "partial", "blocked", "failed"],
-      "description": "completed=全部完成并验证；partial=部分完成；blocked=缺信息或越界需要调度方决定；failed=没做成"
+      "description": "completed=全部完成并验证；partial=部分完成；blocked=有 decision_requests 里的问题需要调度方决定，无法继续；failed=没做成"
     },
     "summary": { "type": "string", "description": "做了什么、关键实现决策，简明扼要" },
     "files_changed": {
@@ -35,6 +35,21 @@
       }
     },
     "verification": { "type": "string", "description": "如何验证结果正确；没验证就写没验证及原因" },
+    "decision_requests": {
+      "type": "array",
+      "description": "需要调度方决定才能继续的问题；没有就为空数组",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "why_it_matters", "options", "recommendation"],
+        "properties": {
+          "question": { "type": "string" },
+          "why_it_matters": { "type": "string" },
+          "options": { "type": "array", "items": { "type": "string" } },
+          "recommendation": { "type": "string" }
+        }
+      }
+    },
     "open_issues": {
       "type": "array",
       "items": { "type": "string" },
