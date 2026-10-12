@@ -17,7 +17,7 @@
 | `/codex-bridge:watch` | 实时查看 Codex 正在做什么。默认简洁显示：Codex 说的话、折叠后的命令、文件改动和结果；加 `--verbose` 看全部细节 |
 | `/codex-bridge:config` | 查看或修改插件配置 |
 
-不用命令也可以。插件自带的 skill 会让 Claude 自己判断：执行类任务达到一定规模时主动派给 Codex，遇到复杂又不确定的方案时先和 Codex 讨论，高风险改动交付前请 Codex 审查。这个行为可以关掉，见下文的 `auto_dispatch`。为了不让 Claude 忘了这件事（项目里有自己的 skill 时尤其容易漏），插件会在每个会话开始时提醒它一次，并附上你的偏好文件。
+不用命令也可以。插件自带的 skill 会让 Claude 自己判断：执行类任务达到一定规模时主动派给 Codex，遇到复杂又不确定的方案时先和 Codex 讨论，高风险改动交付前请 Codex 审查。大任务能拆成几份互不相干的部分时，Claude 会同时派给几个 Codex 会话，缩短等待时间（见下文的 `max_parallel`）。这个行为可以关掉，见下文的 `auto_dispatch`。为了不让 Claude 忘了这件事（项目里有自己的 skill 时尤其容易漏），插件会在每个会话开始时提醒它一次，并附上你的偏好文件。
 
 每次派活，Claude 都会在对话里写明这次用的模型和推理强度。
 
@@ -88,6 +88,7 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 |---|---|---|
 | `auto_dispatch` | `true`：符合条件的任务由 Claude 主动派给 Codex；`false`：Claude 先提议，你同意后再派 | `true` |
 | `watch` | `auto`：派活后自动打开实时查看；`off`：不主动打开 | `auto` |
+| `max_parallel` | 一个大任务拆开并发时，同一组最多同时运行几个 Codex 任务。拆得越多等得越短，但总 token 更多；设成 `1` 就不并发 | `3` |
 | `model` | 各等级没单独写模型时用的模型 | `null`，沿用 Codex 配置 |
 | `levels` | 见上文 | 模型都是 `null`；推理强度 run 和 review 为 medium / high / max，discuss 为 high / max / max |
 | `sandbox` | `run` / `discuss` / `review` 各自的沙箱：`read-only`、`workspace-write`、`danger-full-access` | 都是 `null`，沿用 Codex 配置 |

@@ -17,7 +17,7 @@ The idea is a split of roles: Claude does the planning, key decisions, design an
 | `/codex-bridge-en:watch` | Shows what Codex is doing, live. The default view is concise (what Codex says, folded commands, file changes, the result); add `--verbose` for every detail |
 | `/codex-bridge-en:config` | Shows or changes the plugin's settings |
 
-You don't have to use the commands. The bundled skill lets Claude decide on its own: hand off hands-on tasks that are big enough, discuss complex and uncertain designs with Codex first, and ask Codex to review risky changes before delivering them. You can turn this off with `auto_dispatch` (see below). So that Claude doesn't forget (easy when a project has its own skills), the plugin reminds it once at the start of every session and includes your preference files.
+You don't have to use the commands. The bundled skill lets Claude decide on its own: hand off hands-on tasks that are big enough, discuss complex and uncertain designs with Codex first, and ask Codex to review risky changes before delivering them. When a big task splits into parts that don't touch each other, Claude hands them to several Codex sessions at once to cut the wait (see `max_parallel` below). You can turn this off with `auto_dispatch` (see below). So that Claude doesn't forget (easy when a project has its own skills), the plugin reminds it once at the start of every session and includes your preference files.
 
 Every time Claude calls Codex, it tells you in the chat which model and reasoning effort it is using.
 
@@ -88,6 +88,7 @@ Claude only decides which level a task is: `simple`, `normal` or `complex`. You 
 |---|---|---|
 | `auto_dispatch` | `true`: Claude hands suitable tasks to Codex on its own. `false`: Claude suggests it first and waits for your OK | `true` |
 | `watch` | `auto`: open the live view after each handoff. `off`: don't open it | `auto` |
+| `max_parallel` | When a big task is split to run in parallel, how many Codex runs in one group may run at once. More parts means a shorter wait but more tokens in total; `1` turns parallel runs off | `3` |
 | `model` | Model for levels that don't set their own | `null` (use Codex config) |
 | `levels` | See above | All models `null`; effort medium / high / max for run and review, high / max / max for discuss |
 | `sandbox` | Sandbox for each of `run` / `discuss` / `review`: `read-only`, `workspace-write` or `danger-full-access` | All `null` (use Codex config) |

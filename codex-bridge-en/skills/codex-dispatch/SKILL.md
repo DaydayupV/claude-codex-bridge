@@ -40,12 +40,12 @@ The only entry point is `scripts/codex-run.mjs` in this skill's folder (that is,
 - **Stop on sandbox problems**: if the sandbox stops Codex from starting commands or it errors, tell the user the exact error and your assessment, and let them decide whether to change the config. Don't switch the sandbox, edit config files or look for a way around the script yourself.
 
 ```bash
-node "<script path>" run    --cwd "<project dir>" --brief "<brief.md>" --title "<short title>" --level <simple|normal|complex> [--add-dir "<dir>"] [--track "<path>"] [--timeout minutes]
+node "<script path>" run    --cwd "<project dir>" --brief "<brief.md>" --title "<short title>" --level <simple|normal|complex> [--add-dir "<dir>"] [--track "<path>"] [--group <name> --scope "<path>"] [--timeout minutes]
 node "<script path>" resume --run <run_id|last> --brief "<rework.md>" --level <simple|normal|complex> [--track "<path>"]
 node "<script path>" discuss --cwd "<project dir>" --brief "<topic.md>" --title "<short title>" --level <normal|complex>
 node "<script path>" review --cwd "<project dir>" [--uncommitted | --base <branch> | --commit <sha>] [--brief "<review-focus.md>"] --level <simple|normal|complex>
-node "<script path>" status [--run <run_id|last>] [--limit n]
-node "<script path>" watch  [--run <run_id|last>]
+node "<script path>" status [--run <run_id|last> | --group <name>] [--limit n]
+node "<script path>" watch  [--run <run_id|last> | --group <name>]
 node "<script path>" config [--cwd "<project dir>"]
 ```
 
@@ -63,7 +63,7 @@ node "<script path>" config [--cwd "<project dir>"]
   - `notes`: informational messages, such as changes of unknown origin, or files Codex reported but tracking didn't see.
   - `session_id`, `run_dir`: the full diff is in `run_dir/diff.patch`.
   - Token use: `usage` is this call's input, cached and output tokens (when `usage_scope` is `session_total`, it's the whole session's total); `last_request` is the size of the latest request and the model's context window; `rate_limit` is how much of the Codex quota is used.
-- Several runs can go in parallel, but their file scopes must not overlap. **Claude doesn't touch files Codex is changing.**
+- Several runs can go in parallel, but their file scopes must not overlap; see "Splitting work to run in parallel". **Claude doesn't touch files Codex is changing.**
 
 ## Configuration
 The user config is `~/.claude/codex-bridge.json` and the project config is `<project dir>/.claude/codex-bridge.json`; the latter overrides the former. What each setting means and its default are in `references/config.md`; read it when the user asks about or wants to change settings.
@@ -137,6 +137,34 @@ Anything that needs special mention in the report.
 Codex leans toward defensive coding and tends to write lots of unneeded checks and tests. Say "only write the tests that are needed, don't code defensively" in the brief (the script already appends it; repeat it when the task invites overdoing it).
 
 Grant "Allowed adaptations" by meaning, not by size: a one-line change can move an out-of-sample boundary, a fee rate or an assertion. Anything beyond the scope that isn't in this section makes the standing rules tell Codex to stop and ask in the report's `decision_requests`. Write foreseeable environment problems (such as a same-named `tests` package in the project) into this section up front to save a stop.
+
+## Splitting work to run in parallel
+Most of the time a Codex run takes goes into the model thinking, and only a small part into running commands. So splitting a big task across several Codex sessions running at once noticeably cuts the wait. The cost is more tokens in total (each session reads the background on its own), and Claude has to write more briefs and check more results.
+
+### When to split
+Split only when **all** of these hold; otherwise hand it off as one task:
+1. It splits into 2 or more parts, no more than `max_parallel` in the config (`effective.max_parallel` in the `config` output, 3 by default); the parts **write to no shared files** and **don't depend on each other's output**.
+2. Claude can settle the interfaces between the parts (function signatures, data formats, file paths) before handing off, and write them into every brief. If they can't be settled, don't split.
+3. Each part is expected to take more than 10 minutes. For small tasks, the fixed overhead outweighs the time saved.
+
+**Don't split**: bugs with an unknown cause that need investigating; refactors that touch shared core files; research stages that build on each other; work that needs one consistent design; tasks that are mostly heavy computation (running them at once fights over the CPU; have Codex write a batch script that runs them in parallel instead).
+
+Good cases: several independent scripts or modules; once the interface is set, one part writes the implementation and another the tests; bulk changes split by folder.
+
+### How to hand it off
+- Give the group a name (a short title plus the date, such as `factor-scripts-1013`) and hand off each part with `run --group <name> --scope <path it may change>`; `--scope` can be given more than once. Start the parts together in the background, in the same message.
+- The script refuses two cases: the group already has `max_parallel` runs in progress, or the write scope overlaps with a run in progress in the same group. If refused, split the scope again as the error says, or wait for an earlier run to finish.
+- Besides the general structure, each brief says:
+  - What the other parts of the group do and which files they change; those files are off-limits.
+  - The shared interface agreements, copied word for word into every brief.
+  - How to verify this part on its own.
+- Open just one live-view tab: `node <run dir>/watch.mjs --group <name>`, titled "Codex group: <name>". It shows the progress of the whole group together.
+- Tell the user how many parts there are and what each does, with the model and effort of each.
+
+### Checking the results
+- Check each part on its own as in "Checking the result", and send back only the parts that fail (resume keeps the group and scope).
+- Once all pass, Claude does an **overall check**: run the full tests or scripts on the combined result, since each part was only verified on its own.
+- In the report, list each part's run_id and token use, then the total.
 
 ## Research and analysis tasks
 Research tasks are work whose conclusions rest on experiments and data, such as strategy and factor research, data analysis, comparison experiments and performance investigations. The risk here isn't buggy code; it's conclusions that go beyond the evidence.

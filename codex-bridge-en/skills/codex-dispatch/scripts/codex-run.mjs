@@ -2,17 +2,17 @@
 // codex-run.mjs — Claude Code 调度 Codex 的唯一入口。
 //
 //   node codex-run.mjs run    --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
-//                             [--add-dir <目录>]... [--track <路径>]... [--timeout <分钟>] [--stall <分钟>] [--no-snapshot]
+//                             [--add-dir <目录>]... [--track <路径>]... [--group <组名>] [--scope <路径>]... [--timeout <分钟>] [--stall <分钟>] [--no-snapshot]
 //   node codex-run.mjs resume --run <run_id|last> --brief <文件|-> (--level <等级> | --effort <强度>) [--model <模型>] [--timeout <分钟>] [--stall <分钟>]
-//                             [--track <路径>]...
+//                             [--track <路径>]... [--group <组名>] [--scope <路径>]...
 //   node codex-run.mjs discuss --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
-//                             [--track <路径>]...
+//                             [--track <路径>]... [--group <组名>] [--scope <路径>]...
 //                             方案讨论，只读；后续轮次用 resume --run <讨论的 run_id> 续接
 //   node codex-run.mjs review --cwd <目录> [--uncommitted | --base <分支> | --commit <sha>]
 //                             [--brief <文件|->] (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
 //                             [--track <路径>]...
-//   node codex-run.mjs status [--run <run_id|last>] [--limit <n>]
-//   node codex-run.mjs watch  [--run <run_id|last>] [--verbose]
+//   node codex-run.mjs status [--run <run_id|last>] [--limit <n>] [--group <组名>]
+//   node codex-run.mjs watch  [--run <run_id|last>] [--verbose] [--group <组名>]
 //   node codex-run.mjs config [--cwd <目录>]
 //
 // watch 把 events.jsonl 实时翻译成可读进度；不给 --run 时跟踪正在运行的任务（没有就等新任务出现）。
@@ -58,6 +58,8 @@ const DEFAULT_CONFIG = {
   auto_dispatch: true,
   // auto：有终端面板工具时自动打开实时查看，没有就把 watch 命令发给用户；off：不主动打开
   watch: 'auto',
+  // 同一任务组里最多同时运行几个任务
+  max_parallel: 3,
   // 各等级没写模型时用的模型；null 表示沿用 Codex 自己的配置（~/.codex/config.toml）
   model: null,
   // 各模式下，简单 / 常规 / 复杂三级任务分别用的模型和推理强度（Codex 的 model_reasoning_effort）。
@@ -187,7 +189,7 @@ function die(msg) {
 
 function parseArgs(argv) {
   const [cmd, ...rest] = argv;
-  const opts = { 'add-dir': [], track: [] };
+  const opts = { 'add-dir': [], track: [], scope: [] };
   const flags = new Set(['uncommitted', 'no-snapshot', 'verbose']);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -196,7 +198,7 @@ function parseArgs(argv) {
     if (flags.has(key)) { opts[key] = true; continue; }
     const val = rest[++i];
     if (val === undefined) die(M.missingValue(a));
-    if (key === 'add-dir' || key === 'track') opts[key].push(val);
+    if (key === 'add-dir' || key === 'track' || key === 'scope') opts[key].push(val);
     else opts[key] = val;
   }
   return { cmd, opts };
@@ -283,14 +285,42 @@ function writeWatchLauncher() {
   try { fs.writeFileSync(path.join(RUNS_ROOT, 'watch.mjs'), launcher); } catch { /* 不影响主流程 */ }
 }
 
-function newRunDir() {
-  const d = new Date();
-  const p = (n) => String(n).padStart(2, '0');
-  const id = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${Math.random().toString(36).slice(2, 6)}`;
+async function newRunDir(group) {
+  let release = () => {};
+  let previous = '';
+  if (group != null) {
+    if (!Number.isInteger(CONFIG.max_parallel) || CONFIG.max_parallel < 1) die(M.badMaxParallel);
+    fs.mkdirSync(RUNS_ROOT, { recursive: true });
+    // 登记和准入串行完成，避免随机后缀让后登记的任务排到前面。
+    const lock = path.join(RUNS_ROOT, '.group-start.lock');
+    for (;;) {
+      try { fs.writeFileSync(lock, String(process.pid), { flag: 'wx' }); break; }
+      catch (e) {
+        if (e.code !== 'EEXIST') throw e;
+        let owner;
+        let age = 0;
+        try { owner = Number(fs.readFileSync(lock, 'utf8')); age = Date.now() - fs.statSync(lock).mtimeMs; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+        // 登记只需要几毫秒；持有者已退出，或者锁放了很久（持有者被强杀后 pid 又被复用），都当作残留锁清掉。
+        if ((owner && !pidAlive(owner)) || age > 30000) fs.rmSync(lock, { force: true });
+        await sleep(25);
+      }
+    }
+    const cleanup = () => fs.rmSync(lock, { force: true });
+    process.once('exit', cleanup);
+    release = () => { cleanup(); process.removeListener('exit', cleanup); };
+    previous = listRuns().find((id) => readMeta(path.join(RUNS_ROOT, id))?.group != null) || '';
+  }
+  let id;
+  do {
+    if (id) await sleep(10);
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    id = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${Math.random().toString(36).slice(2, 6)}`;
+  } while (id <= previous);
   const dir = path.join(RUNS_ROOT, id);
   fs.mkdirSync(dir, { recursive: true });
   writeWatchLauncher();
-  return { id, dir };
+  return { id, dir, release };
 }
 
 function listRuns() {
@@ -517,11 +547,23 @@ async function execute(ctx) {
   const modelShown = model || M.modelFromCodex(codexConfigModel() || M.unknownModel);
   const meta = {
     id, mode, kind, title: title || null, cwd, model, model_shown: modelShown, level, effort, sandbox,
-    parent: parent || null, track,
+    parent: parent || null, track, group: opts.group ?? null, scope: opts.scope,
     started_at: new Date(started).toISOString(), status: 'running', pid: process.pid, session_id: ctx.sessionId || null,
   };
-  const writeMeta = () => fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
-  writeMeta();
+  const writeMeta = () => {
+    const file = path.join(dir, 'meta.json');
+    // 同组任务会并发读取元数据，替换完整文件，避免把半份 JSON 当成没有记录。
+    const target = meta.group != null ? `${file}.tmp` : file;
+    fs.writeFileSync(target, JSON.stringify(meta, null, 2));
+    if (target !== file) fs.renameSync(target, file);
+  };
+  let rejection;
+  try {
+    writeMeta();
+    rejection = meta.group != null ? checkGroup(meta) : null;
+    if (rejection) fs.rmSync(dir, { recursive: true });
+  } finally { ctx.release(); }
+  if (rejection) die(rejection);
   fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
   process.stderr.write(`codex-run: ${M.started(mode, modelShown, effort, level, dir)}\n`);
 
@@ -601,6 +643,8 @@ async function execute(ctx) {
     title: meta.title,
     cwd,
     track,
+    group: meta.group,
+    scope: meta.scope,
     model,
     model_shown: modelShown,
     level,
@@ -635,19 +679,20 @@ async function execute(ctx) {
 // ---------- 子命令 ----------
 
 async function cmdRun(o) {
+  if (o.group != null && !o.scope.length) die(M.groupNeedsScope);
   const cwd = resolveDir(need(o, 'cwd'));
   const cfg = loadConfig(cwd);
   const addDirs = o['add-dir'].map(resolveDir);
   const brief = readBrief(o);
   const { level, model, effort } = pickProfile(cfg, o, 'run');
-  const { id, dir } = newRunDir();
+  const { id, dir, release } = await newRunDir(o.group);
   const args = [
     'exec', '--json', '--skip-git-repo-check', ...codexOptions(cfg, { model, effort, mode: 'run' }),
     '-C', cwd, '--output-schema', SCHEMA, '-o', path.join(dir, 'last-message.txt'),
   ];
   for (const d of addDirs) args.push('--add-dir', d);
   args.push('-');
-  await execute({ cfg, model, mode: 'run', kind: 'exec', id, dir, cwd, level, effort, args, prompt: `${brief}\n\n${M.footer(cwd, addDirs)}\n`, title: o.title, opts: o, expectReport: true });
+  await execute({ cfg, model, mode: 'run', kind: 'exec', id, dir, release, cwd, level, effort, args, prompt: `${brief}\n\n${M.footer(cwd, addDirs)}\n`, title: o.title, opts: o, expectReport: true });
 }
 
 async function cmdDiscuss(o) {
@@ -655,32 +700,35 @@ async function cmdDiscuss(o) {
   const cfg = loadConfig(cwd);
   const brief = readBrief(o);
   const { level, model, effort } = pickProfile(cfg, o, 'discuss');
-  const { id, dir } = newRunDir();
+  const { id, dir, release } = await newRunDir(o.group);
   const args = [
     'exec', '--json', '--skip-git-repo-check', ...codexOptions(cfg, { model, effort, mode: 'discuss' }),
     '-C', cwd, '--output-schema', DISCUSS_SCHEMA, '-o', path.join(dir, 'last-message.txt'), '-',
   ];
-  await execute({ cfg, model, mode: 'discuss', kind: 'discuss', id, dir, cwd, level, effort, args, prompt: `${brief}\n\n${M.discussFooter(cwd)}\n`, title: o.title, opts: o, expectReport: true });
+  await execute({ cfg, model, mode: 'discuss', kind: 'discuss', id, dir, release, cwd, level, effort, args, prompt: `${brief}\n\n${M.discussFooter(cwd)}\n`, title: o.title, opts: o, expectReport: true });
 }
 
 async function cmdResume(o) {
   const parent = findRun(need(o, 'run'));
   o.track = [...(parent.meta.track || []), ...o.track];
+  o.group ??= parent.meta.group ?? null;
+  if (!o.scope.length) o.scope = parent.meta.scope || [];
   if (!parent.meta.session_id) die(M.noSession(parent.id));
   const kind = parent.meta.kind || (parent.meta.mode === 'review' ? 'review' : 'exec');
   if (kind === 'review') die(M.reviewNoResume);
   const discuss = kind === 'discuss';
+  if (o.group != null && !discuss && !o.scope.length) die(M.groupNeedsScope);
   const cfg = loadConfig(parent.meta.cwd);
   const brief = readBrief(o);
   // 什么模型都没配置时沿用上一轮记录的模型，同一会话不中途换模型。
   const { level, model, effort } = pickProfile(cfg, o, discuss ? 'discuss' : 'run', parent.meta.model);
-  const { id, dir } = newRunDir();
+  const { id, dir, release } = await newRunDir(o.group);
   const args = [
     'exec', 'resume', '--json', '--skip-git-repo-check', ...codexOptions(cfg, { model, effort, mode: discuss ? 'discuss' : 'run' }),
     '--output-schema', discuss ? DISCUSS_SCHEMA : SCHEMA, '-o', path.join(dir, 'last-message.txt'), parent.meta.session_id, '-',
   ];
   await execute({
-    cfg, model, mode: 'resume', kind, id, dir, cwd: parent.meta.cwd, level, effort, args,
+    cfg, model, mode: 'resume', kind, id, dir, release, cwd: parent.meta.cwd, level, effort, args,
     prompt: `${brief}\n\n${discuss ? M.discussResumeFooter : M.resumeFooter}\n`,
     title: o.title || parent.meta.title, parent: parent.id, sessionId: parent.meta.session_id, opts: o, expectReport: true,
   });
@@ -693,7 +741,7 @@ async function cmdReview(o) {
   const codexOpts = codexOptions(cfg, { model, effort, mode: 'review' });
   const git = isGitRepo(cwd);
   const brief = readBrief(o, !git);
-  const { id, dir } = newRunDir();
+  const { id, dir, release } = await newRunDir();
   const last = path.join(dir, 'last-message.txt');
   let args;
   let prompt;
@@ -715,7 +763,7 @@ async function cmdReview(o) {
     args = ['exec', '--json', '--skip-git-repo-check', ...codexOpts, '-C', cwd, '-o', last, '-'];
     prompt = `${M.reviewPromptPlain(cwd)}\n\n${brief}\n\n${M.reviewFooter}\n`;
   }
-  await execute({ cfg, model, mode: 'review', kind: 'review', id, dir, cwd, level, effort, args, prompt, title: o.title, opts: o, expectReport: false });
+  await execute({ cfg, model, mode: 'review', kind: 'review', id, dir, release, cwd, level, effort, args, prompt, title: o.title, opts: o, expectReport: false });
 }
 
 function cmdConfig(o) {
@@ -761,8 +809,50 @@ function describeActivity(dir) {
   return { idle_min: Number(((Date.now() - st.mtimeMs) / 60000).toFixed(1)), step };
 }
 
+function groupRuns(group, since = 0) {
+  return listRuns().map((id) => {
+    const dir = path.join(RUNS_ROOT, id);
+    return { id, dir, meta: readMeta(dir) };
+  }).filter(({ meta }) => meta?.group === group && Date.parse(meta.started_at) >= since);
+}
+
+function checkGroup(meta) {
+  const running = groupRuns(meta.group).filter((r) => r.id < meta.id && isRunning(r.meta));
+  if (running.length >= CONFIG.max_parallel) return M.groupFull(meta.group, running.length, CONFIG.max_parallel);
+  if (meta.kind === 'discuss') return null;
+  const absolute = (cwd, file) => pathKey(path.resolve(cwd, file.replace(/\\/g, '/')).replace(/\\/g, '/')).replace(/\/$/, '');
+  for (const other of running) {
+    if (other.meta.kind === 'discuss') continue;
+    // 比较用归一化的绝对路径，报错里显示派活时写的原样路径。
+    const paths = meta.scope.filter((mine) => (other.meta.scope || []).some((file) => {
+      const a = absolute(meta.cwd, mine);
+      const b = absolute(other.meta.cwd, file);
+      return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+    }));
+    if (paths.length) return M.scopeOverlap(meta.group, other.id, paths);
+  }
+  return null;
+}
+
+function runOutcome(run) {
+  const m = run.meta;
+  const running = isRunning(m);
+  const status = m.status === 'running' && !running ? 'interrupted' : m.status;
+  const file = path.join(run.dir, 'result.json');
+  const result = !running && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+  const ok = status === 'done' && (!result?.report?.status || result.report.status === 'completed');
+  return { running, status, result, ok };
+}
+
+function groupSummary(runs) {
+  const outcomes = runs.map(runOutcome);
+  const running = outcomes.filter((r) => r.running).length;
+  const ok = outcomes.filter((r) => r.ok).length;
+  return M.groupSummary(runs.length, running, ok, runs.length - running - ok);
+}
+
 function cmdStatus(o) {
-  if (o.run) {
+  if (o.run && o.group == null) {
     const run = findRun(o.run);
     const file = path.join(run.dir, 'result.json');
     if (fs.existsSync(file)) process.stdout.write(fs.readFileSync(file, 'utf8') + '\n');
@@ -772,14 +862,15 @@ function cmdStatus(o) {
     }
     return;
   }
-  const runs = listRuns().slice(0, Number(o.limit) || 10);
+  const grouped = o.group != null ? groupRuns(o.group) : null;
+  const runs = grouped ? grouped.map((r) => r.id) : listRuns().slice(0, Number(o.limit) || 10);
   const rows = runs.map((rid) => {
     const dir = path.join(RUNS_ROOT, rid);
     const m = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
     if (m.status === 'running' && !pidAlive(m.pid)) m.status = 'interrupted';
     const end = m.ended_at ? new Date(m.ended_at) : new Date();
     const mins = ((end - new Date(m.started_at)) / 60000).toFixed(1);
-    let row = `${rid}  ${m.mode.padEnd(6)}  ${m.status.padEnd(11)}  ${m.model_shown || m.model || '-'}  ${(m.level ? `${m.level}/${m.effort}` : m.effort).padEnd(14)}  ${mins.padStart(6)}min  ${m.title || ''}  @ ${m.cwd}`;
+    let row = `${rid}  ${m.mode.padEnd(6)}  ${m.status.padEnd(11)}  ${m.model_shown || m.model || '-'}  ${(m.level ? `${m.level}/${m.effort}` : m.effort).padEnd(14)}  ${mins.padStart(6)}min  ${m.group != null ? M.statusGroup(m.group) : ''}${m.title || ''}  @ ${m.cwd}`;
     if (m.status === 'running') {
       const a = describeActivity(dir);
       const last = codexSessionStats(m.session_id, m.started_at)?.last_request;
@@ -799,6 +890,7 @@ function cmdStatus(o) {
     if (quota) break;
   }
   process.stdout.write(rows.length ? rows.join('\n') + '\n' + (quota ? `\n${M.rateLimit(quota)}\n` : '') : `${M.noRuns}\n`);
+  if (grouped) process.stdout.write(`${groupSummary(grouped)}\n`);
 }
 
 // ---------- watch ----------
@@ -893,6 +985,8 @@ function wrapWidth(s, width) {
 }
 
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+// 结果里的改动数只算有证据是 Codex 改的；旧记录没有归属信息，按全部改动算。
+const changedText = (c) => (c?.available ? M.watchChanged(c.codex_total ?? c.files_total, c.codex_total == null ? 0 : c.unknown_total) : M.watchNotTracked);
 const paint = (code) => (s) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
 const C = { dim: paint('2'), bold: paint('1'), red: paint('31'), green: paint('32'), yellow: paint('33'), cyan: paint('36') };
 
@@ -953,7 +1047,7 @@ function verboseRenderer(cwd, rel) {
     }
   };
   const finish = (r, m) => {
-    if (r) out('■', M.watchFinished(r.status, r.duration_s, r.changes?.available ? M.watchChanged(r.changes.files_total) : M.watchNotTracked));
+    if (r) out('■', M.watchFinished(r.status, r.duration_s, changedText(r.changes)));
     else out('■', m?.status === 'running' ? M.watchInterrupted : M.watchEnded(m?.status));
     if (r?.usage) out('Σ', M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total'));
   };
@@ -1059,7 +1153,7 @@ function conciseRenderer(cwd, rel) {
       return;
     }
     const ok = r.status === 'done' && (!r.report?.status || r.report.status === 'completed');
-    const changed = r.changes?.available ? M.watchChanged(r.changes.files_total) : M.watchNotTracked;
+    const changed = changedText(r.changes);
     write((ok ? C.green : C.red)(C.bold(M.watchFinished(r.status === 'done' ? r.report?.status || r.status : r.status, r.duration_s, changed))));
     if (r.usage) write(C.dim(M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total')));
     const summary = r.report?.summary || r.report?.position;
@@ -1075,7 +1169,65 @@ function conciseRenderer(cwd, rel) {
   return { show, finish, goLive: () => { live = true; drawFoldLine(); } };
 }
 
+async function watchGroup(group) {
+  const recentRuns = () => groupRuns(group, Date.now() - 86400000).reverse();
+  let runs;
+  for (let waited = 0; ; waited += 500) {
+    runs = recentRuns();
+    if (runs.length) break;
+    if (waited >= 15000) die(M.groupNotFound(group));
+    if (waited === 0) process.stdout.write(`${M.watchWaiting}\n`);
+    await sleep(500);
+  }
+  const known = new Map();
+  const states = new Map();
+  let lastAdded = Date.now();
+  let drawn = 0;
+  if (!process.stdout.isTTY) process.stdout.write(`${M.groupHeader(group, runs.length)}\n`);
+  for (;;) {
+    for (const run of runs) {
+      if (!known.has(run.id)) lastAdded = Date.now();
+      known.set(run.id, run);
+    }
+    const all = [...known.values()];
+    const lines = [];
+    for (const run of all) {
+      const { running, status, result, ok } = runOutcome(run);
+      const end = run.meta.ended_at ? Date.parse(run.meta.ended_at) : Date.now();
+      const mins = ((end - Date.parse(run.meta.started_at)) / 60000).toFixed(1);
+      const shown = status === 'done' ? result?.report?.status || status : status;
+      const line = `${running ? '●' : ok ? '✔' : '✗'} ${run.id}  ${oneLine(run.meta.title || '')}  ${shown}  ${mins}min${running ? `  ${oneLine(describeActivity(run.dir).step)}` : ''}`;
+      if (process.stdout.isTTY) {
+        const color = running ? C.cyan : ok ? C.green : C.red;
+        lines.push(color(fitWidth(line, Math.max(1, (process.stdout.columns || 100) - 1))));
+      } else if (states.get(run.id) !== shown) process.stdout.write(`${line}\n`);
+      states.set(run.id, shown);
+    }
+    if (process.stdout.isTTY) {
+      const width = Math.max(1, (process.stdout.columns || 100) - 1);
+      lines.unshift(C.bold(fitWidth(oneLine(M.groupHeader(group, all.length)), width)));
+      lines.push(fitWidth(groupSummary(all), width));
+      // 每行先截断再着色，光标上移的行数才和实际显示一致。
+      process.stdout.write(`${drawn ? `\x1b[${drawn}A` : ''}\r${lines.map((line) => `\x1b[2K${line}\n`).join('')}`);
+      drawn = lines.length;
+    }
+    if (all.every((run) => !isRunning(run.meta)) && Date.now() - lastAdded >= 5000) break;
+    await sleep(2000);
+    runs = recentRuns();
+  }
+  for (const run of known.values()) {
+    const { status, result: r, ok } = runOutcome(run);
+    const seconds = r?.duration_s ?? Math.round(((Date.parse(run.meta.ended_at) || Date.now()) - Date.parse(run.meta.started_at)) / 1000);
+    const changed = changedText(r?.changes);
+    process.stdout.write(`\n${C.bold(oneLine(run.meta.title || run.id))}\n`);
+    process.stdout.write(`${(ok ? C.green : C.red)(M.watchFinished(status === 'done' ? r?.report?.status || status : status, seconds, changed))}\n`);
+    if (r?.usage) process.stdout.write(`${C.dim(M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (run.meta.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total'))}\n`);
+  }
+  process.stdout.write(`${groupSummary([...known.values()])}\n`);
+}
+
 async function cmdWatch(o) {
+  if (o.group != null) return watchGroup(o.group);
   const { id, dir, meta } = await pickWatchRun(o.run);
   const cwd = meta.cwd;
   const rel = (p) => { const r = path.relative(cwd, p); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r : p; };
