@@ -42,8 +42,8 @@ Each key is an agent's name, which `levels` uses to refer to it. `claude` is res
 | Setting | What it does |
 |---|---|
 | `base_url` | API address, for example `https://api.deepseek.com`; the script calls `<base_url>/chat/completions` |
-| `api_key` | The API key itself. Stored in plain text in the config file and takes effect immediately; only allowed in the user config |
-| `api_key_env` | Name of the environment variable that holds the API key; after setting the variable, restart Claude Code so it can see it. Set at least one of this and `api_key`; if both are set, `api_key` is used |
+| `api_key` | The API key itself. Stored in plain text in the config file and takes effect immediately; only allowed in the user config. An empty `""` means not filled in yet |
+| `api_key_env` | Name of the environment variable that holds the API key; after setting the variable, restart Claude Code so it can see it. If both are set, `api_key` is used; an agent with neither can't take part in discussions, and listing it in a discussion level fails at run time |
 | `model` | Default model |
 | `max_parallel` | Optional; how many runs may go at once, `4` by default |
 | `extra_body` | Optional parameters merged into the request body as is, for example `{ "max_tokens": 65536 }` |
@@ -62,7 +62,7 @@ Defaults: run uses `"claude"` for simple and normal and Codex max for complex; r
 
 ## Other rules
 
-- If the user config doesn't exist, the script's first run (any subcommand) creates one: `gpt-6.1-sol` as Codex's default model, and `gpt-6-astra` for complex reviews and discussions.
+- If the user config doesn't exist, the script's first run (any subcommand) creates one: `gpt-6.1-sol` as Codex's default model, and `gpt-6-astra` for complex reviews and discussions; plus two example agents, `deepseek` and `mimo`, with an empty `api_key` and not in any discussion level, as a reminder that they can be added. `check` reports them as having no API key yet; if the user doesn't plan to use them, nothing needs doing.
 - A user config in the old layout (`auto_dispatch`, top-level `model`, `sandbox` and so on at the top level) is rewritten into the new layout the first time the script runs, with the original saved as `codex-bridge.json.bak`.
 - Project config only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `agents.codex.model` and `levels`. `levels` can contain just the parts to change. Project config **can't add API agents**: an API agent that the user config doesn't have at that level is dropped even if the project config adds it. It can remove them, though, which is how a sensitive project turns API agents off. A project config in the old layout is converted when read; the file isn't rewritten.
 - Each agent's parallel limit counts only its own runs in progress, across all groups and sessions; at the limit the script refuses to start a new run, and the error lists the runs holding the slots.

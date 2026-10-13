@@ -12,10 +12,11 @@ The script is `${CLAUDE_PLUGIN_ROOT}/skills/codex-dispatch/scripts/codex-run.mjs
 1. **Check the environment**: run `node "<script path>" check` and show each result in a table (Node.js, Git, Codex, each API model).
    - Codex is required. If `codex.ok` is `false`, pass on the `fix` from the result (for example installing the Codex CLI or running `codex login`), ask the user to run `/codex-bridge-en:setup` again once that's done, and stop here.
    - If Git fails, tell the user change tracking won't work and suggest installing it, but carry on.
-   - API models are optional. If one fails, pass on its `fix` and carry on.
+   - API models are optional. If one fails, pass on its `fix` and carry on. The generated config has DeepSeek and MiMo examples that show as failing until their key is filled in; that's expected, so just say they'll work once a key is added.
    - If the script printed "First run: created config file", tell the user where the config file is.
 2. **Review the settings**: run `node "<script path>" config --cwd "<current project dir>"` and use a table to explain `resolved_levels`: who each level of hands-on work, reviews and discussions goes to, with which model and effort. Add that `/codex-bridge-en:config` changes them.
 3. **Other models (optional)**: ask the user whether they want other models to join discussions, unless the arguments already name one. If not, skip to step 4. If so:
+   - If the config already has an example for the model the user wants (such as DeepSeek or MiMo), don't add a new one; fill in the key on the example and add it to the discussion levels.
    - Confirm the provider (such as DeepSeek, Kimi, GLM, Qwen, OpenRouter, or another OpenAI-compatible service), the model name, and which discussion levels it should join. If you're unsure of the API address or model name, check the provider's official docs; don't guess.
    - Add an agent with `type` set to `openai-compatible` under `agents` in the user config, and add it to the chosen levels under `levels.discuss`. The key can go in one of two places; ask the user which they prefer:
      - **In the config file** (takes effect immediately, no restart): tell the user to open `~/.claude/codex-bridge.json` and add a line `"api_key": "<key>"` to that agent themselves. Remind them the key is stored in plain text, so the file shouldn't be committed or shared.

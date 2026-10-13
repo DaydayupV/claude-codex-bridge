@@ -42,8 +42,8 @@
 | 字段 | 作用 |
 |---|---|
 | `base_url` | 接口地址，例如 `https://api.deepseek.com`，脚本请求 `<base_url>/chat/completions` |
-| `api_key` | API key 本身。明文保存在配置文件里，改完立即生效；只能写在用户配置中 |
-| `api_key_env` | 存放 API key 的环境变量名；设置环境变量后要重启 Claude Code 才能读到。和 `api_key` 至少填一个，都填时用 `api_key` |
+| `api_key` | API key 本身。明文保存在配置文件里，改完立即生效；只能写在用户配置中。留空 `""` 表示还没填 |
+| `api_key_env` | 存放 API key 的环境变量名；设置环境变量后要重启 Claude Code 才能读到。都填时用 `api_key`；两个都没有的协作方不能参加讨论，放进讨论等级会在运行时报错 |
 | `model` | 默认模型 |
 | `max_parallel` | 可选，同时最多运行几个任务，默认 `4` |
 | `extra_body` | 可选，原样并进请求体的参数，比如 `{ "max_tokens": 65536 }` |
@@ -62,7 +62,7 @@
 
 ## 其他规则
 
-- 用户配置不存在时，脚本第一次运行（任何子命令）会自动生成一份：Codex 的默认模型用 `gpt-6.1-sol`，复杂的审查和讨论用 `gpt-6-astra`。
+- 用户配置不存在时，脚本第一次运行（任何子命令）会自动生成一份：Codex 的默认模型用 `gpt-6.1-sol`，复杂的审查和讨论用 `gpt-6-astra`；另外有 `deepseek` 和 `mimo` 两个示例协作方，`api_key` 留空、不在讨论等级里，用来提醒用户可以加。`check` 会把它们报成"还没有 API key"，用户不打算用时不必处理。
 - 旧写法（`auto_dispatch`、顶层 `model`、`sandbox` 等平铺在顶层）的用户配置，脚本第一次运行时会自动改写成新结构，原文件备份为 `codex-bridge.json.bak`。
 - 项目配置只认 `dispatch.timeout_min`、`dispatch.stall_min`、`agents.codex.model` 和 `levels`。`levels` 可以只写要改的那几项。项目配置**不能新增 API 协作方**：用户配置里某一级没有的 API 协作方，项目配置加了也会被去掉；但可以删掉，敏感项目用这个办法关掉 API 协作方。旧写法的项目配置在读取时转换，不改写文件。
 - 每个协作方的并发上限按它自己正在运行的任务算，不分任务组、不分会话；达到上限时脚本拒绝启动新任务，报错里列出占着名额的任务。

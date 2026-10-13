@@ -117,7 +117,7 @@ How to reach an agent goes only under `agents`; who gets what goes only under `l
 }
 ```
 
-The generated config has no `deepseek`, and complex discussions have only Codex. See "Adding other models to discussions" below for how to add DeepSeek.
+The generated config also has two examples, `deepseek` and `mimo`, with an empty `api_key` and not added to any discussion level, so discussions have only Codex by default. To use one, fill in its `api_key` and add it to `levels.discuss`; see "Adding other models to discussions" below.
 
 ### Task levels, models and reasoning effort
 
@@ -133,7 +133,7 @@ Claude only decides which level a task is: `simple`, `normal` or `complex`. You 
 
 Each `discuss` level is a list of participants: Codex alone, or Codex plus models with an OpenAI-compatible API. They give their views independently and at the same time, and Claude rules on each point. Taking DeepSeek as the example:
 
-1. Add an agent with `type` set to `openai-compatible` under `agents`, like `deepseek` in the example above.
+1. Add an agent with `type` set to `openai-compatible` under `agents`, like `deepseek` in the example above. The generated config already has DeepSeek and MiMo examples; to use those, skip this step.
 2. Provide the API key, either way:
    - **In the config file**: add a line `"api_key": "sk-…"` to that agent. It takes effect immediately, no restart needed. The key is stored in plain text, so don't commit or share this file.
    - **In an environment variable**: write `"api_key_env": "DEEPSEEK_API_KEY"` as in the example, then set that variable. On Windows, add a user variable under "System Properties → Environment Variables"; on macOS and Linux, put it in your shell's startup file. Restart Claude Code afterwards so it can see it.
@@ -161,7 +161,7 @@ API models can't look through your code themselves, so Claude sends the relevant
 | `agents.<name>.max_parallel` | How many runs this agent may have going at once, counted across all groups and sessions (providers rate-limit and bill per account). New runs beyond it are refused. For Codex, splitting a task into more parts means a shorter wait but more tokens in total; `1` turns parallel runs off | `4` |
 | `agents.codex.sandbox` | Sandbox for each of `run` / `review` / `discuss`: `read-only`, `workspace-write` or `danger-full-access` | All `null` (use Codex config) |
 | `agents.codex.approval` | Codex approval policy, e.g. `never` | `null` (use Codex config) |
-| `agents.<name>` (API model) | `type` is `openai-compatible`; `base_url` and `model` are required; at least one of `api_key` (the key itself) and `api_key_env` (the environment variable holding it), with `api_key` used if both are set; `extra_body` is optional | None |
+| `agents.<name>` (API model) | `type` is `openai-compatible`; `base_url` and `model` are required; `api_key` (the key itself, left empty until filled in) and/or `api_key_env` (the environment variable holding it), with `api_key` used if both are set; an agent with neither can't take part in discussions; `extra_body` is optional | None |
 | `levels` | See above | run: `"claude"` for simple and normal, Codex max for complex; review: Codex medium / high / max; discuss: only Codex at all three levels, medium / high / max |
 
 Project config only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `agents.codex.model` and `levels`, and it can't add API models as participants, only remove them. Everything else must go in your user config, so that a repository you cloned can't loosen the sandbox, swap the executable, send your code to another address, or spend your quota on its own. For a sensitive project, keep only Codex under `levels.discuss` in its project config to turn API models off.

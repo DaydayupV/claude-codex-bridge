@@ -117,7 +117,7 @@
 }
 ```
 
-自动生成的配置里没有 `deepseek`，复杂讨论也只有 Codex。加 DeepSeek 的步骤见下文"让其他模型参加讨论"。
+自动生成的配置里也有 `deepseek` 和 `mimo` 两个示例，`api_key` 留空，也没有加进讨论等级，所以讨论默认只有 Codex。想用的话，填上 `api_key`，再把它加进 `levels.discuss`，见下文"让其他模型参加讨论"。
 
 ### 任务等级、模型和推理强度
 
@@ -133,7 +133,7 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 
 讨论（`discuss`）的每一级是一个参与方数组：可以只有 Codex，也可以加上兼容 OpenAI 接口的模型。几方同时、各自独立给出意见，Claude 再逐条裁决。以 DeepSeek 为例：
 
-1. 在 `agents` 里加一项 `type` 为 `openai-compatible` 的协作方，就是上面示例里的 `deepseek`。
+1. 在 `agents` 里加一项 `type` 为 `openai-compatible` 的协作方，就是上面示例里的 `deepseek`。自动生成的配置里已经有 DeepSeek 和 MiMo 的示例，用它们的话这一步可以跳过。
 2. 填 API key，两种方式任选一种：
    - **写在配置文件里**：在这一项里加一行 `"api_key": "sk-…"`。改完立即生效，不用重启。key 是明文保存的，这个文件不要提交到仓库或发给别人。
    - **放在环境变量里**：像示例那样写 `"api_key_env": "DEEPSEEK_API_KEY"`，再设置这个环境变量。Windows 上在"系统属性 → 环境变量"里加一个用户变量；macOS 和 Linux 写进 shell 的启动文件。设置后要重启 Claude Code 才能读到。
@@ -161,7 +161,7 @@ API 模型自己翻不了代码，Claude 会把相关文件随议题一起发过
 | `agents.<名字>.max_parallel` | 这个协作方同时最多运行几个任务，所有任务组和会话加起来算（服务商的限流和额度都是按账号的）。达到上限时新任务会被拒绝。对 Codex 来说，拆开并发的份数越多等得越短，但总 token 更多；设成 `1` 就不并发 | `4` |
 | `agents.codex.sandbox` | `run` / `review` / `discuss` 各自的沙箱：`read-only`、`workspace-write`、`danger-full-access` | 都是 `null`，沿用 Codex 配置 |
 | `agents.codex.approval` | Codex 的审批策略，比如 `never` | `null`，沿用 Codex 配置 |
-| `agents.<名字>`（API 模型） | `type` 为 `openai-compatible`；`base_url`、`model` 必填；`api_key`（key 本身）和 `api_key_env`（存放 key 的环境变量名）至少填一个，都填时用 `api_key`；`extra_body` 可选 | 无 |
+| `agents.<名字>`（API 模型） | `type` 为 `openai-compatible`；`base_url`、`model` 必填；`api_key`（key 本身，还没填就留空）和 `api_key_env`（存放 key 的环境变量名）任选，都填时用 `api_key`，都没有的不能参加讨论；`extra_body` 可选 | 无 |
 | `levels` | 见上文 | run 的 simple、normal 为 `"claude"`，complex 为 Codex max；review 为 Codex medium / high / max；discuss 三级都只有 Codex，medium / high / max |
 
 项目配置只认 `dispatch.timeout_min`、`dispatch.stall_min`、`agents.codex.model` 和 `levels`，而且不能新增 API 模型参与方，只能去掉。其余字段只能写在用户配置里，这样别人的仓库没法通过项目配置放宽沙箱、换掉可执行文件、把代码发到别的地址，或者擅自花你的额度。敏感项目可以在项目配置的 `levels.discuss` 里只留 Codex，关掉 API 模型。

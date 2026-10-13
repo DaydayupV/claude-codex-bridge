@@ -217,8 +217,9 @@ function validateConfig(cfg) {
       for (const [mode, value] of Object.entries(agent.sandbox || {})) check(['run', 'review', 'discuss'].includes(mode) && (value === null || ['read-only', 'workspace-write', 'danger-full-access'].includes(value)), `${key}.sandbox.${mode}`, why.sandbox);
     } else {
       for (const field of ['base_url', 'model']) check(text(agent[field]), `${key}.${field}`, why.nonEmpty);
-      for (const field of ['api_key', 'api_key_env']) check(agent[field] === undefined || text(agent[field]), `${key}.${field}`, why.nonEmpty);
-      check(text(agent.api_key) || text(agent.api_key_env), key, why.apiKey);
+      // api_key 写成空字符串表示还没填（首次生成的配置里的示例就是这样）；没有 key 的协作方被选去讨论时才报错。
+      check(agent.api_key === undefined || typeof agent.api_key === 'string', `${key}.api_key`, why.apiKeyText);
+      check(agent.api_key_env === undefined || text(agent.api_key_env), `${key}.api_key_env`, why.nonEmpty);
       check(agent.extra_body === undefined || isObject(agent.extra_body), `${key}.extra_body`, why.object);
     }
   }
@@ -289,8 +290,13 @@ function projectConfig(cfg, project) {
 }
 
 // 首次使用时生成的用户配置：在内置默认值上套用 README 里的示例搭配。
+// 另外放两个 API 协作方的示例，api_key 留空提醒用户可以填；它们不在讨论等级里，填了 key 还要自己加进 levels.discuss。
 const STARTER_CONFIG = mergeConfig(DEFAULT_CONFIG, {
-  agents: { codex: { model: 'gpt-6.1-sol' } },
+  agents: {
+    codex: { model: 'gpt-6.1-sol' },
+    deepseek: { type: 'openai-compatible', base_url: 'https://api.deepseek.com', api_key: '', model: 'deepseek-v4-pro' },
+    mimo: { type: 'openai-compatible', base_url: 'https://api.xiaomimimo.com/v1', api_key: '', model: 'mimo-v2.6-pro' },
+  },
   levels: {
     review: { complex: { model: 'gpt-6-astra' } },
     discuss: { complex: [{ agent: 'codex', model: 'gpt-6-astra', effort: 'max' }] },
