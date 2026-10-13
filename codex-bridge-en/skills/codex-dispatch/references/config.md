@@ -8,7 +8,7 @@ Config files are JSON, layered in this order, later ones overriding earlier ones
 | `watch` | `auto`: open the live view after a handoff; `off`: don't open it | `auto` |
 | `max_parallel` | How many runs in one group may run at once (see "Splitting work to run in parallel" in the skill) | `3` |
 | `model` | Model for levels that don't set their own | `null` (use Codex config) |
-| `levels` | For each of the `run` / `review` / `discuss` modes, a `{ "model", "effort" }` for each of the `simple` / `normal` / `complex` levels. A `null` `model` uses the top-level `model`; setting a `run` level's `model` to `"claude"` means Claude does that level itself instead of handing it to Codex; `effort` must be one of `low` `medium` `high` `xhigh` `max` `ultra` | All models `null`; effort medium / high / max for run and review, high / max / max for discuss |
+| `levels` | For each of the `run` / `review` / `discuss` modes, a `{ "model", "effort" }` for each of the `simple` / `normal` / `complex` levels. A `null` `model` uses the top-level `model`; writing a whole `run` level as `"claude"` (for example `"simple": "claude"`) means Claude does that level itself instead of handing it to Codex; `effort` must be one of `low` `medium` `high` `xhigh` `max` `ultra` | All models `null`; effort medium / high / max for run and review, high / max / max for discuss |
 | `sandbox` | Sandbox for each mode: `read-only` / `workspace-write` / `danger-full-access` | All `null` (use Codex config) |
 | `approval` | Approval policy, e.g. `never` | `null` (use Codex config) |
 | `timeout_min` / `stall_min` | Total time limit / stuck detection, in minutes (`stall_min` 0 turns it off) | 240 / 20 |

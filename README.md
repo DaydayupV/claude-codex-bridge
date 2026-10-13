@@ -81,7 +81,7 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 - 某一级的 `model` 为 `null` 时用顶层的 `model`；顶层也是 `null`，就用 Codex 自己配置的模型。示例只是一种搭配，换成你账号能用、适合你任务的模型。
 - `effort` 可选 `low`、`medium`、`high`、`xhigh`、`max`、`ultra`。模型不支持的档位会被 Codex 拒绝，报错会出现在结果里。
 - 你想临时指定时，可以对 Claude 说"用 ultra 跑"或"用某某模型跑"，Claude 会改用 `--effort` 或 `--model`。
-- `run` 的某一级想让 Claude 自己做、不派给 Codex，就把那一级的 `model` 写成 `"claude"`，比如 `"simple": { "model": "claude" }`。Claude 遇到这一级的执行任务会自己动手，脚本也会拒绝把它派出去。审查和讨论需要另一个模型，不支持这样写。
+- `run` 的某一级想让 Claude 自己做、不派给 Codex，就把那一级整个写成 `"claude"`，比如 `"simple": "claude"`。这一级没有模型和推理强度可设：Claude 遇到这一级的执行任务会自己动手，脚本也会拒绝把它派出去。你明确要求某个任务派给 Codex 时，Claude 会加 `--model`，推理强度用内置默认值。审查和讨论需要另一个模型，不支持这样写。
 - 不管怎么配置，改动不到约 100 行、做法明确的小任务，Claude 都会自己做：这类任务派出去不划算，Codex 也容易做得过重。
 
 ### 全部字段

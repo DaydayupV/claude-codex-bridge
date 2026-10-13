@@ -98,7 +98,7 @@ const DEFAULT_CONFIG = {
 const PROJECT_KEYS = ['model', 'levels', 'timeout_min', 'stall_min'];
 
 const LEVELS = ['simple', 'normal', 'complex'];
-const CLAUDE = 'claude'; // levels.run 里某一级的 model 写成它，表示这一级由 Claude 自己做
+const CLAUDE = 'claude'; // levels.run 里某一级整项写成它，表示这一级由 Claude 自己做
 const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
 function readJson(file) {
@@ -117,7 +117,11 @@ function mergeConfig(base, extra, keys = Object.keys(DEFAULT_CONFIG)) {
       out.levels = { ...base.levels };
       for (const [mode, levels] of Object.entries(v)) {
         out.levels[mode] = { ...base.levels[mode] };
-        for (const [lv, entry] of Object.entries(levels || {})) out.levels[mode][lv] = { ...base.levels[mode]?.[lv], ...entry };
+        for (const [lv, entry] of Object.entries(levels || {})) {
+          // 整项写成 "claude" 时原样保留；基础值是 "claude" 而这里只改部分字段时，在内置默认值上合并。
+          const prev = base.levels[mode]?.[lv];
+          out.levels[mode][lv] = typeof entry === 'string' ? entry : { ...(typeof prev === 'object' ? prev : DEFAULT_CONFIG.levels[mode]?.[lv]), ...entry };
+        }
       }
     } else {
       out[k] = v && typeof v === 'object' && !Array.isArray(v) ? { ...base[k], ...v } : v;
@@ -224,12 +228,14 @@ function pickProfile(cfg, o, mode, fallbackModel = null) {
     if (!LEVELS.includes(o.level)) die(M.levelChoices(LEVELS.join(' / ')));
     level = o.level;
     entry = cfg.levels[mode]?.[level] || {};
-    // model 写成 "claude" 表示这一级的执行任务由 Claude 自己做；用户点名模型（--model）时照常派。
-    if (entry.model === CLAUDE) {
-      if (mode !== 'run') die(M.claudeOnlyRun(`levels.${mode}.${level}.model`));
+    // 整项写成 "claude" 表示这一级的执行任务由 Claude 自己做；用户点名模型（--model）时照常派，推理强度用内置默认值。
+    if (entry === CLAUDE) {
+      if (mode !== 'run') die(M.claudeOnlyRun(`levels.${mode}.${level}`));
       if (!o.model) die(M.levelForClaude(level));
-      entry = { ...entry, model: null };
+      entry = DEFAULT_CONFIG.levels.run[level];
     }
+    if (typeof entry === 'string') die(M.badLevelConfig(`levels.${mode}.${level}`, JSON.stringify(entry), M.levelEntryChoices));
+    if (entry.model === CLAUDE) die(M.claudeOldForm(`levels.${mode}.${level}`, level));
     if (!CODEX_EFFORTS.includes(entry.effort)) die(M.badLevelConfig(`levels.${mode}.${level}.effort`, JSON.stringify(entry.effort), CODEX_EFFORTS.join(' / ')));
   }
   if (cfg.model === CLAUDE) die(M.claudeNotTopLevel);

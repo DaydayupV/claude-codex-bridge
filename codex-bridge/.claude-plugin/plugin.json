@@ -1,6 +1,6 @@
 {
   "name": "codex-bridge",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "把执行类编码工作派给 OpenAI Codex，按规则验收，并按需让 Codex 独立审查代码。",
   "author": { "name": "DaydayupV" }
 }

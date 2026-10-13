@@ -81,7 +81,7 @@ Claude only decides which level a task is: `simple`, `normal` or `complex`. You 
 - A level with `"model": null` uses the top-level `model`. If that is `null` too, Codex's own configured model is used. This is just one possible setup; pick models your account has and that suit your tasks.
 - `effort` can be `low`, `medium`, `high`, `xhigh`, `max` or `ultra`. If a model doesn't support an effort, Codex rejects it and the error shows up in the result.
 - To override for one task, tell Claude "run it with ultra" or "use model X"; Claude will pass `--effort` or `--model` instead.
-- To have Claude do a `run` level itself instead of handing it to Codex, set that level's `model` to `"claude"`, for example `"simple": { "model": "claude" }`. Claude then does tasks at that level itself, and the script refuses to hand them off. Reviews and discussions need a second model, so this isn't supported there.
+- To have Claude do a `run` level itself instead of handing it to Codex, write the whole level as `"claude"`, for example `"simple": "claude"`. That level then has no model or effort to set: Claude does its tasks itself, and the script refuses to hand them off. If you explicitly want a task handed to Codex, Claude adds `--model`, and the effort uses the built-in default. Reviews and discussions need a second model, so this isn't supported there.
 - Whatever the config, Claude does small tasks with a clear approach (under about 100 lines of change) itself: handing them off doesn't pay, and Codex tends to make them too heavy.
 
 ### All settings
