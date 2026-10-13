@@ -14,7 +14,7 @@
 | `/codex-bridge:discuss <议题>` | 就复杂的方案和 Codex（以及配置的其他模型）讨论，交叉挑错（轮数上限可配置，默认 2 轮），由 Claude 逐条裁决，最后给出决策记录 |
 | `/codex-bridge:review` | 让 Codex 审查未提交的改动、某个分支或某次提交，Claude 逐条核实，排除误报 |
 | `/codex-bridge:status` | 查看最近的任务，或某次任务的详细结果。会列出每次任务的 token 消耗、最近一次请求的用量和 Codex 额度已用比例 |
-| `/codex-bridge:watch` | 实时查看 Codex 或其他模型正在做什么。默认简洁显示：说的话、折叠后的命令、文件改动和结果；加 `--verbose` 看全部细节 |
+| `/codex-bridge:watch` | 实时查看各个模型正在做什么。默认简洁显示：说的话、折叠后的命令、文件改动和结果；加 `--verbose` 看全部细节。跟踪一个任务组（比如多方讨论）时，一个窗口里按模型分块，同时显示各自最新的几行 |
 | `/codex-bridge:config` | 查看或修改插件配置 |
 | `/codex-bridge:setup` | 第一次使用时的设置引导：检查 Codex 等环境是否可用，说明当前配置，按需添加其他模型参加讨论 |
 

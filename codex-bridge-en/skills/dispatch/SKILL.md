@@ -62,7 +62,7 @@ node "<script path>" check  [--agent <agent>]
 - If the allowed scope includes paths ignored by `.gitignore` (such as `tests/` or a results folder), pass them with `--track "<path>"` (can be given more than once); otherwise change tracking can't see those files. Resume keeps the previous round's `--track`.
 - Write the brief to a UTF-8 file first (in the scratchpad directory if there is one, otherwise in the system temp directory). The script appends standing rules: stay in scope, do a preflight check, when to stop and ask, only necessary tests, no commit/push, no secrets, report in the schema.
 - **Always run it in the background** (Bash `run_in_background`). You get notified when it finishes. Do other things meanwhile; don't poll.
-- **Every call (`run`, `resume`, `discuss`, `review`), tell the user in the chat who got it and which model and reasoning effort it uses**, for example "Handed off to Codex: model gpt-6-astra, effort max (level complex)"; for a discussion with several participants, list each one, for example "Discussion started: codex (gpt-6-astra, max), deepseek (deepseek-v4-pro, max)". Take it from the first line the script prints ("started | agent … | model … | effort …"), not from your own reading of the config. If the model comes from Codex's config, say so. Repeat it in the final report.
+- **Every call (`run`, `resume`, `discuss`, `review`), tell the user in the chat which model and reasoning effort it uses**, for example "Handed off: gpt-6-astra (Codex CLI, effort max), level complex"; for a discussion with several participants, list each one, for example "Discussion started: gpt-6-astra (Codex CLI, effort max), deepseek-v4-pro (API, effort max)". Take it from the first line the script prints ("<mode> started | <model> (<channel>, effort …) | level … | run dir …"), not from your own reading of the config. If the model comes from Codex's config, say so. Repeat it in the final report.
 - **After starting `run`, `discuss` or `resume`, your very next step is the live view** (see "Live view"), even for tests and small tasks. The user relies on it to see what Codex is doing; skipping it leaves them waiting in the dark.
 - The result is printed to stdout as JSON. The main fields:
   - `report`: Codex's structured report.
@@ -83,7 +83,7 @@ The user config is `~/.claude/codex-bridge.json` and the project config is `<pro
 ## Live view (every handoff)
 Right after starting `run`, `discuss` or `resume` in the background, let the user see live progress. If `dispatch.watch` is `off`, skip this section and just tell the user they can check with `/codex-bridge-en:watch`.
 
-- **If the `run_in_terminal` tool is available** (Claude desktop app), open it in the user's terminal panel: use `run_in_terminal` to run `node <run dir>/watch.mjs --run <run_id>`, titled "<agent>: <short title>", for example "Codex: <short title>". For a discussion with several participants in one group, open a single tab: `node <run dir>/watch.mjs --group <name>`, titled "Discussion: <short title>". The run directory defaults to `~/.claude/codex-runs`, written as `C:\Users\<username>\.claude\codex-runs` on Windows; go by the `config` output. The script generates this launcher so that `run_in_terminal`'s ASCII-only rule is met even when the plugin path has non-ASCII characters.
+- **If the `run_in_terminal` tool is available** (Claude desktop app), open it in the user's terminal panel: use `run_in_terminal` to run `node <run dir>/watch.mjs --run <run_id>`, titled "<model>: <short title>", for example "gpt-6-astra: <short title>". For a discussion with several participants in one group, open a single tab: `node <run dir>/watch.mjs --group <name>`, titled "Discussion: <short title>". The run directory defaults to `~/.claude/codex-runs`, written as `C:\Users\<username>\.claude\codex-runs` on Windows; go by the `config` output. The script generates this launcher so that `run_in_terminal`'s ASCII-only rule is met even when the plugin path has non-ASCII characters.
 - The run_id is in the first line of the background output ("run dir …/<run_id>"). Without `--run`, watch follows whichever run is in progress, but other sessions may be running tasks too, so pass it when you can.
 - Once it's open, send the user the tab link `[<title>](#terminal/<tab_id>)`.
 - **If `run_in_terminal` isn't available** (for example in the Claude Code CLI), send the user the full watch command in a bash code block and ask them to run it in another terminal.
@@ -92,7 +92,7 @@ Right after starting `run`, `discuss` or `resume` in the background, let the use
 - For `review`, open the live view only if the user asks.
 
 ## Task levels and reasoning effort
-`run`, `resume`, `discuss` and `review` must always be given `--level` explicitly. There is no default; the script refuses to start without it. Claude only decides which level a task is; the model and effort for each level are the user's choice in `levels`, and the script prints "model / level → effort" when it starts.
+`run`, `resume`, `discuss` and `review` must always be given `--level` explicitly. There is no default; the script refuses to start without it. Claude only decides which level a task is; the model and effort for each level are the user's choice in `levels`, and the first line the script prints shows the model and effort actually used.
 
 | Level | `--level` | What kind of task |
 |---|---|---|
@@ -170,7 +170,7 @@ Good cases: several independent scripts or modules; once the interface is set, o
   - What the other parts of the group do and which files they change; those files are off-limits.
   - The shared interface agreements, copied word for word into every brief.
   - How to verify this part on its own.
-- Open just one live-view tab: `node <run dir>/watch.mjs --group <name>`, titled "Codex group: <name>". It shows the progress of the whole group together.
+- Open just one live-view tab: `node <run dir>/watch.mjs --group <name>`, titled "Group: <name>". It splits one window into a block per model, shows the latest few lines from each run side by side, and leaves a summary when they all finish.
 - Tell the user how many parts there are and what each does, with the model and effort of each.
 
 ### Checking the results
@@ -228,7 +228,7 @@ Start one directly when the user uses `/codex-bridge-en:discuss`. Starting one o
 
 **Apply the same three conditions when the user only asks for advice and hasn't decided whether to do anything yet**, for example "what research directions do you suggest?" or "which architecture should we pick?". If all three hold, discuss first and give the user the conclusion after ruling on it; don't answer directly yourself. To write the topic brief, you may first read code and data and run read-only statistics to get the facts straight.
 
-Don't start one for ordinary implementation details, tasks with a clear plan, or decisions the user has already made. When you start one on your own, tell the user in one sentence, for example: "I'll talk this through with Codex and DeepSeek first."
+Don't start one for ordinary implementation details, tasks with a clear plan, or decisions the user has already made. When you start one on your own, tell the user in one sentence, for example: "I'll talk this through with the other models first."
 
 ### Two kinds of participants
 - **Codex**: can read the code and run read-only commands to check things itself.
@@ -256,7 +256,7 @@ Don't start one for ordinary implementation details, tasks with a clear plan, or
 Don't paste the raw exchange. Write it up plainly as:
 - **Topic**: one sentence
 - **Options**: Claude's and each participant's, each with its core idea and trade-offs
-- **Each participant's main points**: listed per participant, each marked ✅ accepted / ❌ rejected / ⚠ partly accepted, with the reason
+- **Each participant's main points**: listed per participant, called by model name (such as gpt-6-astra, deepseek-v4-pro), each marked ✅ accepted / ❌ rejected / ⚠ partly accepted, with the reason
 - **Final plan**: and what changed from Claude's original proposal
 - **To confirm**: things the user needs to decide or that need checking first
 - Each participant's run_id, model, effort and token use, so the user can look at the raw record

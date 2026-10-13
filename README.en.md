@@ -14,7 +14,7 @@ The idea is a split of roles: Claude does the planning, key decisions, design an
 | `/codex-bridge-en:discuss <topic>` | Discusses a complex design with Codex (and any other configured models): rounds of critiquing each other's proposals (the limit is configurable, 2 by default), then Claude rules on each point and writes up a decision record |
 | `/codex-bridge-en:review` | Has Codex review uncommitted changes, a branch or a commit. Claude checks each finding and filters out false positives |
 | `/codex-bridge-en:status` | Lists recent runs, or shows the details of one, with each run's token use, the size of its latest request and how much of the Codex quota is used |
-| `/codex-bridge-en:watch` | Shows what Codex or another model is doing, live. The default view is concise (what it says, folded commands, file changes, the result); add `--verbose` for every detail |
+| `/codex-bridge-en:watch` | Shows what each model is doing, live. The default view is concise (what it says, folded commands, file changes, the result); add `--verbose` for every detail. When following a group (such as a discussion with several models), one window is split into a block per model, each showing its latest few lines |
 | `/codex-bridge-en:config` | Shows or changes the plugin's settings |
 | `/codex-bridge-en:setup` | First-time setup: checks that Codex and the rest of the environment work, explains the current settings, and optionally adds other models to discussions |
 
