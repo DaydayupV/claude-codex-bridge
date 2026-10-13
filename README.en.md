@@ -65,7 +65,7 @@ The config has three parts:
 | `agents` | Which agents there are and how to reach them: Codex's executable, default model and sandbox; an API model's address, its API key (written in the config, or the environment variable holding it), and its default model |
 | `levels` | Who each level of each task type goes to, with which model and reasoning effort |
 
-How to reach an agent goes only under `agents`; who gets what goes only under `levels`. Here's a complete config with DeepSeek added:
+How to reach an agent goes only under `agents`; who gets what goes only under `levels`. Here's the config generated on first use:
 
 ```json
 {
@@ -89,9 +89,14 @@ How to reach an agent goes only under `agents`; who gets what goes only under `l
     "deepseek": {
       "type": "openai-compatible",
       "base_url": "https://api.deepseek.com",
-      "api_key_env": "DEEPSEEK_API_KEY",
-      "model": "deepseek-v4-pro",
-      "max_parallel": 4
+      "api_key": "",
+      "model": "deepseek-v4-pro"
+    },
+    "mimo": {
+      "type": "openai-compatible",
+      "base_url": "https://api.xiaomimimo.com/v1",
+      "api_key": "",
+      "model": "mimo-v2.6-pro"
     }
   },
   "levels": {
@@ -108,16 +113,13 @@ How to reach an agent goes only under `agents`; who gets what goes only under `l
     "discuss": {
       "simple":  [{ "agent": "codex", "effort": "medium" }],
       "normal":  [{ "agent": "codex", "effort": "high" }],
-      "complex": [
-        { "agent": "codex", "model": "gpt-6-astra", "effort": "max" },
-        { "agent": "deepseek", "effort": "max" }
-      ]
+      "complex": [{ "agent": "codex", "model": "gpt-6-astra", "effort": "max" }]
     }
   }
 }
 ```
 
-The generated config also has two examples, `deepseek` and `mimo`, with an empty `api_key` and not added to any discussion level, so discussions have only Codex by default. To use one, fill in its `api_key` and add it to `levels.discuss`; see "Adding other models to discussions" below.
+`deepseek` and `mimo` are examples: their `api_key` is empty and they aren't in any discussion level, so discussions have only Codex by default. To have them join, see "Adding other models to discussions" below.
 
 ### Task levels, models and reasoning effort
 
@@ -131,20 +133,43 @@ Claude only decides which level a task is: `simple`, `normal` or `complex`. You 
 
 ### Adding other models to discussions
 
-Each `discuss` level is a list of participants: Codex alone, or Codex plus models with an OpenAI-compatible API. They give their views independently and at the same time, and Claude rules on each point. Taking DeepSeek as the example:
+Each `discuss` level is a list of participants: Codex alone, or Codex plus models with an OpenAI-compatible API. They give their views independently and at the same time, and Claude rules on each point. Taking the DeepSeek example from the config above:
 
-1. Add an agent with `type` set to `openai-compatible` under `agents`, like `deepseek` in the example above. The generated config already has DeepSeek and MiMo examples; to use those, skip this step.
-2. Provide the API key, either way:
-   - **In the config file**: add a line `"api_key": "sk-…"` to that agent. It takes effect immediately, no restart needed. The key is stored in plain text, so don't commit or share this file.
-   - **In an environment variable**: write `"api_key_env": "DEEPSEEK_API_KEY"` as in the example, then set that variable. On Windows, add a user variable under "System Properties → Environment Variables"; on macOS and Linux, put it in your shell's startup file. Restart Claude Code afterwards so it can see it.
+1. **Provide the API key**, either way:
+   - **In the config file**: fill in the example's `"api_key": ""`. It takes effect immediately, no restart needed:
+
+     ```json
+     "deepseek": {
+       "type": "openai-compatible",
+       "base_url": "https://api.deepseek.com",
+       "api_key": "sk-your-key",
+       "model": "deepseek-v4-pro"
+     }
+     ```
+
+     The key is stored in plain text, so don't commit or share this file.
+   - **In an environment variable**: leave `api_key` empty, add a line `"api_key_env": "DEEPSEEK_API_KEY"`, then set that variable. On Windows, add a user variable under "System Properties → Environment Variables"; on macOS and Linux, put it in your shell's startup file. Restart Claude Code afterwards so it can see it.
 
    If both are set, `api_key` is used.
-3. Add `{ "agent": "deepseek", "effort": "max" }` to the `levels.discuss` levels you want. DeepSeek's `effort` can be `low`, `high` or `max`.
-4. Run `/codex-bridge-en:setup` to check that DeepSeek connects and that each level has the right participants.
+2. **Add it to discussion levels**: add it to the levels you want under `levels.discuss`. For example, to add a participant to complex discussions only:
 
-You can also leave these steps to `/codex-bridge-en:setup`, for example `/codex-bridge-en:setup add DeepSeek`: it updates the config for you and tells you where the key goes. You fill in the key yourself; there's no need to paste it into the chat.
+   ```json
+   "discuss": {
+     "simple":  [{ "agent": "codex", "effort": "medium" }],
+     "normal":  [{ "agent": "codex", "effort": "high" }],
+     "complex": [
+       { "agent": "codex", "model": "gpt-6-astra", "effort": "max" },
+       { "agent": "deepseek", "effort": "max" }
+     ]
+   }
+   ```
 
-API models can't look through your code themselves, so Claude sends the relevant files along with the topic (up to about 300,000 characters each time) and checks what they say about the code against the source. Other providers with an OpenAI-compatible API (Xiaomi MiMo, Kimi, GLM, Qwen, OpenRouter and so on) are set up the same way; provider-specific parameters go in `extra_body` and are merged into the request as is. For models without an adjustable reasoning effort, set `effort` to `null`. Xiaomi MiMo, for example, only has a thinking on/off switch (on by default): `{ "type": "openai-compatible", "base_url": "https://api.xiaomimimo.com/v1", "api_key_env": "MIMO_API_KEY", "model": "mimo-v2.6-pro" }`, with `{ "agent": "mimo", "effort": null }` in the discussion levels. For now, API models can only take part in discussions, not do hands-on work or reviews.
+   DeepSeek's `effort` can be `low`, `high` or `max`. Xiaomi MiMo has no adjustable effort, only a thinking on/off switch (on by default), so write `{ "agent": "mimo", "effort": null }`.
+3. Run `/codex-bridge-en:setup` to check that the model connects and that each level has the right participants.
+
+For providers without an example in the config (Kimi, GLM, Qwen, OpenRouter and so on), as long as they have an OpenAI-compatible API, add an agent under `agents` in the same format as the examples, with a name of your choice, then follow the steps above; provider-specific parameters go in `extra_body` and are merged into the request as is. You can also leave these steps to `/codex-bridge-en:setup`, for example `/codex-bridge-en:setup add DeepSeek`: it updates the config for you and tells you where the key goes. You fill in the key yourself; there's no need to paste it into the chat.
+
+API models can't look through your code themselves, so Claude sends the relevant files along with the topic (up to about 300,000 characters each time) and checks what they say about the code against the source. For now, API models can only take part in discussions, not do hands-on work or reviews.
 
 ### All settings
 

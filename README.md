@@ -65,7 +65,7 @@
 | `agents` | 有哪些协作方、怎么连接：Codex 的可执行文件、默认模型、沙箱；API 模型的接口地址、API key（直接写在配置里，或者指定存放它的环境变量）、默认模型 |
 | `levels` | 每类任务的每个等级交给谁，用什么模型和推理强度 |
 
-连接方式只写在 `agents`，分派只写在 `levels`。下面是一份加了 DeepSeek 的完整配置：
+连接方式只写在 `agents`，分派只写在 `levels`。下面是第一次使用时自动生成的配置：
 
 ```json
 {
@@ -89,9 +89,14 @@
     "deepseek": {
       "type": "openai-compatible",
       "base_url": "https://api.deepseek.com",
-      "api_key_env": "DEEPSEEK_API_KEY",
-      "model": "deepseek-v4-pro",
-      "max_parallel": 4
+      "api_key": "",
+      "model": "deepseek-v4-pro"
+    },
+    "mimo": {
+      "type": "openai-compatible",
+      "base_url": "https://api.xiaomimimo.com/v1",
+      "api_key": "",
+      "model": "mimo-v2.6-pro"
     }
   },
   "levels": {
@@ -108,16 +113,13 @@
     "discuss": {
       "simple":  [{ "agent": "codex", "effort": "medium" }],
       "normal":  [{ "agent": "codex", "effort": "high" }],
-      "complex": [
-        { "agent": "codex", "model": "gpt-6-astra", "effort": "max" },
-        { "agent": "deepseek", "effort": "max" }
-      ]
+      "complex": [{ "agent": "codex", "model": "gpt-6-astra", "effort": "max" }]
     }
   }
 }
 ```
 
-自动生成的配置里也有 `deepseek` 和 `mimo` 两个示例，`api_key` 留空，也没有加进讨论等级，所以讨论默认只有 Codex。想用的话，填上 `api_key`，再把它加进 `levels.discuss`，见下文"让其他模型参加讨论"。
+其中 `deepseek` 和 `mimo` 是示例：`api_key` 留空，也没有加进讨论等级，所以讨论默认只有 Codex。想让它们参加，见下文"让其他模型参加讨论"。
 
 ### 任务等级、模型和推理强度
 
@@ -131,20 +133,43 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 
 ### 让其他模型参加讨论
 
-讨论（`discuss`）的每一级是一个参与方数组：可以只有 Codex，也可以加上兼容 OpenAI 接口的模型。几方同时、各自独立给出意见，Claude 再逐条裁决。以 DeepSeek 为例：
+讨论（`discuss`）的每一级是一个参与方数组：可以只有 Codex，也可以加上兼容 OpenAI 接口的模型。几方同时、各自独立给出意见，Claude 再逐条裁决。以上面配置里的 DeepSeek 示例为例：
 
-1. 在 `agents` 里加一项 `type` 为 `openai-compatible` 的协作方，就是上面示例里的 `deepseek`。自动生成的配置里已经有 DeepSeek 和 MiMo 的示例，用它们的话这一步可以跳过。
-2. 填 API key，两种方式任选一种：
-   - **写在配置文件里**：在这一项里加一行 `"api_key": "sk-…"`。改完立即生效，不用重启。key 是明文保存的，这个文件不要提交到仓库或发给别人。
-   - **放在环境变量里**：像示例那样写 `"api_key_env": "DEEPSEEK_API_KEY"`，再设置这个环境变量。Windows 上在"系统属性 → 环境变量"里加一个用户变量；macOS 和 Linux 写进 shell 的启动文件。设置后要重启 Claude Code 才能读到。
+1. **填 API key**，两种方式任选一种：
+   - **写在配置文件里**：把示例里的 `"api_key": ""` 填上。改完立即生效，不用重启：
+
+     ```json
+     "deepseek": {
+       "type": "openai-compatible",
+       "base_url": "https://api.deepseek.com",
+       "api_key": "sk-你的 key",
+       "model": "deepseek-v4-pro"
+     }
+     ```
+
+     key 是明文保存的，这个文件不要提交到仓库或发给别人。
+   - **放在环境变量里**：`api_key` 留空，加一行 `"api_key_env": "DEEPSEEK_API_KEY"`，再设置这个环境变量。Windows 上在"系统属性 → 环境变量"里加一个用户变量；macOS 和 Linux 写进 shell 的启动文件。设置后要重启 Claude Code 才能读到。
 
    两个都填时用 `api_key`。
-3. 在 `levels.discuss` 里需要的等级加上 `{ "agent": "deepseek", "effort": "max" }`。DeepSeek 的 `effort` 可选 `low`、`high`、`max`。
-4. 运行 `/codex-bridge:setup` 确认：DeepSeek 能连通，每一级的参与方都对。
+2. **加进讨论等级**：在 `levels.discuss` 里需要的等级加上它。比如只让复杂的讨论多一方：
 
-这几步也可以直接交给 `/codex-bridge:setup`，比如运行 `/codex-bridge:setup 加 DeepSeek`：它会帮你改好配置，再告诉你 key 填在哪里。key 由你自己填，不需要发到对话里。
+   ```json
+   "discuss": {
+     "simple":  [{ "agent": "codex", "effort": "medium" }],
+     "normal":  [{ "agent": "codex", "effort": "high" }],
+     "complex": [
+       { "agent": "codex", "model": "gpt-6-astra", "effort": "max" },
+       { "agent": "deepseek", "effort": "max" }
+     ]
+   }
+   ```
 
-API 模型自己翻不了代码，Claude 会把相关文件随议题一起发过去（每次上限约 30 万字符），并对照原文核实它对代码的说法。其他兼容 OpenAI 接口的厂商（小米 MiMo、Kimi、GLM、通义千问、OpenRouter 等）按同样的方式配置；有特殊参数时写在 `extra_body` 里，会原样并进请求。没有推理强度可调的模型，`effort` 写 `null`，比如小米 MiMo 只有思考开关（默认开启）：`{ "type": "openai-compatible", "base_url": "https://api.xiaomimimo.com/v1", "api_key_env": "MIMO_API_KEY", "model": "mimo-v2.6-pro" }`，讨论等级里写 `{ "agent": "mimo", "effort": null }`。目前 API 模型只能参加讨论，不能执行任务或审查。
+   DeepSeek 的 `effort` 可选 `low`、`high`、`max`。小米 MiMo 没有推理强度可调，只有思考开关（默认开启），写 `{ "agent": "mimo", "effort": null }`。
+3. 运行 `/codex-bridge:setup` 确认：模型能连通，每一级的参与方都对。
+
+配置里没有示例的厂商（Kimi、GLM、通义千问、OpenRouter 等），只要兼容 OpenAI 接口，就在 `agents` 里照着示例的格式加一项，名字自己起，再按上面的步骤做；有特殊参数时写在 `extra_body` 里，会原样并进请求。这些步骤也可以交给 `/codex-bridge:setup`，比如运行 `/codex-bridge:setup 加 DeepSeek`：它会帮你改好配置，再告诉你 key 填在哪里。key 由你自己填，不需要发到对话里。
+
+API 模型自己翻不了代码，Claude 会把相关文件随议题一起发过去（每次上限约 30 万字符），并对照原文核实它对代码的说法。目前 API 模型只能参加讨论，不能执行任务或审查。
 
 ### 全部字段
 
