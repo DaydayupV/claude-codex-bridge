@@ -1,4 +1,4 @@
-// codex-run.mjs 里所有给人看的文字：终端提示、报错，以及附加给 Codex 的固定约束。
+// bridge.mjs 里所有给人看的文字：终端提示、报错，以及附加给 Codex 的固定约束。
 // 中英两个插件共用这份文件，由同目录的 language.json 决定用哪种语言。
 
 const zh = {
@@ -101,7 +101,7 @@ ${schema}`,
   fixApiRetry: '服务暂时不可用或太忙，稍后再试',
 
   // ---------- 参数 ----------
-  usage: '用法：codex-run.mjs <run|discuss|resume|review|status|watch|config|check> [选项]，run / discuss / review / check 支持 [--agent <协作方>]，discuss / resume 支持 [--file <路径[:起始行-结束行]>]...，run / resume / discuss / review 支持 [--track <路径>]...，run / resume / discuss 支持 [--group <组名>] [--scope <路径>]...，status / watch 支持 [--group <组名>]，详见文件头部注释',
+  usage: '用法：bridge.mjs <run|discuss|resume|review|status|watch|config|check> [选项]，run / discuss / review / check 支持 [--agent <协作方>]，discuss / resume 支持 [--file <路径[:起始行-结束行]>]...，run / resume / discuss / review 支持 [--track <路径>]...，run / resume / discuss 支持 [--group <组名>] [--scope <路径>]...，status / watch 支持 [--group <组名>]，详见文件头部注释',
   badDiscussMaxRounds: 'dispatch.discuss_max_rounds 必须是不小于 1 的整数（在 ~/.claude/codex-bridge.json 里设置）',
   discussRoundsExceeded: (root, done, max) => `讨论 ${root} 已经完成 ${done} 轮，达到上限 ${max}（配置项 dispatch.discuss_max_rounds）。请根据已有结果裁决；确实需要再讨论，调大 ~/.claude/codex-bridge.json 里的 dispatch.discuss_max_rounds`,
   statusRound: (n) => `［第 ${n} 轮］`,
@@ -323,7 +323,7 @@ ${schema}`,
   fixApiRetry: 'The service is unavailable or busy right now; try again later',
 
   // ---------- arguments ----------
-  usage: 'Usage: codex-run.mjs <run|discuss|resume|review|status|watch|config|check> [options]; run / discuss / review / check support [--agent <agent>]; discuss / resume support [--file <path[:start-end]>]...; run / resume / discuss / review support [--track <path>]...; run / resume / discuss support [--group <name>] [--scope <path>]...; status / watch support [--group <name>]; see the comment at the top of the file',
+  usage: 'Usage: bridge.mjs <run|discuss|resume|review|status|watch|config|check> [options]; run / discuss / review / check support [--agent <agent>]; discuss / resume support [--file <path[:start-end]>]...; run / resume / discuss / review support [--track <path>]...; run / resume / discuss support [--group <name>] [--scope <path>]...; status / watch support [--group <name>]; see the comment at the top of the file',
   badDiscussMaxRounds: 'dispatch.discuss_max_rounds must be a whole number of at least 1 (set it in ~/.claude/codex-bridge.json)',
   discussRoundsExceeded: (root, done, max) => `Discussion ${root} has already had ${done} rounds, the limit of ${max} (the dispatch.discuss_max_rounds setting). Rule on the results you have; if another round is really needed, raise dispatch.discuss_max_rounds in ~/.claude/codex-bridge.json`,
   statusRound: (n) => `[round ${n}] `,

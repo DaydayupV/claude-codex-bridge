@@ -1,5 +1,5 @@
 ---
-name: codex-dispatch
+name: dispatch
 description: Hand off hands-on coding work to OpenAI Codex and check the result, have Codex review code independently, or talk a complex design through with Codex and other configured models (such as DeepSeek). Load before starting hands-on work such as implementing a feature, making bulk changes, writing scripts, migrations, refactoring or fixing bugs; when facing a complex or uncertain design or plan with several options; and when the user mentions Codex, /codex-bridge-en:rescue, /codex-bridge-en:discuss or /codex-bridge-en:review, or when deciding whether to ask Codex for a review.
 ---
 
@@ -37,7 +37,7 @@ Codex's writing is weak: piles of jargon, stiff phrasing, roundabout sentences t
 - **Relay to the user**: digest Codex's reports, review findings and open issues, and tell the user in plain words. Don't paste them as is.
 
 ## How to call it
-The only entry point is `scripts/codex-run.mjs` in this skill's folder (that is, `${CLAUDE_PLUGIN_ROOT}/skills/codex-dispatch/scripts/codex-run.mjs`). Don't type `codex exec` by hand.
+The only entry point is `scripts/bridge.mjs` in this skill's folder (that is, `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/bridge.mjs`). Don't type `codex exec` by hand.
 
 - **No exceptions**: tests, checks, trial runs and one-off questions all go through this script too. Use `discuss` for read-only questions. The plugin includes a hook that blocks commands calling `codex exec` or `codex review` directly.
 - **Stop on sandbox problems**: if the sandbox stops Codex from starting commands or it errors, tell the user the exact error and your assessment, and let them decide whether to change the config. Don't switch the sandbox, edit config files or look for a way around the script yourself.

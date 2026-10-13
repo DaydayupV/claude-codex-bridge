@@ -7,7 +7,7 @@ The user wants to set up codex-bridge. Arguments:
 
 $ARGUMENTS
 
-The script is `${CLAUDE_PLUGIN_ROOT}/skills/codex-dispatch/scripts/codex-run.mjs`. Go through these steps in order, and tell the user the result of each one briefly:
+The script is `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/bridge.mjs`. Go through these steps in order, and tell the user the result of each one briefly:
 
 1. **Check the environment**: run `node "<script path>" check` and show each result in a table (Node.js, Git, Codex, each API model).
    - Codex is required. If `codex.ok` is `false`, pass on the `fix` from the result (for example installing the Codex CLI or running `codex login`), ask the user to run `/codex-bridge-en:setup` again once that's done, and stop here.

@@ -240,7 +240,7 @@ Windows 上已经实际测试过。macOS 和 Linux 的代码路径已经写好�
 
 ## 开发
 
-两个插件的脚本（`codex-run.mjs`、`api-chat.mjs`、`messages.mjs` 和钩子 `hooks/guard-codex.mjs`、`hooks/session-reminder.mjs`）是同一份。只改 `codex-bridge/` 里的那份，再运行同步工具复制到英文插件：
+两个插件的脚本（`bridge.mjs`、`api-chat.mjs`、`messages.mjs` 和钩子 `hooks/guard-codex.mjs`、`hooks/session-reminder.mjs`）是同一份。只改 `codex-bridge/` 里的那份，再运行同步工具复制到英文插件：
 
 ```bash
 node tools/sync-shared.mjs

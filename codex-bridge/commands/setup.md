@@ -7,7 +7,7 @@ argument-hint: [可选：要添加的模型，例如"加 DeepSeek"]
 
 $ARGUMENTS
 
-脚本路径是 `${CLAUDE_PLUGIN_ROOT}/skills/codex-dispatch/scripts/codex-run.mjs`。按下面的顺序进行，每一步用简短的中文告诉用户结果：
+脚本路径是 `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/bridge.mjs`。按下面的顺序进行，每一步用简短的中文告诉用户结果：
 
 1. **检查环境**：运行 `node "<脚本路径>" check`，用表格展示每一项的结果（Node.js、Git、Codex、各个 API 模型）。
    - Codex 是必需的。`codex.ok` 为 `false` 时，把结果里的 `fix` 转告用户（比如安装 Codex CLI、运行 `codex login`），请用户处理好之后再运行一次 `/codex-bridge:setup`，到这里就结束。

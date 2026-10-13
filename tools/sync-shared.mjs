@@ -15,9 +15,9 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE = path.join(ROOT, 'codex-bridge');
 const TARGET = path.join(ROOT, 'codex-bridge-en');
 const SHARED = [
-  'skills/codex-dispatch/scripts/codex-run.mjs',
-  'skills/codex-dispatch/scripts/messages.mjs',
-  'skills/codex-dispatch/scripts/api-chat.mjs',
+  'skills/dispatch/scripts/bridge.mjs',
+  'skills/dispatch/scripts/messages.mjs',
+  'skills/dispatch/scripts/api-chat.mjs',
   'hooks/guard-codex.mjs',
   'hooks/session-reminder.mjs',
 ];
@@ -54,7 +54,7 @@ const shape = (node) => {
   return Object.fromEntries(Object.entries(node).filter(([k]) => k !== 'description').map(([k, v]) => [k, shape(v)]));
 };
 for (const name of SCHEMAS) {
-  const read = (dir) => shape(JSON.parse(fs.readFileSync(path.join(dir, 'skills', 'codex-dispatch', 'schemas', name), 'utf8')));
+  const read = (dir) => shape(JSON.parse(fs.readFileSync(path.join(dir, 'skills', 'dispatch', 'schemas', name), 'utf8')));
   if (JSON.stringify(read(SOURCE)) !== JSON.stringify(read(TARGET))) {
     console.log(`schema 结构不一致：${name}（英文版需要手动对照修改）`);
     problems++;

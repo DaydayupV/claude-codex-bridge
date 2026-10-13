@@ -1,5 +1,5 @@
 // api-chat.mjs — 调用兼容 OpenAI 的 /chat/completions 流式接口，以及给 API 协作方的报告做 schema 校验。
-// 不依赖 messages.mjs：出错时抛出带 kind 的错误，由 codex-run.mjs 翻译成给人看的文字。
+// 不依赖 messages.mjs：出错时抛出带 kind 的错误，由 bridge.mjs 翻译成给人看的文字。
 
 function apiError(kind, message, status) {
   return Object.assign(new Error(message), { kind, status });

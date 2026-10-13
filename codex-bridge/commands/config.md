@@ -7,7 +7,7 @@ argument-hint: [要改的设置，例如"复杂任务换成 gpt-6.1-sol、ultra"
 
 $ARGUMENTS
 
-1. 运行 `node "${CLAUDE_PLUGIN_ROOT}/skills/codex-dispatch/scripts/codex-run.mjs" config --cwd "<当前项目目录>"`，查看实际生效的配置和配置文件路径。字段含义见 `codex-bridge:codex-dispatch` skill 目录下的 `references/config.md`。
+1. 运行 `node "${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/bridge.mjs" config --cwd "<当前项目目录>"`，查看实际生效的配置和配置文件路径。字段含义见 `codex-bridge:dispatch` skill 目录下的 `references/config.md`。
 2. 没有参数时，用简短的中文表格向用户展示：
    - `resolved_levels`：每类任务每个等级交给谁、什么模型和推理强度；
    - `agents_status`：有哪些协作方，API 协作方的 key 是否已设置；

@@ -1,21 +1,21 @@
 #!/usr/bin/env node
-// codex-run.mjs — Claude Code 调度 Codex 的唯一入口。
+// bridge.mjs — Claude Code 调度 Codex 和其他协作方的唯一入口。
 //
-//   node codex-run.mjs run    --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--agent <名字>] [--model <模型>] [--title <标题>]
-//                             [--add-dir <目录>]... [--track <路径>]... [--group <组名>] [--scope <路径>]... [--timeout <分钟>] [--stall <分钟>] [--no-snapshot]
-//   node codex-run.mjs resume --run <run_id|last> --brief <文件|-> (--level <等级> | --effort <强度>) [--agent <名字>] [--file <路径[:起始行-结束行]>]... [--model <模型>] [--timeout <分钟>] [--stall <分钟>]
-//                             [--track <路径>]... [--group <组名>] [--scope <路径>]...
-//   node codex-run.mjs discuss --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--agent <名字>] [--file <路径[:起始行-结束行]>]... [--model <模型>] [--title <标题>]
-//                             [--track <路径>]... [--group <组名>] [--scope <路径>]...
-//                             方案讨论，只读；后续轮次用 resume --run <讨论的 run_id> 续接
-//   node codex-run.mjs review --cwd <目录> [--uncommitted | --base <分支> | --commit <sha>]
-//                             [--brief <文件|->] (--level <等级> | --effort <强度>) [--agent <名字>] [--model <模型>] [--title <标题>]
-//                             [--track <路径>]...
-//   node codex-run.mjs status [--run <run_id|last>] [--limit <n>] [--group <组名>]
-//   node codex-run.mjs watch  [--run <run_id|last>] [--verbose] [--group <组名>]
-//   node codex-run.mjs config [--cwd <目录>]
-//   node codex-run.mjs check  [--agent <名字>]
-//                             检查 Node.js、Git、Codex（必需）和各个 API 协作方（可选，会发一个很小的请求）能不能用
+//   node bridge.mjs run    --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--agent <名字>] [--model <模型>] [--title <标题>]
+//                          [--add-dir <目录>]... [--track <路径>]... [--group <组名>] [--scope <路径>]... [--timeout <分钟>] [--stall <分钟>] [--no-snapshot]
+//   node bridge.mjs resume --run <run_id|last> --brief <文件|-> (--level <等级> | --effort <强度>) [--agent <名字>] [--file <路径[:起始行-结束行]>]... [--model <模型>] [--timeout <分钟>] [--stall <分钟>]
+//                          [--track <路径>]... [--group <组名>] [--scope <路径>]...
+//   node bridge.mjs discuss --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--agent <名字>] [--file <路径[:起始行-结束行]>]... [--model <模型>] [--title <标题>]
+//                          [--track <路径>]... [--group <组名>] [--scope <路径>]...
+//                          方案讨论，只读；后续轮次用 resume --run <讨论的 run_id> 续接
+//   node bridge.mjs review --cwd <目录> [--uncommitted | --base <分支> | --commit <sha>]
+//                          [--brief <文件|->] (--level <等级> | --effort <强度>) [--agent <名字>] [--model <模型>] [--title <标题>]
+//                          [--track <路径>]...
+//   node bridge.mjs status [--run <run_id|last>] [--limit <n>] [--group <组名>]
+//   node bridge.mjs watch  [--run <run_id|last>] [--verbose] [--group <组名>]
+//   node bridge.mjs config [--cwd <目录>]
+//   node bridge.mjs check  [--agent <名字>]
+//                          检查 Node.js、Git、Codex（必需）和各个 API 协作方（可选，会发一个很小的请求）能不能用
 //
 // watch 把 events.jsonl 实时翻译成可读进度；不给 --run 时跟踪正在运行的任务（没有就等新任务出现）。
 // 每次运行还会在记录目录下写一个 watch.mjs 启动器，方便在终端面板里直接运行（插件路径可能含非 ASCII 字符）。
@@ -167,7 +167,7 @@ function migrateConfig(config, file, base, project = false) {
   for (const key of ['dispatch', 'agents', 'levels']) if (converted[key] !== undefined) result[key] = converted[key];
   for (const [key, value] of Object.entries(config)) if (!oldKeys.includes(key) && !Object.hasOwn(result, key)) result[key] = value;
   migratedConfigs.set(file, result);
-  if (project) process.stderr.write(`codex-run: ${M.projectOldFormat(file)}\n`);
+  if (project) process.stderr.write(`bridge: ${M.projectOldFormat(file)}\n`);
   else {
     // 转换结果不合格就停在这里，原文件不动。
     validateConfig(mergeConfig(base, result));
@@ -183,10 +183,10 @@ function migrateConfig(config, file, base, project = false) {
       fs.copyFileSync(file, bak, fs.constants.COPYFILE_EXCL);
       fs.writeFileSync(tmp, JSON.stringify(result, null, 2) + '\n', { flag: 'wx' });
       fs.renameSync(tmp, file);
-      process.stderr.write(`codex-run: ${M.configMigrated(file, bak)}\n`);
+      process.stderr.write(`bridge: ${M.configMigrated(file, bak)}\n`);
     } catch (e) {
       fs.rmSync(tmp, { force: true });
-      process.stderr.write(`codex-run: ${M.configMigrateFailed(file, e.message)}\n`);
+      process.stderr.write(`bridge: ${M.configMigrateFailed(file, e.message)}\n`);
     }
   }
   return result;
@@ -278,14 +278,14 @@ function projectConfig(cfg, project) {
         const key = `levels.discuss.${lv}`;
         allowed.levels.discuss[lv] = entries.filter((item) => {
           const drop = cfg.agents[item?.agent]?.type === 'openai-compatible' && !cfg.levels.discuss[lv]?.some((v) => v.agent === item.agent);
-          if (drop) process.stderr.write(`codex-run: ${M.projectApiDropped(item.agent, key)}\n`);
+          if (drop) process.stderr.write(`bridge: ${M.projectApiDropped(item.agent, key)}\n`);
           return !drop;
         });
         if (entries.length && !allowed.levels.discuss[lv].length) die(M.projectLevelEmpty(key));
       }
     } else ignored.push(key);
   }
-  if (ignored.length) process.stderr.write(`codex-run: ${M.projectIgnored(M.list(ignored))}\n`);
+  if (ignored.length) process.stderr.write(`bridge: ${M.projectIgnored(M.list(ignored))}\n`);
   return allowed;
 }
 
@@ -314,9 +314,9 @@ function loadConfig(cwd) {
   if (!fs.existsSync(USER_CONFIG)) {
     try {
       writeStarterConfig();
-      process.stderr.write(`codex-run: ${M.starterCreated(USER_CONFIG, STARTER_CONFIG.agents.codex.model, STARTER_CONFIG.levels.review.complex.model)}\n`);
+      process.stderr.write(`bridge: ${M.starterCreated(USER_CONFIG, STARTER_CONFIG.agents.codex.model, STARTER_CONFIG.levels.review.complex.model)}\n`);
     } catch (e) {
-      process.stderr.write(`codex-run: ${M.starterFailed(USER_CONFIG, e.message)}\n`);
+      process.stderr.write(`bridge: ${M.starterFailed(USER_CONFIG, e.message)}\n`);
     }
   }
   const user = readJson(USER_CONFIG);
@@ -351,7 +351,7 @@ const SNAPSHOT_EXCLUDES = [
 // ---------- 通用 ----------
 
 function die(msg) {
-  process.stderr.write(`codex-run: ${msg}\n`);
+  process.stderr.write(`bridge: ${msg}\n`);
   process.exit(2);
 }
 
@@ -494,7 +494,7 @@ function codexConfigModel() {
 }
 
 function writeWatchLauncher() {
-  const launcher = `// 自动生成：转调 codex-run.mjs watch。\nprocess.argv.splice(2, 0, 'watch');\nawait import(${JSON.stringify(pathToFileURL(fileURLToPath(import.meta.url)).href)});\n`;
+  const launcher = `// 自动生成：转调 bridge.mjs watch。\nprocess.argv.splice(2, 0, 'watch');\nawait import(${JSON.stringify(pathToFileURL(fileURLToPath(import.meta.url)).href)});\n`;
   try { fs.writeFileSync(path.join(RUNS_ROOT, 'watch.mjs'), launcher); } catch { /* 不影响主流程 */ }
 }
 
@@ -775,7 +775,7 @@ async function execute(ctx) {
   } finally { ctx.release(); }
   if (rejection) die(rejection);
   fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
-  process.stderr.write(`codex-run: ${M.started(mode, agentName, modelShown, effort, level, dir)}\n`);
+  process.stderr.write(`bridge: ${M.started(mode, agentName, modelShown, effort, level, dir)}\n`);
 
   const warnings = [];
   const notes = [];
@@ -948,7 +948,7 @@ async function executeApi(ctx) {
   const event = (ev) => fs.appendFileSync(path.join(dir, 'events.jsonl'), JSON.stringify({ ...ev, ts: new Date().toISOString() }) + '\n');
   fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
   fs.writeFileSync(path.join(dir, 'messages.json'), JSON.stringify(history, null, 2));
-  process.stderr.write(`codex-run: ${M.started(mode, agentName, modelShown, effort, level, dir)}\n`);
+  process.stderr.write(`bridge: ${M.started(mode, agentName, modelShown, effort, level, dir)}\n`);
   const usage = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 };
   const notes = [];
   const warnings = [];

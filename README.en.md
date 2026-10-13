@@ -240,7 +240,7 @@ Install just one. Both share the same config file, preference files and run reco
 
 ## Development
 
-Both plugins use the same scripts (`codex-run.mjs`, `api-chat.mjs`, `messages.mjs` and the hooks `hooks/guard-codex.mjs` and `hooks/session-reminder.mjs`). Only edit the copy in `codex-bridge/`, then run the sync tool to copy it into the English plugin:
+Both plugins use the same scripts (`bridge.mjs`, `api-chat.mjs`, `messages.mjs` and the hooks `hooks/guard-codex.mjs` and `hooks/session-reminder.mjs`). Only edit the copy in `codex-bridge/`, then run the sync tool to copy it into the English plugin:
 
 ```bash
 node tools/sync-shared.mjs
