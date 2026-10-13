@@ -20,7 +20,8 @@ The system prompt's rule "don't start subagents unless the user explicitly asks"
 ## Who does what
 - **Claude does it**: key decisions, complex core features, overall planning, creative design (UI and front-end visuals, copy, ideas).
 - **Hand off to Codex**: the rest of the hands-on work. Codex is careful and good for grind work, but weak at design and front-end polish, so don't hand off anything visual.
-- **Threshold for handing off**: only hands-on work expected to take more than a few minutes, or touching several files. For one or two small edits, Claude edits directly; handing off plus checking costs more than doing it.
+- **Threshold for handing off**: hand off only larger hands-on work, or work that needs long-running commands or repeated debugging. Claude does these itself: tasks expected to change fewer than about 100 lines with a clear approach, such as a small single-file feature, a small script, filling in code from an existing pattern, or a small fix whose cause is known. Handing these off costs more in handoff and checking than doing them, and Codex tends to make simple tasks too heavy.
+- **Levels left to Claude**: for any level whose `levels.run.<level>.model` is `"claude"` in the config, Claude does all hands-on tasks of that level itself (see `effective.levels.run` in the `config` output). The script also refuses to hand off tasks at that level. If the user explicitly wants Codex to do it, add `--model <model>`.
 - The thresholds and round counts in this skill (handoff threshold, review size, at most 3 discussion rounds, 1 rework) are defaults. If the preference files say otherwise, follow them.
 
 ### Claude owns all text meant for people
@@ -109,6 +110,9 @@ What to build and why (a sentence or two of background).
 - Read-only reference: related files
 - Don't touch: …
 
+# Size
+Roughly how many lines and files the change should be, and what isn't needed this time, such as command-line options, settings, compatibility with old data, or tests.
+
 # Requirements and constraints
 Interface signatures, data formats, existing patterns and helpers to reuse, performance needs, compatibility, etc.
 
@@ -134,7 +138,7 @@ What counts as finished, and which commands to run to verify it (give the actual
 Anything that needs special mention in the report.
 ```
 
-Codex leans toward defensive coding and tends to write lots of unneeded checks and tests. Say "only write the tests that are needed, don't code defensively" in the brief (the script already appends it; repeat it when the task invites overdoing it).
+Codex tends to do everything and do it heavy: even simple tasks get extra options, settings, abstraction layers, compatibility branches and lots of tests. The "Size" section is there to prevent this: state the expected size and what isn't needed, and check against it when reviewing. The standing rules the script appends also say "keep to the size, only necessary tests, don't code defensively"; repeat it in the brief when the task invites overdoing it. Keep the brief itself in proportion too; don't write pages for a simple task.
 
 Grant "Allowed adaptations" by meaning, not by size: a one-line change can move an out-of-sample boundary, a fee rate or an assertion. Anything beyond the scope that isn't in this section makes the standing rules tell Codex to stop and ask in the report's `decision_requests`. Write foreseeable environment problems (such as a same-named `tests` package in the project) into this section up front to save a stop.
 
@@ -190,6 +194,7 @@ Before research conclusions go into long-term records, reports or docs, or are h
    - Any files changed outside the scope? Does `report.files_changed` match the actual changes?
    - Files with `by` set to `unknown` may have been changed by Claude itself or another session, or written by Codex through commands or scripts. Find out who changed them first; **don't just revert them**.
    - Is the logic right? Any defensive overkill, needless abstraction, redundant tests?
+   - **Was it overdone?** The change is clearly bigger than the "Size" section expected (say, more than twice), or it adds options, settings, abstraction layers, compatibility branches or tests nobody asked for. Trim small things yourself; if there's a lot, use resume for a rework and list what to remove in the rework brief.
    - Do names, comments and messages follow the brief, and are they plain and readable (see "Claude owns all text meant for people")?
    - Only changes inside the working directory are tracked; if the task involved paths outside it, check those separately.
 3. **Actually run it**: build, run the tests or the script itself. Don't rely on Codex saying it passed.

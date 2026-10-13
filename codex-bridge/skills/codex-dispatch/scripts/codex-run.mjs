@@ -98,6 +98,7 @@ const DEFAULT_CONFIG = {
 const PROJECT_KEYS = ['model', 'levels', 'timeout_min', 'stall_min'];
 
 const LEVELS = ['simple', 'normal', 'complex'];
+const CLAUDE = 'claude'; // levels.run 里某一级的 model 写成它，表示这一级由 Claude 自己做
 const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 
 function readJson(file) {
@@ -223,8 +224,15 @@ function pickProfile(cfg, o, mode, fallbackModel = null) {
     if (!LEVELS.includes(o.level)) die(M.levelChoices(LEVELS.join(' / ')));
     level = o.level;
     entry = cfg.levels[mode]?.[level] || {};
+    // model 写成 "claude" 表示这一级的执行任务由 Claude 自己做；用户点名模型（--model）时照常派。
+    if (entry.model === CLAUDE) {
+      if (mode !== 'run') die(M.claudeOnlyRun(`levels.${mode}.${level}.model`));
+      if (!o.model) die(M.levelForClaude(level));
+      entry = { ...entry, model: null };
+    }
     if (!CODEX_EFFORTS.includes(entry.effort)) die(M.badLevelConfig(`levels.${mode}.${level}.effort`, JSON.stringify(entry.effort), CODEX_EFFORTS.join(' / ')));
   }
+  if (cfg.model === CLAUDE) die(M.claudeNotTopLevel);
   return { level, model: o.model || entry.model || cfg.model || fallbackModel, effort: entry.effort };
 }
 

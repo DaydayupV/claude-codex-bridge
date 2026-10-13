@@ -8,7 +8,7 @@
 | `watch` | `auto`：派活后打开实时查看；`off`：不主动打开 | `auto` |
 | `max_parallel` | 同一任务组里最多同时运行几个任务（见 skill 的"并发拆分"一节） | `3` |
 | `model` | 各等级没单独写模型时用的模型 | `null`，沿用 Codex 配置 |
-| `levels` | `run` / `review` / `discuss` 三种模式下，`simple` / `normal` / `complex` 三级任务各自的 `{ "model", "effort" }`。`model` 为 `null` 时用顶层 `model`；`effort` 只能是 `low` `medium` `high` `xhigh` `max` `ultra` | 模型都是 `null`；推理强度 run 和 review 为 medium / high / max，discuss 为 high / max / max |
+| `levels` | `run` / `review` / `discuss` 三种模式下，`simple` / `normal` / `complex` 三级任务各自的 `{ "model", "effort" }`。`model` 为 `null` 时用顶层 `model`；`run` 的某一级 `model` 写成 `"claude"`，表示这一级由 Claude 自己做、不派给 Codex；`effort` 只能是 `low` `medium` `high` `xhigh` `max` `ultra` | 模型都是 `null`；推理强度 run 和 review 为 medium / high / max，discuss 为 high / max / max |
 | `sandbox` | 三种模式各自的沙箱：`read-only` / `workspace-write` / `danger-full-access` | 全部 `null`，沿用 Codex 配置 |
 | `approval` | 审批策略，如 `never` | `null`，沿用 Codex 配置 |
 | `timeout_min` / `stall_min` | 总超时 / 卡死判定（分钟，`stall_min` 为 0 时关闭） | 240 / 20 |

@@ -28,6 +28,9 @@ const zh = {
   missingLevel: (levels, efforts) => `缺少 --level（${levels}）或 --effort（${efforts}）`,
   levelChoices: (list) => `--level 只能是 ${list}`,
   badLevelConfig: (key, value, list) => `配置 ${key} 的值 ${value} 无效，只能是 ${list}`,
+  levelForClaude: (level) => `按配置（levels.run.${level}.model 为 "claude"），${level} 等级的执行任务由 Claude 自己做，不派给 Codex。用户明确要求派给 Codex 时，用 --model 指定模型`,
+  claudeOnlyRun: (key) => `配置 ${key} 不能是 "claude"：只有 run 的等级可以交给 Claude 自己做，审查和讨论需要另一个模型`,
+  claudeNotTopLevel: '顶层 model 不能是 "claude"；要让某一级任务由 Claude 自己做，在 levels.run 里把那一级的 model 写成 "claude"',
   dirMissing: (dir) => `目录不存在：${dir}`,
   emptyBrief: '任务说明为空',
   noRuns: '还没有任何运行记录',
@@ -62,7 +65,8 @@ const zh = {
 - 开始前先花很少的成本做预检：解释器和依赖能用、测试能被发现、任务需要的输入存在。只做检查，不要因此跑耗时的完整验收。
 - 遇到下面的情况，停在当前位置，把问题写进报告的 decision_requests，status 填 blocked：需要突破上面的范围或授权；需要改变研究口径、样本外纪律或验收标准；要做不可逆的操作；问题的答案不同会让后面耗时的工作作废。
 - 其他拿不准的地方，选保守、可逆的做法继续，并在报告里写明；能先做不受这个问题影响的部分就先做，问题攒到一起再提，不要每个小疑问都停下。
-- 只写必要的测试，不要过度防御：不加多余的参数校验、try/catch、兜底分支和重复测试。
+- 测试只写任务说明要求的，或者确实需要用来验证这次改动的；小改动不另写测试。不要过度防御：不加多余的参数校验、try/catch、兜底分支和重复测试。
+- 按任务说明的规模做，不要做成更大的工程：不新增任务没要求的命令行参数、配置项、抽象层和兼容分支，能用现有函数就不新写。实际改动明显超过任务说明里预计的规模时，先想想是不是做多了；确实需要的，在报告里说明为什么。
 - 命名、注释和提示文字以任务说明为准，给了原文就照用。没有指定的：命名沿用项目现有风格，起直白、能看出用途的名字；注释只在不显而易见的地方用一句简短的话说明"为什么"，不要长篇解释，也不要逐行注释。
 - 不执行 git commit / git push / git reset --hard 或任何改写历史的操作；不删除范围外的文件；不读取或修改密钥、凭据、.env 等敏感文件。
 - 不安装全局依赖，不改系统配置；项目内确需新增依赖时在报告里说明。
@@ -156,6 +160,9 @@ const en = {
   missingLevel: (levels, efforts) => `Missing --level (${levels}) or --effort (${efforts})`,
   levelChoices: (list) => `--level must be one of ${list}`,
   badLevelConfig: (key, value, list) => `Config ${key} is ${value}, which is not valid; must be one of ${list}`,
+  levelForClaude: (level) => `Per the config (levels.run.${level}.model is "claude"), ${level}-level tasks are done by Claude itself, not handed to Codex. If the user explicitly wants Codex to do it, pass a model with --model`,
+  claudeOnlyRun: (key) => `Config ${key} can't be "claude": only run levels can be left to Claude itself; reviews and discussions need a second model`,
+  claudeNotTopLevel: 'The top-level model can\'t be "claude". To have Claude do a level itself, set that level\'s model to "claude" under levels.run',
   dirMissing: (dir) => `Directory not found: ${dir}`,
   emptyBrief: 'The brief is empty',
   noRuns: 'No runs recorded yet',
@@ -190,7 +197,8 @@ const en = {
 - Before starting, do a cheap preflight: the interpreter and dependencies work, tests can be discovered, and the inputs the task needs exist. Only check; don't run a long full verification for this.
 - In these cases, stop where you are, put the question in the report's decision_requests and set status to blocked: you would need to go beyond the scope or authorization above; the research definitions, out-of-sample discipline or acceptance criteria would change; an irreversible operation is needed; or different answers would make later time-consuming work wasted.
 - For anything else you are unsure about, take the conservative, reversible option, keep going and note it in the report. Do the parts the question doesn't affect first, and collect questions to ask together; don't stop for every small doubt.
-- Write only the tests that are needed, and don't code defensively: no extra argument checks, try/catch, fallback branches or duplicate tests.
+- Only write tests the brief asks for, or that are really needed to verify this change; don't add tests for small changes. Don't code defensively: no extra argument checks, try/catch, fallback branches or duplicate tests.
+- Keep to the size the brief describes; don't turn it into a bigger project. Don't add command-line options, settings, abstraction layers or compatibility branches the task didn't ask for, and use existing functions instead of writing new ones where you can. If your change ends up clearly bigger than the size the brief expects, ask yourself whether you've overdone it; if it really is needed, say why in the report.
 - Follow the brief for names, comments and user-facing text; if it gives exact wording, use it as is. Otherwise, follow the project's existing naming style and pick plain names that show what things are for. Comment only where something isn't obvious, with one short sentence on why. No long explanations, no line-by-line comments.
 - Don't run git commit / git push / git reset --hard or anything that rewrites history. Don't delete files outside the scope. Don't read or change keys, credentials, .env or other secrets.
 - Don't install global dependencies or change system settings. If the project really needs a new dependency, say so in the report.
