@@ -2,7 +2,7 @@
 
 [中文](README.md)
 
-A Claude Code plugin that lets Claude hand off hands-on coding work to OpenAI Codex and then check the result. Claude can also ask Codex for an independent code review, or talk a complex design through with it before deciding.
+A Claude Code plugin that lets Claude hand off hands-on coding work to OpenAI Codex and then check the result. Claude can also ask Codex for an independent code review, or have Codex and other models (such as DeepSeek) weigh in on a complex design before Claude decides.
 
 The idea is a split of roles: Claude does the planning, key decisions, design and writing; Codex does the rest of the hands-on work. Codex runs on your own OpenAI plan or API key, so it doesn't use your Claude quota.
 
@@ -11,22 +11,24 @@ The idea is a split of roles: Claude does the planning, key decisions, design an
 | Command | What it does |
 |---|---|
 | `/codex-bridge-en:rescue <task>` | Hands a task to Codex. When it finishes, Claude reviews the diff, runs it to verify, and sends it back for rework if needed |
-| `/codex-bridge-en:discuss <topic>` | Discusses a complex design with Codex: rounds of critiquing each other's proposals (the limit is configurable, 2 by default), then Claude rules on each point and writes up a decision record |
+| `/codex-bridge-en:discuss <topic>` | Discusses a complex design with Codex (and any other configured models): rounds of critiquing each other's proposals (the limit is configurable, 2 by default), then Claude rules on each point and writes up a decision record |
 | `/codex-bridge-en:review` | Has Codex review uncommitted changes, a branch or a commit. Claude checks each finding and filters out false positives |
-| `/codex-bridge-en:status` | Lists recent Codex runs, or shows the details of one, with each run's token use, the size of its latest request and how much of the Codex quota is used |
-| `/codex-bridge-en:watch` | Shows what Codex is doing, live. The default view is concise (what Codex says, folded commands, file changes, the result); add `--verbose` for every detail |
+| `/codex-bridge-en:status` | Lists recent runs, or shows the details of one, with each run's token use, the size of its latest request and how much of the Codex quota is used |
+| `/codex-bridge-en:watch` | Shows what Codex or another model is doing, live. The default view is concise (what it says, folded commands, file changes, the result); add `--verbose` for every detail |
 | `/codex-bridge-en:config` | Shows or changes the plugin's settings |
+| `/codex-bridge-en:setup` | First-time setup: checks that Codex and the rest of the environment work, explains the current settings, and optionally adds other models to discussions |
 
-You don't have to use the commands. The bundled skill lets Claude decide on its own: hand off hands-on tasks that are big enough, discuss complex and uncertain designs with Codex first, and ask Codex to review risky changes before delivering them. When a big task splits into parts that don't touch each other, Claude hands them to several Codex sessions at once to cut the wait (see `max_parallel` below). You can turn this off with `auto_dispatch` (see below). So that Claude doesn't forget (easy when a project has its own skills), the plugin reminds it once at the start of every session and includes your preference files.
+You don't have to use the commands. The bundled skill lets Claude decide on its own: hand off hands-on tasks that are big enough, discuss complex and uncertain designs with Codex and other models first, and ask Codex to review risky changes before delivering them. When a big task splits into parts that don't touch each other, Claude hands them to several Codex sessions at once to cut the wait (see `agents.<name>.max_parallel` below). You can turn this off with `dispatch.auto` (see below). So that Claude doesn't forget (easy when a project has its own skills), the plugin reminds it once at the start of every session and includes your preference files.
 
-Every time Claude calls Codex, it tells you in the chat which model and reasoning effort it is using.
+Every time Claude hands something off, it tells you in the chat who got it and which model and reasoning effort it is using.
 
 ## Requirements
 
 - [Claude Code](https://claude.com/claude-code)
-- [Codex CLI](https://github.com/openai/codex), installed and signed in. If `codex exec "hello"` gets a reply in your terminal, you're set
+- [Codex CLI](https://github.com/openai/codex), installed and signed in (required). If `codex exec "hello"` gets a reply in your terminal, you're set
 - Node.js 18 or later. If you run Claude Code inside WSL, Node.js must be installed inside WSL too, or the plugin's hooks will error before every command
 - Git 2.25 or later (used to track which files Codex changed)
+- Optional: to have other models join discussions, an API key from that provider (for example DeepSeek)
 
 ## Install
 
@@ -37,11 +39,11 @@ In Claude Code, run:
 /plugin install codex-bridge-en@claude-codex-bridge
 ```
 
-Then run `/codex-bridge-en:config` to see the settings in effect.
+Then run `/codex-bridge-en:setup`. It checks that Node.js, Git and Codex work, explains who gets each kind of task by default, and asks whether you want other models to join discussions. Later, use `/codex-bridge-en:config` to see or change the settings.
 
 ## Configuration
 
-On first use, the plugin creates a user config at `~/.claude/codex-bridge.json` containing the example from "Task levels, models and reasoning effort" below: Claude does simple and normal hands-on tasks itself, complex ones go to Codex with `gpt-6.1-sol`, and complex reviews and discussions use `gpt-6-astra`. It doesn't set the sandbox or approval policy; those still come from Codex's own `~/.codex/config.toml`.
+On first use, the plugin creates a user config at `~/.claude/codex-bridge.json`: Claude does simple and normal hands-on tasks itself, complex ones go to Codex with `gpt-6.1-sol`, and complex reviews and discussions use `gpt-6-astra`. It doesn't set the sandbox or approval policy; those still come from Codex's own `~/.codex/config.toml`.
 
 To change things, edit that file, or tell Claude something like "use `/codex-bridge-en:config` to switch complex tasks to ultra".
 
@@ -51,57 +53,118 @@ Config files are JSON. Later ones override earlier ones:
 2. User config: `~/.claude/codex-bridge.json` (change the path with the `CODEX_BRIDGE_CONFIG` environment variable)
 3. Project config: `<project>/.claude/codex-bridge.json`
 
-### Task levels, models and reasoning effort
+When you upgrade from a version before 0.10, a user config in the old layout is rewritten into the layout below on first run, and the original is saved as `codex-bridge.json.bak`.
 
-Claude only decides which level a task is: `simple`, `normal` or `complex`. You decide which model and reasoning effort each level uses. There are no hidden defaults: Claude must give a level every time, and the script refuses to start without one instead of quietly picking an effort.
+### How the config is laid out
+
+The config has three parts:
+
+| Part | What it covers |
+|---|---|
+| `dispatch` | How the plugin hands off work: whether to do it on its own, the live view, parallel runs, discussion rounds, time limits, the run directory |
+| `agents` | Which agents there are and how to reach them: Codex's executable, default model and sandbox; an API model's address, its API key (written in the config, or the environment variable holding it), and its default model |
+| `levels` | Who each level of each task type goes to, with which model and reasoning effort |
+
+How to reach an agent goes only under `agents`; who gets what goes only under `levels`. Here's a complete config with DeepSeek added:
 
 ```json
 {
-  "model": "gpt-6.1-sol",
+  "dispatch": {
+    "auto": true,
+    "watch": "auto",
+    "discuss_max_rounds": 2,
+    "timeout_min": 480,
+    "stall_min": 40,
+    "runs_dir": null
+  },
+  "agents": {
+    "codex": {
+      "type": "codex",
+      "bin": null,
+      "model": "gpt-6.1-sol",
+      "max_parallel": 4,
+      "sandbox": { "run": null, "review": null, "discuss": null },
+      "approval": null
+    },
+    "deepseek": {
+      "type": "openai-compatible",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "model": "deepseek-v4-pro",
+      "max_parallel": 4
+    }
+  },
   "levels": {
     "run": {
       "simple":  "claude",
       "normal":  "claude",
-      "complex": { "model": null, "effort": "max" }
+      "complex": { "agent": "codex", "effort": "max" }
     },
     "review": {
-      "simple":  { "model": null, "effort": "medium" },
-      "normal":  { "model": null, "effort": "high" },
-      "complex": { "model": "gpt-6-astra", "effort": "max" }
+      "simple":  { "agent": "codex", "effort": "medium" },
+      "normal":  { "agent": "codex", "effort": "high" },
+      "complex": { "agent": "codex", "model": "gpt-6-astra", "effort": "max" }
     },
     "discuss": {
-      "simple":  { "model": null, "effort": "medium" },
-      "normal":  { "model": null, "effort": "high" },
-      "complex": { "model": "gpt-6-astra", "effort": "max" }
+      "simple":  [{ "agent": "codex", "effort": "medium" }],
+      "normal":  [{ "agent": "codex", "effort": "high" }],
+      "complex": [
+        { "agent": "codex", "model": "gpt-6-astra", "effort": "max" },
+        { "agent": "deepseek", "effort": "max" }
+      ]
     }
   }
 }
 ```
 
-- A level with `"model": null` uses the top-level `model`. If that is `null` too, Codex's own configured model is used. This is just one possible setup; pick models your account has and that suit your tasks.
-- `effort` can be `low`, `medium`, `high`, `xhigh`, `max` or `ultra`. If a model doesn't support an effort, Codex rejects it and the error shows up in the result.
+The generated config has no `deepseek`, and complex discussions have only Codex. See "Adding other models to discussions" below for how to add DeepSeek.
+
+### Task levels, models and reasoning effort
+
+Claude only decides which level a task is: `simple`, `normal` or `complex`. You decide in `levels` who gets each level and which model and reasoning effort it uses. There are no hidden defaults: Claude must give a level every time, and the script refuses to start without one instead of quietly picking an effort.
+
+- Each level names an `agent` (which entry under `agents` gets it) and an `effort`; add `model` when you want to override that agent's default model. Without `model`, the agent's default model under `agents` is used; if Codex's default model is `null` too, Codex's own configured model is used. This is just one possible setup; pick models your account has and that suit your tasks.
+- Codex's `effort` can be `low`, `medium`, `high`, `xhigh`, `max` or `ultra`. If a model doesn't support an effort, Codex rejects it and the error shows up in the result.
 - To override for one task, tell Claude "run it with ultra" or "use model X"; Claude will pass `--effort` or `--model` instead.
 - To have Claude do a `run` level itself instead of handing it to Codex, write the whole level as `"claude"`, for example `"simple": "claude"`. That level then has no model or effort to set: Claude does its tasks itself, and the script refuses to hand them off. If you explicitly want a task handed to Codex, Claude adds `--model`, and the effort uses the built-in default. Reviews and discussions need a second model, so this isn't supported there.
 - Whatever the config, Claude does small tasks with a clear approach (under about 100 lines of change) itself: handing them off doesn't pay, and Codex tends to make them too heavy.
+
+### Adding other models to discussions
+
+Each `discuss` level is a list of participants: Codex alone, or Codex plus models with an OpenAI-compatible API. They give their views independently and at the same time, and Claude rules on each point. Taking DeepSeek as the example:
+
+1. Add an agent with `type` set to `openai-compatible` under `agents`, like `deepseek` in the example above.
+2. Provide the API key, either way:
+   - **In the config file**: add a line `"api_key": "sk-…"` to that agent. It takes effect immediately, no restart needed. The key is stored in plain text, so don't commit or share this file.
+   - **In an environment variable**: write `"api_key_env": "DEEPSEEK_API_KEY"` as in the example, then set that variable. On Windows, add a user variable under "System Properties → Environment Variables"; on macOS and Linux, put it in your shell's startup file. Restart Claude Code afterwards so it can see it.
+
+   If both are set, `api_key` is used.
+3. Add `{ "agent": "deepseek", "effort": "max" }` to the `levels.discuss` levels you want. DeepSeek's `effort` can be `low`, `high` or `max`.
+4. Run `/codex-bridge-en:setup` to check that DeepSeek connects and that each level has the right participants.
+
+You can also leave these steps to `/codex-bridge-en:setup`, for example `/codex-bridge-en:setup add DeepSeek`: it updates the config for you and tells you where the key goes. You fill in the key yourself; there's no need to paste it into the chat.
+
+API models can't look through your code themselves, so Claude sends the relevant files along with the topic (up to about 300,000 characters each time) and checks what they say about the code against the source. Other providers with an OpenAI-compatible API (Xiaomi MiMo, Kimi, GLM, Qwen, OpenRouter and so on) are set up the same way; provider-specific parameters go in `extra_body` and are merged into the request as is. For models without an adjustable reasoning effort, set `effort` to `null`. Xiaomi MiMo, for example, only has a thinking on/off switch (on by default): `{ "type": "openai-compatible", "base_url": "https://api.xiaomimimo.com/v1", "api_key_env": "MIMO_API_KEY", "model": "mimo-v2.6-pro" }`, with `{ "agent": "mimo", "effort": null }` in the discussion levels. For now, API models can only take part in discussions, not do hands-on work or reviews.
 
 ### All settings
 
 | Setting | What it does | Default |
 |---|---|---|
-| `auto_dispatch` | `true`: Claude hands suitable tasks to Codex on its own. `false`: Claude suggests it first and waits for your OK | `true` |
-| `watch` | `auto`: open the live view after each handoff. `off`: don't open it | `auto` |
-| `max_parallel` | When a big task is split to run in parallel, how many Codex runs in one group may run at once. More parts means a shorter wait but more tokens in total; `1` turns parallel runs off | `4` |
-| `discuss_max_rounds` | How many rounds one discussion may have (round 1 plus later resumes). Once reached, the script refuses further resumes and Claude rules on what it has | `2` |
-| `model` | Model for levels that don't set their own | `null` (use Codex config) |
-| `levels` | See above | run: `"claude"` for simple and normal, max for complex; review and discuss: medium / high / max; all models `null` |
-| `sandbox` | Sandbox for each of `run` / `discuss` / `review`: `read-only`, `workspace-write` or `danger-full-access` | All `null` (use Codex config) |
-| `approval` | Codex approval policy, e.g. `never` | `null` (use Codex config) |
-| `timeout_min` | Total time limit per run, in minutes | `480` |
-| `stall_min` | Stop a run after this many minutes with no activity and no command running; `0` turns it off | `40` |
-| `codex_bin` | Path to the codex executable or `codex.js` (or set `CODEX_BIN`) | Found automatically |
-| `runs_dir` | Where run records go (or set `CODEX_RUNS_DIR`) | `~/.claude/codex-runs` |
+| `dispatch.auto` | `true`: Claude hands suitable tasks to Codex on its own. `false`: Claude suggests it first and waits for your OK | `true` |
+| `dispatch.watch` | `auto`: open the live view after each handoff. `off`: don't open it | `auto` |
+| `dispatch.discuss_max_rounds` | How many rounds one discussion may have (round 1 plus later resumes), counted per participant. Once reached, the script refuses further resumes and Claude rules on what it has | `2` |
+| `dispatch.timeout_min` | Total time limit per run, in minutes | `480` |
+| `dispatch.stall_min` | Stop a run after this many minutes without activity: for Codex, no activity and no command running; for API models, no data at all in the stream. `0` turns it off | `40` |
+| `dispatch.runs_dir` | Where run records go (or set `CODEX_RUNS_DIR`) | `~/.claude/codex-runs` |
+| `agents.codex.bin` | Path to the codex executable or `codex.js` (or set `CODEX_BIN`) | Found automatically |
+| `agents.codex.model` | Codex's default model | `null` (use Codex config) |
+| `agents.<name>.max_parallel` | How many runs this agent may have going at once, counted across all groups and sessions (providers rate-limit and bill per account). New runs beyond it are refused. For Codex, splitting a task into more parts means a shorter wait but more tokens in total; `1` turns parallel runs off | `4` |
+| `agents.codex.sandbox` | Sandbox for each of `run` / `review` / `discuss`: `read-only`, `workspace-write` or `danger-full-access` | All `null` (use Codex config) |
+| `agents.codex.approval` | Codex approval policy, e.g. `never` | `null` (use Codex config) |
+| `agents.<name>` (API model) | `type` is `openai-compatible`; `base_url` and `model` are required; at least one of `api_key` (the key itself) and `api_key_env` (the environment variable holding it), with `api_key` used if both are set; `extra_body` is optional | None |
+| `levels` | See above | run: `"claude"` for simple and normal, Codex max for complex; review: Codex medium / high / max; discuss: only Codex at all three levels, medium / high / max |
 
-Project config only accepts `model`, `levels`, `timeout_min` and `stall_min`. Everything else must go in your user config, so that a repository you cloned can't loosen the sandbox, swap the executable, or spend your quota on its own.
+Project config only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `agents.codex.model` and `levels`, and it can't add API models as participants, only remove them. Everything else must go in your user config, so that a repository you cloned can't loosen the sandbox, swap the executable, send your code to another address, or spend your quota on its own. For a sensitive project, keep only Codex under `levels.discuss` in its project config to turn API models off.
 
 ### Preference files
 
@@ -122,19 +185,20 @@ Preference files win over the plugin's built-in rules, and project level wins ov
 
 ## Safety notes
 
-- **The sandbox is whatever Codex is configured with.** If your Codex config uses `danger-full-access`, Codex can read and write any directory on your machine. The task brief limits what it should touch, and Claude reviews the diff afterwards, but that is not isolation. For real isolation, set `sandbox` to `workspace-write` or `read-only`. Codex's sandbox support on Windows may be incomplete, so test after changing it.
+- **The sandbox is whatever Codex is configured with.** If your Codex config uses `danger-full-access`, Codex can read and write any directory on your machine. The task brief limits what it should touch, and Claude reviews the diff afterwards, but that is not isolation. For real isolation, set `agents.codex.sandbox` to `workspace-write` or `read-only`. Codex's sandbox support on Windows may be incomplete, so test after changing it.
 - **Claude can only call Codex through the plugin.** The plugin includes a hook that blocks Claude's commands that run `codex exec` or `codex review` directly, so every call is recorded, has its changes tracked, and uses an explicit model and effort. Running codex yourself in a terminal isn't affected.
 - **Background runs need the approval policy set to `never`**, or Codex will hang waiting for a confirmation.
-- **Your code and task briefs are sent to OpenAI.** Check that this is acceptable for sensitive projects.
-- **With API-key billing, every handoff costs money.** Set `auto_dispatch` to `false` if you don't want Claude handing off work on its own.
+- **Your code and task briefs are sent to OpenAI.** Once API models join discussions, the topic and the attached code are also sent to those providers. Check that this is acceptable for sensitive projects, and use the project config to keep only Codex if needed.
+- **API keys can go in the user config or in environment variables.** In the config they're plain text, so don't commit or share `~/.claude/codex-bridge.json`; keys in a project config are ignored. The `config` command never shows keys, and the script never writes them into run records.
+- **Pay-as-you-go means real costs.** With API-key billing, every Codex handoff costs money, and every discussion with an API model draws on that account's balance. Set `dispatch.auto` to `false` if you don't want Claude handing off work on its own.
 
 ## Run records
 
-Each call is recorded in `~/.claude/codex-runs/<run_id>/`: the brief, Codex's event stream, the diff and the final report. `/codex-bridge-en:status` reads them. Change tracking uses a separate git repository inside that record folder and never touches your project's `.git`.
+Each call is recorded in `~/.claude/codex-runs/<run_id>/`: the brief, the event stream, the diff and the final report. Runs by API models have no diff, but add the conversation history `messages.json`, which a resume continues from. `/codex-bridge-en:status` reads them. Change tracking uses a separate git repository inside that record folder and never touches your project's `.git`.
 
 Change tracking compares the whole working directory at the start and end of a run, so files that you, Claude or another session change at the same time are seen too. The script marks files with evidence that Codex changed them (Codex's file-change events and the files listed in its report) separately from files of unknown origin, and Claude won't simply revert changes of unknown origin. Paths ignored by `.gitignore` aren't tracked unless you pass them with `--track` when handing off.
 
-When the Codex quota runs out, the run is marked `quota_exhausted` with the expected reset time and isn't retried automatically. Runs whose dispatcher exited unexpectedly, got stuck or timed out are flagged to Claude the next time you start a session in that project.
+When the Codex quota runs out or an API model's balance is too low, the run is marked `quota_exhausted` and isn't retried automatically; for Codex it includes the expected reset time. Runs whose dispatcher exited unexpectedly, got stuck or timed out are flagged to Claude the next time you start a session in that project.
 
 ## Platforms
 
@@ -151,13 +215,13 @@ Install just one. Both share the same config file, preference files and run reco
 
 ## Development
 
-Both plugins use the same scripts (`codex-run.mjs`, `messages.mjs` and the hooks `hooks/guard-codex.mjs` and `hooks/session-reminder.mjs`). Only edit the copy in `codex-bridge/`, then run the sync tool to copy it into the English plugin:
+Both plugins use the same scripts (`codex-run.mjs`, `api-chat.mjs`, `messages.mjs` and the hooks `hooks/guard-codex.mjs` and `hooks/session-reminder.mjs`). Only edit the copy in `codex-bridge/`, then run the sync tool to copy it into the English plugin:
 
 ```bash
 node tools/sync-shared.mjs
 ```
 
-Before committing, `node tools/sync-shared.mjs --check` checks that both copies of the scripts, the structure of both sets of schemas and both plugin versions match. Terminal messages, the rules sent to Codex and other text live in `messages.mjs`, with a Chinese and an English set; each plugin has its own SKILL.md, `references/`, command docs and schemas.
+Before committing, `node tools/sync-shared.mjs --check` checks that both copies of the scripts, the structure of both sets of schemas and both plugin versions match. Terminal messages, the rules sent to Codex, the prompts sent to API models and other text live in `messages.mjs`, with a Chinese and an English set; each plugin has its own SKILL.md, `references/`, command docs and schemas.
 
 ## License
 

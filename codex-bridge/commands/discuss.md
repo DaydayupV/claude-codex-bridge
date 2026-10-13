@@ -1,16 +1,16 @@
 ---
-description: 就复杂的计划、方案或想法与 Codex 讨论（只讨论不执行，由 Claude 主导结论）
-argument-hint: <议题> [--level normal|complex | --effort <推理强度>] [--model <模型>]
+description: 就复杂的计划、方案或想法与 Codex 及配置的其他模型讨论（只讨论不执行，由 Claude 主导结论）
+argument-hint: <议题> [--level normal|complex | --effort <推理强度>] [--model <模型>] [--agent <协作方>]
 ---
 
-用户要求就下面的议题与 Codex 讨论：
+用户要求就下面的议题发起讨论：
 
 $ARGUMENTS
 
 按 `codex-bridge:codex-dispatch` skill 里"讨论模式"一节执行（如果尚未加载，先加载它）。用户已明确要求，所以跳过自动开启的门槛判断：
 
 1. 弄清议题、约束和要回答的问题。缺少关键信息且无法从代码或上下文推断时，先问用户。
-2. 写第 1 轮的议题说明（不写自己的倾向），用 `codex-run.mjs discuss` 在后台发起，在对话里告诉用户这次用的模型和推理强度（以脚本启动时输出的第一行为准），并按 skill 的"实时查看"一节处理实时查看。用户写了 `--level`、`--effort` 或 `--model` 就照用，否则用 `--level complex`。
-3. 在读 Codex 的结果之前，先把自己的方案写下来。
-4. 按流程进行交叉挑错，轮数上限见配置 `discuss_max_rounds`（默认 2）。
-5. 逐条裁决 Codex 的观点，用决策记录的格式向用户汇报。
+2. 确定等级：用户写了 `--level`、`--effort` 或 `--model` 就照用，否则用 `--level complex`。参与方按 `config` 输出的 `resolved_levels.discuss.<等级>`；用户写了 `--agent` 就只发给那一方。
+3. 写第 1 轮的议题说明（不写自己的倾向），先把自己的方案写下来，再给每个参与方各发一次 `codex-run.mjs discuss`（多方时用同一个 `--group`，每次用 `--agent` 指定；给 API 协作方用 `--file` 附上相关文件），在后台一起启动。在对话里告诉用户每一方的模型和推理强度（以脚本启动时输出的第一行为准），并按 skill 的"实时查看"一节处理实时查看。
+4. 按流程进行交叉挑错，轮数上限见配置 `dispatch.discuss_max_rounds`（默认 2）。
+5. 逐条裁决各参与方的观点，用决策记录的格式向用户汇报。

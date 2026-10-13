@@ -1,19 +1,21 @@
 #!/usr/bin/env node
 // codex-run.mjs — Claude Code 调度 Codex 的唯一入口。
 //
-//   node codex-run.mjs run    --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
+//   node codex-run.mjs run    --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--agent <名字>] [--model <模型>] [--title <标题>]
 //                             [--add-dir <目录>]... [--track <路径>]... [--group <组名>] [--scope <路径>]... [--timeout <分钟>] [--stall <分钟>] [--no-snapshot]
-//   node codex-run.mjs resume --run <run_id|last> --brief <文件|-> (--level <等级> | --effort <强度>) [--model <模型>] [--timeout <分钟>] [--stall <分钟>]
+//   node codex-run.mjs resume --run <run_id|last> --brief <文件|-> (--level <等级> | --effort <强度>) [--agent <名字>] [--file <路径[:起始行-结束行]>]... [--model <模型>] [--timeout <分钟>] [--stall <分钟>]
 //                             [--track <路径>]... [--group <组名>] [--scope <路径>]...
-//   node codex-run.mjs discuss --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
+//   node codex-run.mjs discuss --cwd <目录> --brief <文件|-> (--level <等级> | --effort <强度>) [--agent <名字>] [--file <路径[:起始行-结束行]>]... [--model <模型>] [--title <标题>]
 //                             [--track <路径>]... [--group <组名>] [--scope <路径>]...
 //                             方案讨论，只读；后续轮次用 resume --run <讨论的 run_id> 续接
 //   node codex-run.mjs review --cwd <目录> [--uncommitted | --base <分支> | --commit <sha>]
-//                             [--brief <文件|->] (--level <等级> | --effort <强度>) [--model <模型>] [--title <标题>]
+//                             [--brief <文件|->] (--level <等级> | --effort <强度>) [--agent <名字>] [--model <模型>] [--title <标题>]
 //                             [--track <路径>]...
 //   node codex-run.mjs status [--run <run_id|last>] [--limit <n>] [--group <组名>]
 //   node codex-run.mjs watch  [--run <run_id|last>] [--verbose] [--group <组名>]
 //   node codex-run.mjs config [--cwd <目录>]
+//   node codex-run.mjs check  [--agent <名字>]
+//                             检查 Node.js、Git、Codex（必需）和各个 API 协作方（可选，会发一个很小的请求）能不能用
 //
 // watch 把 events.jsonl 实时翻译成可读进度；不给 --run 时跟踪正在运行的任务（没有就等新任务出现）。
 // 每次运行还会在记录目录下写一个 watch.mjs 启动器，方便在终端面板里直接运行（插件路径可能含非 ASCII 字符）。
@@ -35,6 +37,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { MESSAGES } from './messages.mjs';
+import { chatStream, validateSchema } from './api-chat.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA = path.join(HERE, '..', 'schemas', 'report.schema.json');
@@ -53,63 +56,34 @@ const PROJECT_CONFIG = path.join('.claude', 'codex-bridge.json');
 const USER_PREFS = path.join(path.dirname(USER_CONFIG), 'codex-bridge.md');
 const PROJECT_PREFS = path.join('.claude', 'codex-bridge.md');
 
+// 每个协作方同时最多运行几个任务，配置里没写时用它。
+const DEFAULT_AGENT_PARALLEL = 4;
+
 const DEFAULT_CONFIG = {
-  // true：符合门槛的任务由 Claude 主动派给 Codex；false：Claude 先提议，用户同意后再派
-  auto_dispatch: true,
-  // auto：有终端面板工具时自动打开实时查看，没有就把 watch 命令发给用户；off：不主动打开
-  watch: 'auto',
-  // 同一任务组里最多同时运行几个任务
-  max_parallel: 4,
-  // 一场讨论最多几轮：第 1 轮的 discuss 加上之后每次续接
-  discuss_max_rounds: 2,
-  // 各等级没写模型时用的模型；null 表示沿用 Codex 自己的配置（~/.codex/config.toml）
-  model: null,
-  // 各模式下，简单 / 常规 / 复杂三级任务分别用的模型和推理强度（Codex 的 model_reasoning_effort）。
-  // 某一级的 model 为 null 时用上面的 model；run 的某一级写成 'claude' 时由 Claude 自己做。
-  levels: {
-    run: {
-      simple: 'claude',
-      normal: 'claude',
-      complex: { model: null, effort: 'max' },
-    },
-    review: {
-      simple: { model: null, effort: 'medium' },
-      normal: { model: null, effort: 'high' },
-      complex: { model: null, effort: 'max' },
-    },
-    discuss: {
-      simple: { model: null, effort: 'medium' },
-      normal: { model: null, effort: 'high' },
-      complex: { model: null, effort: 'max' },
-    },
+  dispatch: { auto: true, watch: 'auto', discuss_max_rounds: 2, timeout_min: 480, stall_min: 40, runs_dir: null },
+  agents: {
+    codex: { type: 'codex', bin: null, model: null, max_parallel: DEFAULT_AGENT_PARALLEL, sandbox: { run: null, review: null, discuss: null }, approval: null },
   },
-  // 各模式的沙箱：read-only / workspace-write / danger-full-access；null 沿用 Codex 配置
-  sandbox: { run: null, discuss: null, review: null },
-  // 审批策略，如 never / on-request；null 沿用 Codex 配置
-  approval: null,
-  timeout_min: 480,
-  // 超过这么久没有任何事件、且没有命令在执行，判定为卡死；0 关闭。命令执行中不算（大计算本来就可能很久）。
-  stall_min: 40,
-  // codex 可执行文件或 codex.js 的路径；null 自动查找
-  codex_bin: null,
-  // 运行记录目录；null 为 ~/.claude/codex-runs
-  runs_dir: null,
+  levels: {
+    run: { simple: 'claude', normal: 'claude', complex: { agent: 'codex', effort: 'max' } },
+    review: { simple: { agent: 'codex', effort: 'medium' }, normal: { agent: 'codex', effort: 'high' }, complex: { agent: 'codex', effort: 'max' } },
+    discuss: { simple: [{ agent: 'codex', effort: 'medium' }], normal: [{ agent: 'codex', effort: 'high' }], complex: [{ agent: 'codex', effort: 'max' }] },
+  },
 };
 
 // 写成 'claude' 的等级被 --model 点名派给 Codex，或者被只写了部分字段的配置覆盖时，用这里的推理强度。
 const CODEX_LEVEL_FALLBACK = {
-  simple: { model: null, effort: 'medium' },
-  normal: { model: null, effort: 'high' },
-  complex: { model: null, effort: 'max' },
+  simple: { agent: 'codex', effort: 'medium' },
+  normal: { agent: 'codex', effort: 'high' },
+  complex: { agent: 'codex', effort: 'max' },
 };
-const levelFallback = (mode, lv) => (typeof DEFAULT_CONFIG.levels[mode]?.[lv] === 'object' ? DEFAULT_CONFIG.levels[mode][lv] : CODEX_LEVEL_FALLBACK[lv]);
-
-// 项目配置来自仓库本身，不允许它改可执行文件、记录目录、沙箱和审批，以免克隆来的仓库给自己提权。
-const PROJECT_KEYS = ['model', 'levels', 'timeout_min', 'stall_min'];
 
 const LEVELS = ['simple', 'normal', 'complex'];
 const CLAUDE = 'claude'; // levels.run 里某一级整项写成它，表示这一级由 Claude 自己做
 const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const codexAgentName = (cfg) => Object.keys(cfg.agents).find((name) => cfg.agents[name]?.type === 'codex');
+const migratedConfigs = new Map();
 
 function readJson(file) {
   if (!fs.existsSync(file)) return null;
@@ -117,35 +91,209 @@ function readJson(file) {
   catch (e) { die(M.configBadJson(file, e.message)); }
 }
 
-function mergeConfig(base, extra, keys = Object.keys(DEFAULT_CONFIG)) {
+function mergeConfig(base, extra) {
   const out = { ...base };
-  for (const k of keys) {
+  for (const k of ['dispatch', 'agents', 'levels']) {
     if (!extra || !(k in extra)) continue;
     const v = extra[k];
-    if (k === 'levels' && v && typeof v === 'object') {
-      // 按模式、等级、字段逐层合并，只改某一级的推理强度也行。
-      out.levels = { ...base.levels };
+    if (k === 'agents' && isObject(v)) {
+      out.agents = { ...base.agents, ...v };
+      for (const [name, agent] of Object.entries(v)) {
+        out.agents[name] = isObject(agent) ? { ...base.agents?.[name], ...agent } : agent;
+        if (isObject(agent?.sandbox) && out.agents[name].type === 'codex') {
+          out.agents[name].sandbox = { ...base.agents?.[name]?.sandbox, ...agent.sandbox };
+        }
+      }
+    } else if (k === 'levels' && isObject(v)) {
+      out.levels = { ...base.levels, ...v };
       for (const [mode, levels] of Object.entries(v)) {
-        out.levels[mode] = { ...base.levels[mode] };
-        for (const [lv, entry] of Object.entries(levels || {})) {
-          // 整项写成 "claude" 时原样保留；基础值是 "claude" 而这里只改部分字段时，在内置默认值上合并。
-          const prev = base.levels[mode]?.[lv];
-          out.levels[mode][lv] = typeof entry === 'string' ? entry : { ...(typeof prev === 'object' ? prev : levelFallback(mode, lv)), ...entry };
+        out.levels[mode] = isObject(levels) ? { ...base.levels?.[mode], ...levels } : levels;
+        if (!isObject(levels)) continue;
+        for (const [lv, entry] of Object.entries(levels)) {
+          const prev = base.levels?.[mode]?.[lv];
+          out.levels[mode][lv] = mode !== 'discuss' && isObject(entry)
+            ? { ...(prev === CLAUDE ? CODEX_LEVEL_FALLBACK[lv] : prev), ...entry } : entry;
         }
       }
     } else {
-      out[k] = v && typeof v === 'object' && !Array.isArray(v) ? { ...base[k], ...v } : v;
+      out[k] = isObject(v) ? { ...base[k], ...v } : v;
     }
   }
   return out;
 }
 
+// base 是这份配置要叠加上去的那一层（用户配置叠在内置默认值上，项目配置叠在合并后的用户配置上）。
+// 旧写法的等级按字段继承 base，转换时要先把继承来的值补齐。
+function migrateConfig(config, file, base, project = false) {
+  if (!isObject(config)) die(M.configInvalid(file, M.invalid.object));
+  if (migratedConfigs.has(file)) return migratedConfigs.get(file);
+  // 顺序决定改写后文件里字段的顺序。
+  const oldKeys = ['auto_dispatch', 'watch', 'discuss_max_rounds', 'codex_bin', 'model', 'max_parallel', 'sandbox', 'approval', 'timeout_min', 'stall_min', 'runs_dir'];
+  let old = oldKeys.some((key) => Object.hasOwn(config, key));
+  const codexName = codexAgentName(base) || 'codex';
+  const legacy = { dispatch: {}, agents: { [codexName]: project ? {} : { type: 'codex' } } };
+  for (const key of oldKeys) {
+    if (!Object.hasOwn(config, key)) continue;
+    if (['model', 'max_parallel', 'sandbox', 'approval', 'codex_bin'].includes(key)) legacy.agents[codexName][key === 'codex_bin' ? 'bin' : key] = config[key];
+    else legacy.dispatch[key === 'auto_dispatch' ? 'auto' : key] = config[key];
+  }
+  const converted = mergeConfig(legacy, config);
+  const convert = (item) => {
+    if (!isObject(item) || Object.hasOwn(item, 'agent')) return item;
+    old = true;
+    const result = { agent: codexName, ...item };
+    // 用户配置里的 model: null 就是"用默认"，不必写出来；项目配置里的 null 表示清除用户配置设的模型，要保留。
+    if (!project && result.model === null) delete result.model;
+    return result;
+  };
+  for (const [mode, levels] of Object.entries(isObject(config.levels) ? config.levels : {})) {
+    if (!isObject(levels)) continue;
+    for (const [lv, entry] of Object.entries(levels)) {
+      if (mode !== 'discuss') converted.levels[mode][lv] = convert(entry);
+      else if (!isObject(entry)) converted.levels[mode][lv] = Array.isArray(entry) ? entry.map(convert) : entry; // 写错的值留给 validateConfig 报错
+      else {
+        // 旧写法只管 Codex 一方，按字段继承；新写法整级替换。所以把它并进 base 这一级的参与方数组，其他参与方保留。
+        const list = Array.isArray(base.levels?.discuss?.[lv]) ? base.levels.discuss[lv] : [];
+        const prev = list.find((e) => e?.agent === codexName);
+        const { agent, ...inherited } = prev || CODEX_LEVEL_FALLBACK[lv];
+        const merged = convert({ ...inherited, ...entry });
+        converted.levels[mode][lv] = prev ? list.map((e) => (e === prev ? merged : e)) : [merged, ...list];
+      }
+    }
+  }
+  if (!old) return config;
+  // 按 dispatch / agents / levels 的顺序写，旧配置里没有的块不写（写成 undefined 会盖掉默认值）；未识别的字段保留在文件里。
+  const result = {};
+  for (const key of ['dispatch', 'agents', 'levels']) if (converted[key] !== undefined) result[key] = converted[key];
+  for (const [key, value] of Object.entries(config)) if (!oldKeys.includes(key) && !Object.hasOwn(result, key)) result[key] = value;
+  migratedConfigs.set(file, result);
+  if (project) process.stderr.write(`codex-run: ${M.projectOldFormat(file)}\n`);
+  else {
+    // 转换结果不合格就停在这里，原文件不动。
+    validateConfig(mergeConfig(base, result));
+    let bak = `${file}.bak`;
+    if (fs.existsSync(bak)) {
+      const d = new Date();
+      const p = (n) => String(n).padStart(2, '0');
+      bak += `-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    }
+    // 第一次升级后 Claude 可能同时启动几个讨论参与方，几个进程会同时迁移，临时文件不能共用。
+    const tmp = `${file}.${process.pid}.tmp`;
+    try {
+      fs.copyFileSync(file, bak, fs.constants.COPYFILE_EXCL);
+      fs.writeFileSync(tmp, JSON.stringify(result, null, 2) + '\n', { flag: 'wx' });
+      fs.renameSync(tmp, file);
+      process.stderr.write(`codex-run: ${M.configMigrated(file, bak)}\n`);
+    } catch (e) {
+      fs.rmSync(tmp, { force: true });
+      process.stderr.write(`codex-run: ${M.configMigrateFailed(file, e.message)}\n`);
+    }
+  }
+  return result;
+}
+
+function validateConfig(cfg) {
+  const why = M.invalid;
+  const check = (ok, key, reason) => { if (!ok) die(M.configInvalid(key, reason)); };
+  const text = (v) => typeof v === 'string' && !!v.trim();
+  for (const key of ['dispatch', 'agents', 'levels']) check(isObject(cfg[key]), key, why.object);
+  check(typeof cfg.dispatch.auto === 'boolean', 'dispatch.auto', why.boolean);
+  check(['auto', 'off'].includes(cfg.dispatch.watch), 'dispatch.watch', why.watch);
+  check(Number.isInteger(cfg.dispatch.discuss_max_rounds) && cfg.dispatch.discuss_max_rounds >= 1, 'dispatch.discuss_max_rounds', why.positiveInt);
+  for (const key of ['timeout_min', 'stall_min']) check(Number.isFinite(cfg.dispatch[key]) && (key === 'stall_min' ? cfg.dispatch[key] >= 0 : cfg.dispatch[key] > 0), `dispatch.${key}`, why.minutes);
+  check(cfg.dispatch.runs_dir === null || text(cfg.dispatch.runs_dir), 'dispatch.runs_dir', why.pathOrNull);
+  let codexCount = 0;
+  for (const [name, agent] of Object.entries(cfg.agents)) {
+    const key = `agents.${name}`;
+    check(/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name) && name !== CLAUDE, key, why.agentName);
+    check(isObject(agent), key, why.object);
+    check(['codex', 'openai-compatible'].includes(agent.type), `${key}.type`, why.agentType);
+    check(agent.model == null || (text(agent.model) && agent.model !== CLAUDE), `${key}.model`, why.modelName);
+    check(agent.max_parallel === undefined || (Number.isInteger(agent.max_parallel) && agent.max_parallel >= 1), `${key}.max_parallel`, why.positiveInt);
+    if (agent.type === 'codex') {
+      codexCount++;
+      for (const field of ['bin', 'approval']) check(agent[field] == null || text(agent[field]), `${key}.${field}`, why.stringOrNull);
+      check(agent.sandbox == null || isObject(agent.sandbox), `${key}.sandbox`, why.object);
+      for (const [mode, value] of Object.entries(agent.sandbox || {})) check(['run', 'review', 'discuss'].includes(mode) && (value === null || ['read-only', 'workspace-write', 'danger-full-access'].includes(value)), `${key}.sandbox.${mode}`, why.sandbox);
+    } else {
+      for (const field of ['base_url', 'model']) check(text(agent[field]), `${key}.${field}`, why.nonEmpty);
+      for (const field of ['api_key', 'api_key_env']) check(agent[field] === undefined || text(agent[field]), `${key}.${field}`, why.nonEmpty);
+      check(text(agent.api_key) || text(agent.api_key_env), key, why.apiKey);
+      check(agent.extra_body === undefined || isObject(agent.extra_body), `${key}.extra_body`, why.object);
+    }
+  }
+  // Codex 是必需的：执行和审查只能交给它，check 也以它为准。
+  check(codexCount === 1, 'agents', why.codexCount);
+  for (const mode of Object.keys(cfg.levels)) check(['run', 'review', 'discuss'].includes(mode), `levels.${mode}`, why.mode);
+  for (const mode of ['run', 'review', 'discuss']) {
+    check(isObject(cfg.levels[mode]), `levels.${mode}`, why.object);
+    for (const lv of Object.keys(cfg.levels[mode])) check(LEVELS.includes(lv), `levels.${mode}.${lv}`, why.level);
+    for (const lv of LEVELS) {
+      const key = `levels.${mode}.${lv}`;
+      const entry = cfg.levels[mode][lv];
+      if (entry === CLAUDE && mode === 'run') continue;
+      if (mode === 'discuss') check(Array.isArray(entry) && entry.length > 0, key, why.participants);
+      const seen = new Set();
+      for (const [i, item] of (mode === 'discuss' ? entry : [entry]).entries()) {
+        const at = mode === 'discuss' ? `${key}[${i}]` : key;
+        check(isObject(item), at, M.levelEntryChoices);
+        check(text(item.agent), `${at}.agent`, why.agentRef);
+        if (!Object.hasOwn(cfg.agents, item.agent)) die(M.unknownAgent(at, item.agent));
+        const agent = cfg.agents[item.agent];
+        check(!seen.has(item.agent), at, why.duplicate);
+        seen.add(item.agent);
+        check(mode === 'discuss' || agent.type === 'codex', `${at}.agent`, M.apiOnlyDiscuss(item.agent));
+        check(item.model == null || (text(item.model) && item.model !== CLAUDE), `${at}.model`, why.modelName);
+        check(agent.type === 'codex' ? CODEX_EFFORTS.includes(item.effort) : item.effort === null || text(item.effort), `${at}.effort`, agent.type === 'codex' ? CODEX_EFFORTS.join(' / ') : why.apiEffort);
+      }
+    }
+  }
+}
+
+function projectConfig(cfg, project) {
+  const allowed = {};
+  const ignored = [];
+  for (const [key, value] of Object.entries(project)) {
+    if (key === 'dispatch' && isObject(value)) {
+      allowed.dispatch = {};
+      for (const [field, val] of Object.entries(value)) {
+        if (['timeout_min', 'stall_min'].includes(field)) allowed.dispatch[field] = val;
+        else ignored.push(`dispatch.${field}`);
+      }
+    } else if (key === 'agents' && isObject(value)) {
+      allowed.agents = {};
+      for (const [name, agent] of Object.entries(value)) {
+        if (cfg.agents[name]?.type !== 'codex' || !isObject(agent)) { ignored.push(`agents.${name}`); continue; }
+        allowed.agents[name] = {};
+        for (const [field, val] of Object.entries(agent)) {
+          if (field === 'model') allowed.agents[name].model = val;
+          else ignored.push(`agents.${name}.${field}`);
+        }
+      }
+    } else if (key === 'levels') {
+      allowed.levels = structuredClone(value);
+      for (const [lv, entries] of Object.entries(value?.discuss || {})) {
+        if (!Array.isArray(entries)) continue;
+        const key = `levels.discuss.${lv}`;
+        allowed.levels.discuss[lv] = entries.filter((item) => {
+          const drop = cfg.agents[item?.agent]?.type === 'openai-compatible' && !cfg.levels.discuss[lv]?.some((v) => v.agent === item.agent);
+          if (drop) process.stderr.write(`codex-run: ${M.projectApiDropped(item.agent, key)}\n`);
+          return !drop;
+        });
+        if (entries.length && !allowed.levels.discuss[lv].length) die(M.projectLevelEmpty(key));
+      }
+    } else ignored.push(key);
+  }
+  if (ignored.length) process.stderr.write(`codex-run: ${M.projectIgnored(M.list(ignored))}\n`);
+  return allowed;
+}
+
 // 首次使用时生成的用户配置：在内置默认值上套用 README 里的示例搭配。
 const STARTER_CONFIG = mergeConfig(DEFAULT_CONFIG, {
-  model: 'gpt-6.1-sol',
+  agents: { codex: { model: 'gpt-6.1-sol' } },
   levels: {
     review: { complex: { model: 'gpt-6-astra' } },
-    discuss: { complex: { model: 'gpt-6-astra' } },
+    discuss: { complex: [{ agent: 'codex', model: 'gpt-6-astra', effort: 'max' }] },
   },
 });
 
@@ -160,31 +308,31 @@ function loadConfig(cwd) {
   if (!fs.existsSync(USER_CONFIG)) {
     try {
       writeStarterConfig();
-      process.stderr.write(`codex-run: ${M.starterCreated(USER_CONFIG, STARTER_CONFIG.model, STARTER_CONFIG.levels.review.complex.model)}\n`);
+      process.stderr.write(`codex-run: ${M.starterCreated(USER_CONFIG, STARTER_CONFIG.agents.codex.model, STARTER_CONFIG.levels.review.complex.model)}\n`);
     } catch (e) {
       process.stderr.write(`codex-run: ${M.starterFailed(USER_CONFIG, e.message)}\n`);
     }
   }
   const user = readJson(USER_CONFIG);
-  if (user) { cfg = mergeConfig(cfg, user); sources.push(USER_CONFIG); }
+  if (user) { cfg = mergeConfig(cfg, migrateConfig(user, USER_CONFIG, cfg)); sources.push(USER_CONFIG); }
   if (cwd) {
     const file = path.join(cwd, PROJECT_CONFIG);
     const project = readJson(file);
     if (project) {
-      const ignored = Object.keys(project).filter((k) => !PROJECT_KEYS.includes(k));
-      if (ignored.length) process.stderr.write(`codex-run: ${M.projectIgnored(M.list(ignored))}\n`);
-      cfg = mergeConfig(cfg, project, PROJECT_KEYS);
+      cfg = mergeConfig(cfg, projectConfig(cfg, migrateConfig(project, file, cfg, true)));
       sources.push(file);
     }
   }
-  if (process.env.CODEX_BIN) cfg = { ...cfg, codex_bin: process.env.CODEX_BIN };
-  if (process.env.CODEX_RUNS_DIR) cfg = { ...cfg, runs_dir: process.env.CODEX_RUNS_DIR };
+  const codexName = isObject(cfg.agents) && codexAgentName(cfg);
+  if (process.env.CODEX_BIN && codexName) cfg = mergeConfig(cfg, { agents: { [codexName]: { bin: process.env.CODEX_BIN } } });
+  if (process.env.CODEX_RUNS_DIR) cfg = mergeConfig(cfg, { dispatch: { runs_dir: process.env.CODEX_RUNS_DIR } });
+  validateConfig(cfg);
   return { ...cfg, sources };
 }
 
 // 记录目录和可执行文件只认用户配置，status / watch 不知道工作目录时也能用。
 const CONFIG = loadConfig(null);
-const RUNS_ROOT = CONFIG.runs_dir ? path.resolve(CONFIG.runs_dir) : path.join(os.homedir(), '.claude', 'codex-runs');
+const RUNS_ROOT = CONFIG.dispatch.runs_dir ? path.resolve(CONFIG.dispatch.runs_dir) : path.join(os.homedir(), '.claude', 'codex-runs');
 
 // 改动追踪：用放在记录目录里的影子 git 仓库给工作目录拍快照，不碰项目自己的 .git。
 const LARGE_FILE_BYTES = 5 * 1024 * 1024; // 超过的文件只比较大小和修改时间
@@ -203,7 +351,7 @@ function die(msg) {
 
 function parseArgs(argv) {
   const [cmd, ...rest] = argv;
-  const opts = { 'add-dir': [], track: [], scope: [] };
+  const opts = { 'add-dir': [], track: [], scope: [], file: [] };
   const flags = new Set(['uncommitted', 'no-snapshot', 'verbose']);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -212,7 +360,7 @@ function parseArgs(argv) {
     if (flags.has(key)) { opts[key] = true; continue; }
     const val = rest[++i];
     if (val === undefined) die(M.missingValue(a));
-    if (key === 'add-dir' || key === 'track' || key === 'scope') opts[key].push(val);
+    if (key === 'add-dir' || key === 'track' || key === 'scope' || key === 'file') opts[key].push(val);
     else opts[key] = val;
   }
   return { cmd, opts };
@@ -223,41 +371,48 @@ function need(o, key) {
   return o[key];
 }
 
-// 返回 { level, model, effort }：level 是任务等级（直接给 --effort 时为 null），model 为 null 时沿用 Codex 配置。
-// 模型的优先级：--model > 该等级的 model > 顶层 model > fallbackModel（续接时为上一轮的模型）。
-function pickProfile(cfg, o, mode, fallbackModel = null) {
+function pickProfile(cfg, o, mode, fallbackModel = null, parentAgent = null) {
   if (o.level && o.effort) die(M.levelAndEffort);
+  if (parentAgent && o.agent && o.agent !== parentAgent) die(M.resumeAgentMismatch(o.agent, parentAgent));
+  const selected = parentAgent || o.agent;
+  const codexName = codexAgentName(cfg);
   let level = null;
   let entry = {};
   if (o.effort) {
-    if (!CODEX_EFFORTS.includes(o.effort)) die(M.effortChoices(CODEX_EFFORTS.join(' / ')));
-    entry = { effort: o.effort };
+    entry = { agent: selected || codexName, effort: o.effort };
   } else {
     if (!o.level) die(M.missingLevel(LEVELS.join(' / '), CODEX_EFFORTS.join(' / ')));
     if (!LEVELS.includes(o.level)) die(M.levelChoices(LEVELS.join(' / ')));
     level = o.level;
-    entry = cfg.levels[mode]?.[level] || {};
-    // 整项写成 "claude" 表示这一级的执行任务由 Claude 自己做；用户点名模型（--model）时照常派，推理强度用内置默认值。
-    if (entry === CLAUDE) {
-      if (mode !== 'run') die(M.claudeOnlyRun(`levels.${mode}.${level}`));
-      if (!o.model) die(M.levelForClaude(level));
-      entry = CODEX_LEVEL_FALLBACK[level];
+    const key = `levels.${mode}.${level}`;
+    entry = cfg.levels[mode][level];
+    if (mode === 'discuss') {
+      const names = M.list(entry.map((v) => v.agent));
+      if (!selected && entry.length > 1) die(M.agentRequired(key, names));
+      const found = selected ? entry.find((v) => v.agent === selected) : entry[0];
+      if (!found) die(M.agentNotInLevel(selected, key, names));
+      entry = found;
     }
-    if (typeof entry === 'string') die(M.badLevelConfig(`levels.${mode}.${level}`, JSON.stringify(entry), M.levelEntryChoices));
-    if (entry.model === CLAUDE) die(M.claudeOldForm(`levels.${mode}.${level}`, level));
-    if (!CODEX_EFFORTS.includes(entry.effort)) die(M.badLevelConfig(`levels.${mode}.${level}.effort`, JSON.stringify(entry.effort), CODEX_EFFORTS.join(' / ')));
+    if (entry === CLAUDE) {
+      if (!o.model) die(M.levelForClaude(level));
+      entry = { ...CODEX_LEVEL_FALLBACK[level], agent: codexName };
+    }
+    if (selected && selected !== entry.agent) die(M.agentMismatch(selected, key, entry.agent));
   }
-  if (cfg.model === CLAUDE) die(M.claudeNotTopLevel);
-  return { level, model: o.model || entry.model || cfg.model || fallbackModel, effort: entry.effort };
+  if (!Object.hasOwn(cfg.agents, entry.agent)) die(M.unknownAgent('--agent', entry.agent));
+  const agent = cfg.agents[entry.agent];
+  if (agent.type !== 'codex' && mode !== 'discuss') die(M.apiOnlyDiscuss(entry.agent));
+  if (agent.type === 'codex' && !CODEX_EFFORTS.includes(entry.effort)) die(M.effortChoices(CODEX_EFFORTS.join(' / ')));
+  return { level, agentName: entry.agent, agent, model: o.model || entry.model || agent.model || fallbackModel, effort: entry.effort };
 }
 
 // 模型、推理强度、沙箱、审批这几项 exec / resume / review 都接受 -m 和 -c。
-function codexOptions(cfg, { model, effort, mode }) {
+function codexOptions(agent, { model, effort, mode }) {
   const args = [];
   if (model) args.push('-m', model);
   args.push('-c', `model_reasoning_effort="${effort}"`);
-  if (cfg.sandbox[mode]) args.push('-c', `sandbox_mode="${cfg.sandbox[mode]}"`);
-  if (cfg.approval) args.push('-c', `approval_policy="${cfg.approval}"`);
+  if (agent.sandbox?.[mode]) args.push('-c', `sandbox_mode="${agent.sandbox[mode]}"`);
+  if (agent.approval) args.push('-c', `approval_policy="${agent.approval}"`);
   return args;
 }
 
@@ -277,8 +432,37 @@ function readBrief(o, required = true) {
   return text.replace(/^﻿/, '').trim();
 }
 
-function codexCommand() {
-  const bin = CONFIG.codex_bin;
+const MAX_MATERIAL_CHARS = 300000;
+
+function readAttachments(specs, cwd, api) {
+  return specs.map((spec) => {
+    const match = /:(\d+)-(\d+)$/.exec(spec);
+    const range = match ? [Number(match[1]), Number(match[2])] : null;
+    if (range && (!range.every(Number.isSafeInteger) || range[0] < 1 || range[1] < range[0])) die(M.badFileRange(spec));
+    const file = path.resolve(cwd, match ? spec.slice(0, match.index) : spec);
+    if (!fs.existsSync(file)) die(M.fileNotFound(file));
+    if (!fs.statSync(file).isFile()) die(M.fileBinary(file));
+    const bytes = fs.readFileSync(file);
+    if (bytes.includes(0)) die(M.fileBinary(file));
+    // 发出去的材料里写项目内的相对路径，不暴露本机目录结构，也省 token。
+    const rel = relativePath(cwd, file);
+    const attached = { path: file, shown: rel.startsWith('../') || rel === '..' || path.isAbsolute(rel) ? file : rel, range };
+    if (!api) return attached;
+    const lines = bytes.toString('utf8').replace(/^\uFEFF/, '').split(/\r?\n/);
+    if (lines.at(-1) === '') lines.pop();
+    const first = range?.[0] || 1;
+    const content = lines.slice(first - 1, range?.[1]).map((line, i) => `${first + i}\t${line}`).join('\n');
+    const longest = (content.match(/`+/g) || []).reduce((n, s) => Math.max(n, s.length), 2);
+    return { ...attached, content, chars: content.length, fence: '`'.repeat(longest + 1) };
+  });
+}
+
+function focusFiles(files) {
+  return files.length ? `\n\n${M.focusFiles(files.map((f) => `- ${f.shown}${f.range ? (LANGUAGE === 'en' ? ` (lines ${f.range[0]}–${f.range[1]})` : `（第 ${f.range[0]}–${f.range[1]} 行）`) : ''}`).join('\n'))}` : '';
+}
+
+function codexCommand(agent = CONFIG.agents[codexAgentName(CONFIG)]) {
+  const bin = agent?.bin;
   if (bin) return /\.[cm]?js$/i.test(bin) ? { file: process.execPath, pre: [bin] } : { file: bin, pre: [] };
   if (process.platform !== 'win32') return { file: 'codex', pre: [] };
   // npm 全局安装的 codex 在 Windows 上是 .ps1/.cmd 包装，spawn 不经 shell 找不到它；
@@ -308,31 +492,27 @@ function writeWatchLauncher() {
   try { fs.writeFileSync(path.join(RUNS_ROOT, 'watch.mjs'), launcher); } catch { /* 不影响主流程 */ }
 }
 
-async function newRunDir(group) {
-  let release = () => {};
-  let previous = '';
-  if (group != null) {
-    if (!Number.isInteger(CONFIG.max_parallel) || CONFIG.max_parallel < 1) die(M.badMaxParallel);
-    fs.mkdirSync(RUNS_ROOT, { recursive: true });
-    // 登记和准入串行完成，避免随机后缀让后登记的任务排到前面。
-    const lock = path.join(RUNS_ROOT, '.group-start.lock');
-    for (;;) {
-      try { fs.writeFileSync(lock, String(process.pid), { flag: 'wx' }); break; }
-      catch (e) {
-        if (e.code !== 'EEXIST') throw e;
-        let owner;
-        let age = 0;
-        try { owner = Number(fs.readFileSync(lock, 'utf8')); age = Date.now() - fs.statSync(lock).mtimeMs; } catch (e) { if (e.code !== 'ENOENT') throw e; }
-        // 登记只需要几毫秒；持有者已退出，或者锁放了很久（持有者被强杀后 pid 又被复用），都当作残留锁清掉。
-        if ((owner && !pidAlive(owner)) || age > 30000) fs.rmSync(lock, { force: true });
-        await sleep(25);
-      }
+// 并发上限按协作方算，任何任务（分不分组、哪个会话）都要在锁内登记并做准入检查，调用方用完 release。
+async function newRunDir() {
+  fs.mkdirSync(RUNS_ROOT, { recursive: true });
+  // 登记和准入串行完成，避免随机后缀让后登记的任务排到前面。
+  const lock = path.join(RUNS_ROOT, '.start.lock');
+  for (;;) {
+    try { fs.writeFileSync(lock, String(process.pid), { flag: 'wx' }); break; }
+    catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      let owner;
+      let age = 0;
+      try { owner = Number(fs.readFileSync(lock, 'utf8')); age = Date.now() - fs.statSync(lock).mtimeMs; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      // 登记只需要几毫秒；持有者已退出，或者锁放了很久（持有者被强杀后 pid 又被复用），都当作残留锁清掉。
+      if ((owner && !pidAlive(owner)) || age > 30000) fs.rmSync(lock, { force: true });
+      await sleep(25);
     }
-    const cleanup = () => fs.rmSync(lock, { force: true });
-    process.once('exit', cleanup);
-    release = () => { cleanup(); process.removeListener('exit', cleanup); };
-    previous = listRuns().find((id) => readMeta(path.join(RUNS_ROOT, id))?.group != null) || '';
   }
+  const cleanup = () => fs.rmSync(lock, { force: true });
+  process.once('exit', cleanup);
+  const release = () => { cleanup(); process.removeListener('exit', cleanup); };
+  const previous = listRuns()[0] || '';
   let id;
   do {
     if (id) await sleep(10);
@@ -446,9 +626,9 @@ function makeTracker(runDir, cwd, track) {
 
 // ---------- 执行 ----------
 
-function runCodex({ args, cwd, prompt, runDir, timeoutMin, stallMin, onSession }) {
+function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, onSession }) {
   return new Promise((resolve) => {
-    const { file, pre } = codexCommand();
+    const { file, pre } = codexCommand(agent);
     const events = fs.createWriteStream(path.join(runDir, 'events.jsonl'));
     const errLog = fs.createWriteStream(path.join(runDir, 'stderr.log'));
     const out = { code: null, sessionId: null, usage: null, errors: [], warnings: [], fileChanges: new Set(), quotaExhausted: false, timedOut: false, stalled: false, commands: 0 };
@@ -558,17 +738,18 @@ function codexSessionStats(sessionId, startedAt) {
 }
 
 async function execute(ctx) {
-  const { cfg, model, mode, kind, id, dir, cwd, level, effort, args, prompt, title, parent, opts, expectReport } = ctx;
+  const { cfg, agentName, agent, model, mode, kind, id, dir, cwd, level, effort, args, prompt, title, parent, opts, expectReport } = ctx;
   const started = Date.now();
   const track = [...new Map(opts.track.map((file) => {
     const rel = relativePath(cwd, file);
     if (rel === '..' || rel.startsWith('../') || path.isAbsolute(rel)) die(M.badArg(`--track ${file}`));
     return [pathKey(rel), rel];
   })).values()];
-  const sandbox = cfg.sandbox[kind === 'exec' ? 'run' : kind] || null;
+  const sandbox = agent.sandbox?.[kind === 'exec' ? 'run' : kind] || null;
   // model 为 null 时实际模型由 Codex 配置决定，model_shown 是给人看的实际模型名。
   const modelShown = model || M.modelFromCodex(codexConfigModel() || M.unknownModel);
   const meta = {
+    agent: agentName, agent_type: agent.type,
     id, mode, kind, title: title || null, cwd, model, model_shown: modelShown, level, effort, sandbox,
     parent: parent || null, track, group: opts.group ?? null, scope: opts.scope, round: ctx.round ?? null,
     started_at: new Date(started).toISOString(), status: 'running', pid: process.pid, session_id: ctx.sessionId || null,
@@ -583,12 +764,12 @@ async function execute(ctx) {
   let rejection;
   try {
     writeMeta();
-    rejection = meta.group != null ? checkGroup(meta) : null;
+    rejection = checkAdmission(meta, cfg);
     if (rejection) fs.rmSync(dir, { recursive: true });
   } finally { ctx.release(); }
   if (rejection) die(rejection);
   fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
-  process.stderr.write(`codex-run: ${M.started(mode, modelShown, effort, level, dir)}\n`);
+  process.stderr.write(`codex-run: ${M.started(mode, agentName, modelShown, effort, level, dir)}\n`);
 
   const warnings = [];
   const notes = [];
@@ -601,9 +782,9 @@ async function execute(ctx) {
 
   const baseline = mode === 'resume' ? codexSessionStats(ctx.sessionId, meta.started_at)?.total_token_usage : {};
   const r = await runCodex({
-    args, cwd, prompt, runDir: dir,
-    timeoutMin: Number(opts.timeout) || cfg.timeout_min,
-    stallMin: Number(opts.stall ?? cfg.stall_min),
+    agent, args, cwd, prompt, runDir: dir,
+    timeoutMin: Number(opts.timeout) || cfg.dispatch.timeout_min,
+    stallMin: Number(opts.stall ?? cfg.dispatch.stall_min),
     onSession: (sid) => { meta.session_id = sid; writeMeta(); },
   });
 
@@ -659,6 +840,7 @@ async function execute(ctx) {
   }
 
   const result = {
+    agent: agentName, agent_type: agent.type,
     run_id: id,
     mode,
     kind,
@@ -700,6 +882,164 @@ async function execute(ctx) {
   process.exitCode = ok ? 0 : 1;
 }
 
+// 兼容 OpenAI 的接口各家缓存字段名不同：DeepSeek 是 prompt_cache_hit_tokens，OpenAI 是 prompt_tokens_details.cached_tokens。
+const apiUsage = (u) => ({
+  input_tokens: u?.prompt_tokens || 0,
+  cached_input_tokens: u?.prompt_cache_hit_tokens ?? u?.prompt_tokens_details?.cached_tokens ?? 0,
+  output_tokens: u?.completion_tokens || 0,
+  reasoning_output_tokens: u?.completion_tokens_details?.reasoning_tokens ?? 0,
+});
+
+// 配置里直接写的 api_key 优先（看得见，也不会被忘了删的旧环境变量顶替），没有再读 api_key_env 指向的环境变量。
+const apiKeyOf = (agent) => (agent.api_key ? { key: agent.api_key, source: 'config' }
+  : process.env[agent.api_key_env] ? { key: process.env[agent.api_key_env], source: 'env' } : { key: null, source: null });
+
+async function executeApi(ctx) {
+  const { cfg, agentName, agent, model, effort, level, cwd, brief, mode, opts } = ctx;
+  const apiKey = apiKeyOf(agent).key;
+  if (!apiKey) die(M.apiKeyMissing(agentName, agent.api_key_env));
+  const modelShown = agent.extra_body?.model ?? model;
+  const schemaText = fs.readFileSync(DISCUSS_SCHEMA, 'utf8');
+  const schema = JSON.parse(schemaText);
+  let history = [{ role: 'system', content: M.apiDiscussSystem(schemaText) }];
+  if (ctx.parent) {
+    const file = path.join(ctx.parentDir, 'messages.json');
+    if (!fs.existsSync(file)) die(M.apiNoMessages(ctx.parent));
+    history = JSON.parse(fs.readFileSync(file, 'utf8'));
+  }
+  const files = readAttachments(opts.file, cwd, true);
+  let prompt = brief;
+  if (!ctx.parent || files.length) {
+    const git = spawnSync('git', ['ls-files', '-z'], { cwd, encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+    const list = git.status === 0 ? git.stdout.split('\0').filter(Boolean) : [];
+    if (list.length || files.length) prompt += `\n\n${M.apiMaterials(list.slice(0, 300).join('\n'), list.length, files)}`;
+  }
+  if (prompt.length > MAX_MATERIAL_CHARS) die(M.materialsTooLarge(prompt.length, MAX_MATERIAL_CHARS, M.list(files.map((f) => `${f.shown}: ${f.chars}`))));
+  if (ctx.parent) prompt += `\n\n${M.apiResumeFooter}`;
+  history = [...history, { role: 'user', content: prompt }];
+  const { id, dir, release } = await newRunDir();
+  const started = Date.now();
+  const deadline = started + (Number(opts.timeout) || cfg.dispatch.timeout_min) * 60000;
+  const meta = {
+    id, mode, kind: 'discuss', title: ctx.title || null, cwd, model, model_shown: modelShown, level, effort,
+    agent: agentName, agent_type: agent.type, sandbox: null, parent: ctx.parent || null,
+    track: [], group: opts.group ?? null, scope: opts.scope, round: ctx.round,
+    started_at: new Date(started).toISOString(), status: 'running', pid: process.pid, session_id: null,
+  };
+  const writeMeta = () => {
+    const file = path.join(dir, 'meta.json');
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify(meta, null, 2));
+    fs.renameSync(`${file}.tmp`, file);
+  };
+  let rejection;
+  try {
+    writeMeta();
+    rejection = checkAdmission(meta, cfg);
+    if (rejection) fs.rmSync(dir, { recursive: true });
+  } finally { release(); }
+  if (rejection) die(rejection);
+  const redact = (s) => s.replaceAll(apiKey, '[REDACTED]');
+  const event = (ev) => fs.appendFileSync(path.join(dir, 'events.jsonl'), JSON.stringify({ ...ev, ts: new Date().toISOString() }) + '\n');
+  fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
+  fs.writeFileSync(path.join(dir, 'messages.json'), JSON.stringify(history, null, 2));
+  process.stderr.write(`codex-run: ${M.started(mode, agentName, modelShown, effort, level, dir)}\n`);
+  const usage = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 };
+  const notes = [];
+  const warnings = [];
+  const errors = [];
+  let attempt = 0;
+  let retried = false;
+  let formatRemoved = false;
+  let last = '';
+  let report = null;
+  const request = async (messages) => {
+    for (;;) {
+      if (Date.now() >= deadline) {
+        event({ type: 'api.error', kind: 'timeout', status: null, message: 'Run timed out' });
+        throw Object.assign(new Error('Run timed out'), { kind: 'timeout' });
+      }
+      const body = { model, messages, stream: true, stream_options: { include_usage: true },
+        ...(effort != null ? { reasoning_effort: effort } : {}), response_format: { type: 'json_object' }, ...agent.extra_body };
+      if (formatRemoved) delete body.response_format;
+      event({ type: 'api.request', attempt: ++attempt, model: body.model, effort: body.reasoning_effort ?? null });
+      try {
+        const reply = await chatStream({ url: agent.base_url, apiKey, body, timeoutMs: deadline - Date.now(), stallMs: Number(opts.stall ?? cfg.dispatch.stall_min) * 60000,
+          onEvent: (ev) => {
+            if (ev.type === 'api.usage') {
+              ev.usage = apiUsage(ev.usage);
+              for (const key of Object.keys(usage)) usage[key] += ev.usage[key];
+            }
+            if (ev.text) ev.text = redact(ev.text);
+            event(ev);
+          },
+        });
+        // 去掉 response_format 后成功了，才说明 400 是它引起的；模型名写错之类的 400 不该归到它头上。
+        if (formatRemoved && !notes.includes(M.apiNoResponseFormat)) notes.push(M.apiNoResponseFormat);
+        return reply;
+      } catch (e) {
+        event({ type: 'api.error', kind: e.kind, status: e.status ?? null, message: redact(e.message) });
+        if (e.kind === 'bad_request' && body.response_format && !formatRemoved) {
+          formatRemoved = true;
+          event({ type: 'api.retry', reason: 'response_format', wait_s: 0 });
+          continue;
+        }
+        if (!retried && ['network', 'rate_limit', 'server', 'stall'].includes(e.kind)) {
+          retried = true;
+          event({ type: 'api.retry', reason: e.kind, wait_s: 5 });
+          await sleep(Math.min(5000, Math.max(0, deadline - Date.now())));
+          continue;
+        }
+        throw e;
+      }
+    }
+  };
+  try {
+    let messages = history;
+    for (let repair = 0; repair <= 1; repair++) {
+      const reply = await request(messages);
+      last = redact(reply.content);
+      if (reply.finishReason === 'length') {
+        event({ type: 'api.error', kind: 'length', status: null, message: M.apiTruncated(agentName) });
+        throw Object.assign(new Error(M.apiTruncated(agentName)), { kind: 'length' });
+      }
+      let invalid;
+      try {
+        let value;
+        try { value = JSON.parse(last); }
+        catch {
+          const stripped = last.trim().replace(/^```[^\n]*\n/, '').replace(/\n```$/, '');
+          value = JSON.parse(stripped.slice(stripped.indexOf('{'), stripped.lastIndexOf('}') + 1));
+        }
+        invalid = validateSchema(schema, value);
+        if (!invalid.length) { report = value; break; }
+      } catch { invalid = [last.trim() ? 'Reply is not valid JSON' : 'Reply is empty']; }
+      if (repair === 1) { warnings.push(M.apiReportInvalid(agentName, path.join(dir, 'last-message.txt'))); break; }
+      event({ type: 'api.repair', errors: invalid });
+      messages = [...history, { role: 'assistant', content: last }, { role: 'user', content: M.apiRepairPrompt(invalid.join('\n')) }];
+    }
+    meta.status = 'done';
+  } catch (e) {
+    meta.status = { balance: 'quota_exhausted', stall: 'stalled', timeout: 'timeout' }[e.kind] || 'failed';
+    const message = redact(e.message);
+    errors.push(e.kind === 'balance' ? M.apiBalance(agentName, message) : e.kind === 'length' ? message : M.apiError(agentName, e.kind, e.status, message));
+  }
+  fs.writeFileSync(path.join(dir, 'last-message.txt'), last);
+  fs.writeFileSync(path.join(dir, 'messages.json'), JSON.stringify(last || meta.status === 'done' ? [...history, { role: 'assistant', content: last }] : history, null, 2));
+  meta.ended_at = new Date().toISOString();
+  const result = {
+    run_id: id, mode, kind: 'discuss', status: meta.status, title: meta.title, cwd, track: [], group: meta.group, round: meta.round, scope: meta.scope,
+    agent: agentName, agent_type: agent.type, model, model_shown: modelShown, level, effort, sandbox: null, parent: meta.parent, session_id: null,
+    exit_code: meta.status === 'done' ? 0 : 1, duration_s: Math.round((Date.now() - started) / 1000), usage, usage_scope: 'this_run',
+    last_request: null, rate_limit: null, quota_resets_at: null, commands_executed: 0, errors, notes, warnings, report,
+    last_message: report ? undefined : last, changes: { available: false, note: M.apiNoChanges },
+    files: files.map(({ path, range, chars }) => ({ path, range, chars })), run_dir: dir,
+  };
+  fs.writeFileSync(path.join(dir, 'result.json'), JSON.stringify(result, null, 2));
+  writeMeta();
+  process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  process.exitCode = result.exit_code;
+}
+
 // ---------- 子命令 ----------
 
 async function cmdRun(o) {
@@ -708,28 +1048,32 @@ async function cmdRun(o) {
   const cfg = loadConfig(cwd);
   const addDirs = o['add-dir'].map(resolveDir);
   const brief = readBrief(o);
-  const { level, model, effort } = pickProfile(cfg, o, 'run');
-  const { id, dir, release } = await newRunDir(o.group);
+  const profile = pickProfile(cfg, o, 'run');
+  const { agent, model, effort } = profile;
+  const { id, dir, release } = await newRunDir();
   const args = [
-    'exec', '--json', '--skip-git-repo-check', ...codexOptions(cfg, { model, effort, mode: 'run' }),
+    'exec', '--json', '--skip-git-repo-check', ...codexOptions(agent, { model, effort, mode: 'run' }),
     '-C', cwd, '--output-schema', SCHEMA, '-o', path.join(dir, 'last-message.txt'),
   ];
   for (const d of addDirs) args.push('--add-dir', d);
   args.push('-');
-  await execute({ cfg, model, mode: 'run', kind: 'exec', id, dir, release, cwd, level, effort, args, prompt: `${brief}\n\n${M.footer(cwd, addDirs)}\n`, title: o.title, opts: o, expectReport: true });
+  await execute({ cfg, ...profile, mode: 'run', kind: 'exec', id, dir, release, cwd, args, prompt: `${brief}\n\n${M.footer(cwd, addDirs)}\n`, title: o.title, opts: o, expectReport: true });
 }
 
 async function cmdDiscuss(o) {
   const cwd = resolveDir(need(o, 'cwd'));
   const cfg = loadConfig(cwd);
   const brief = readBrief(o);
-  const { level, model, effort } = pickProfile(cfg, o, 'discuss');
-  const { id, dir, release } = await newRunDir(o.group);
+  const profile = pickProfile(cfg, o, 'discuss');
+  const { agent, model, effort } = profile;
+  if (agent.type === 'openai-compatible') return executeApi({ cfg, ...profile, mode: 'discuss', cwd, brief, title: o.title, round: 1, opts: o });
+  const files = readAttachments(o.file, cwd, false);
+  const { id, dir, release } = await newRunDir();
   const args = [
-    'exec', '--json', '--skip-git-repo-check', ...codexOptions(cfg, { model, effort, mode: 'discuss' }),
+    'exec', '--json', '--skip-git-repo-check', ...codexOptions(agent, { model, effort, mode: 'discuss' }),
     '-C', cwd, '--output-schema', DISCUSS_SCHEMA, '-o', path.join(dir, 'last-message.txt'), '-',
   ];
-  await execute({ cfg, model, mode: 'discuss', kind: 'discuss', id, dir, release, cwd, level, effort, args, prompt: `${brief}\n\n${M.discussFooter(cwd)}\n`, title: o.title, round: 1, opts: o, expectReport: true });
+  await execute({ cfg, ...profile, mode: 'discuss', kind: 'discuss', id, dir, release, cwd, args, prompt: `${brief}${focusFiles(files)}\n\n${M.discussFooter(cwd)}\n`, title: o.title, round: 1, opts: o, expectReport: true });
 }
 
 async function cmdResume(o) {
@@ -737,14 +1081,14 @@ async function cmdResume(o) {
   o.track = [...(parent.meta.track || []), ...o.track];
   o.group ??= parent.meta.group ?? null;
   if (!o.scope.length) o.scope = parent.meta.scope || [];
-  if (!parent.meta.session_id) die(M.noSession(parent.id));
+  if (parent.meta.agent_type !== 'openai-compatible' && !parent.meta.session_id) die(M.noSession(parent.id));
   const kind = parent.meta.kind || (parent.meta.mode === 'review' ? 'review' : 'exec');
   if (kind === 'review') die(M.reviewNoResume);
   const discuss = kind === 'discuss';
   if (o.group != null && !discuss && !o.scope.length) die(M.groupNeedsScope);
   let round = null;
   if (discuss) {
-    const max = CONFIG.discuss_max_rounds;
+    const max = CONFIG.dispatch.discuss_max_rounds;
     if (!Number.isInteger(max) || max < 1) die(M.badDiscussMaxRounds);
     // 沿续接链往回数已经完成的轮次；卡死或失败后的续接仍算同一轮。
     let done = 0;
@@ -759,15 +1103,19 @@ async function cmdResume(o) {
   const cfg = loadConfig(parent.meta.cwd);
   const brief = readBrief(o);
   // 什么模型都没配置时沿用上一轮记录的模型，同一会话不中途换模型。
-  const { level, model, effort } = pickProfile(cfg, o, discuss ? 'discuss' : 'run', parent.meta.model);
-  const { id, dir, release } = await newRunDir(o.group);
+  const profile = pickProfile(cfg, o, discuss ? 'discuss' : 'run', parent.meta.model, parent.meta.agent || codexAgentName(cfg));
+  const { agent, model, effort } = profile;
+  if (agent.type === 'openai-compatible') return executeApi({ cfg, ...profile, mode: 'resume', cwd: parent.meta.cwd, brief,
+    title: o.title || parent.meta.title, parent: parent.id, parentDir: parent.dir, round, opts: o });
+  const files = readAttachments(o.file, parent.meta.cwd, false);
+  const { id, dir, release } = await newRunDir();
   const args = [
-    'exec', 'resume', '--json', '--skip-git-repo-check', ...codexOptions(cfg, { model, effort, mode: discuss ? 'discuss' : 'run' }),
+    'exec', 'resume', '--json', '--skip-git-repo-check', ...codexOptions(agent, { model, effort, mode: discuss ? 'discuss' : 'run' }),
     '--output-schema', discuss ? DISCUSS_SCHEMA : SCHEMA, '-o', path.join(dir, 'last-message.txt'), parent.meta.session_id, '-',
   ];
   await execute({
-    cfg, model, mode: 'resume', kind, id, dir, release, cwd: parent.meta.cwd, level, effort, args,
-    prompt: `${brief}\n\n${discuss ? M.discussResumeFooter : M.resumeFooter}\n`,
+    cfg, ...profile, mode: 'resume', kind, id, dir, release, cwd: parent.meta.cwd, args,
+    prompt: `${brief}${focusFiles(files)}\n\n${discuss ? M.discussResumeFooter : M.resumeFooter}\n`,
     title: o.title || parent.meta.title, parent: parent.id, sessionId: parent.meta.session_id, round, opts: o, expectReport: true,
   });
 }
@@ -775,8 +1123,9 @@ async function cmdResume(o) {
 async function cmdReview(o) {
   const cwd = resolveDir(need(o, 'cwd'));
   const cfg = loadConfig(cwd);
-  const { level, model, effort } = pickProfile(cfg, o, 'review');
-  const codexOpts = codexOptions(cfg, { model, effort, mode: 'review' });
+  const profile = pickProfile(cfg, o, 'review');
+  const { agent, model, effort } = profile;
+  const codexOpts = codexOptions(agent, { model, effort, mode: 'review' });
   const git = isGitRepo(cwd);
   const brief = readBrief(o, !git);
   const { id, dir, release } = await newRunDir();
@@ -801,21 +1150,86 @@ async function cmdReview(o) {
     args = ['exec', '--json', '--skip-git-repo-check', ...codexOpts, '-C', cwd, '-o', last, '-'];
     prompt = `${M.reviewPromptPlain(cwd)}\n\n${brief}\n\n${M.reviewFooter}\n`;
   }
-  await execute({ cfg, model, mode: 'review', kind: 'review', id, dir, release, cwd, level, effort, args, prompt, title: o.title, opts: o, expectReport: false });
+  await execute({ cfg, ...profile, mode: 'review', kind: 'review', id, dir, release, cwd, args, prompt, title: o.title, opts: o, expectReport: false });
 }
 
 function cmdConfig(o) {
   const { sources, ...effective } = loadConfig(o.cwd ? resolveDir(o.cwd) : null);
+  const agents_status = Object.fromEntries(Object.entries(effective.agents).map(([name, agent]) => [name, {
+    type: agent.type, model: agent.model || (agent.type === 'codex' ? codexConfigModel() : null), max_parallel: agent.max_parallel ?? DEFAULT_AGENT_PARALLEL,
+    ...(agent.type === 'openai-compatible' ? { api_key_env: agent.api_key_env ?? null, key_set: !!apiKeyOf(agent).key, key_source: apiKeyOf(agent).source } : {}),
+  }]));
+  const resolved = (entry) => ({ agent: entry.agent, model: entry.model || agents_status[entry.agent].model, effort: entry.effort });
+  const resolved_levels = Object.fromEntries(Object.entries(effective.levels).map(([mode, levels]) => [mode,
+    Object.fromEntries(Object.entries(levels).map(([lv, entry]) => [lv, entry === CLAUDE ? entry : Array.isArray(entry) ? entry.map(resolved) : resolved(entry)])),
+  ]));
+  // 配置里写的 key 不打印出来。
+  const shown = structuredClone(effective);
+  for (const agent of Object.values(shown.agents)) if (agent.api_key) agent.api_key = M.keyHidden;
   process.stdout.write(JSON.stringify({
     user_config: USER_CONFIG,
     loaded_from: sources,
-    effective,
+    effective: shown,
+    agents_status,
+    resolved_levels,
     runs_dir: RUNS_ROOT,
     watch_launcher: path.join(RUNS_ROOT, 'watch.mjs'),
     preferences: [USER_PREFS, ...(o.cwd ? [path.join(resolveDir(o.cwd), PROJECT_PREFS)] : [])]
       .map((file) => ({ file, exists: fs.existsSync(file) })),
     codex: codexCommand(),
   }, null, 2) + '\n');
+}
+
+// 检查环境。Codex 是必需的，决定退出码；Git 缺了只是没有改动追踪；API 协作方是可选的，各自发一个很小的请求确认能连通。
+async function cmdCheck(o) {
+  const cfg = loadConfig(null);
+  if (o.agent && !Object.hasOwn(cfg.agents, o.agent)) die(M.unknownAgent('--agent', o.agent));
+  const nodeOk = Number(process.versions.node.split('.')[0]) >= 18;
+  const git = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: true });
+  const gitVersion = git.status === 0 ? git.stdout.trim() : null;
+  const [major, minor] = (/(\d+)\.(\d+)/.exec(gitVersion || '') || []).slice(1).map(Number);
+  const gitOk = major > 2 || (major === 2 && minor >= 25);
+  const codexAgent = cfg.agents[codexAgentName(cfg)];
+  const { file, pre } = codexCommand(codexAgent);
+  const codex = (args) => spawnSync(file, [...pre, ...args], { encoding: 'utf8', windowsHide: true, timeout: 60000 });
+  const version = codex(['--version']);
+  const installed = !version.error && version.status === 0;
+  const login = installed ? codex(['login', 'status']) : null;
+  const loginText = login ? `${login.stdout}${login.stderr}`.trim() : null;
+  const loggedIn = !!login && login.status === 0 && !/not logged in/i.test(loginText);
+  const result = {
+    ok: nodeOk && installed && loggedIn,
+    node: { ok: nodeOk, version: process.version, fix: nodeOk ? null : M.fixNode(process.version) },
+    git: { ok: gitOk, version: gitVersion, fix: gitOk ? null : M.fixGit(gitVersion) },
+    codex: {
+      ok: installed && loggedIn, version: installed ? version.stdout.trim() : null, login: loginText,
+      model: codexAgent.model || codexConfigModel(),
+      fix: !installed ? M.fixCodexMissing : loggedIn ? null : M.fixCodexLogin,
+    },
+    agents: {},
+  };
+  for (const [name, agent] of Object.entries(cfg.agents)) {
+    if (agent.type === 'openai-compatible' && (!o.agent || o.agent === name)) result.agents[name] = await checkApiAgent(name, agent);
+  }
+  process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  process.exitCode = result.ok ? 0 : 1;
+}
+
+async function checkApiAgent(name, agent) {
+  const { key: apiKey, source } = apiKeyOf(agent);
+  const out = { ok: false, model: agent.model, base_url: agent.base_url, api_key_env: agent.api_key_env ?? null, key_set: !!apiKey, key_source: source };
+  if (!apiKey) return { ...out, fix: M.fixApiKey(name, agent.api_key_env) };
+  const started = Date.now();
+  try {
+    const reply = await chatStream({
+      url: agent.base_url, apiKey, timeoutMs: 120000, stallMs: 60000,
+      body: { model: agent.model, messages: [{ role: 'user', content: 'Reply with the single word OK.' }], stream: true, stream_options: { include_usage: true }, ...agent.extra_body },
+    });
+    return { ...out, ok: true, seconds: Number(((Date.now() - started) / 1000).toFixed(1)), reply: reply.content.replaceAll(apiKey, '[REDACTED]').trim().slice(0, 40), usage: apiUsage(reply.usage), fix: null };
+  } catch (e) {
+    const fix = { auth: M.fixApiAuth(name, source, agent.api_key_env), balance: M.fixApiBalance, bad_request: M.fixApiRequest(name), network: M.fixApiNetwork(agent.base_url) }[e.kind] || M.fixApiRetry;
+    return { ...out, error: `${e.kind}${e.status ? ` ${e.status}` : ''}: ${e.message.replaceAll(apiKey, '[REDACTED]')}`, fix };
+  }
 }
 
 // 读 events.jsonl 末尾，给出最后活动时间和当前步骤，用来判断运行中的任务是活着还是卡住。
@@ -839,7 +1253,15 @@ function describeActivity(dir) {
     else if (ev.type === 'item.completed') running.delete(ev.item.id);
   }
   let step;
-  if (running.size) step = M.stepCommand(clip(oneLine(plainCommand([...running.values()].pop())), 160));
+  if (last?.type.startsWith('api.')) {
+    step = last.type === 'api.request' ? M.stepApiWaiting
+      : last.type === 'api.reasoning' ? M.stepApiThinking(last.total_chars)
+      : last.type === 'api.content' ? M.stepApiAnswering(last.total_chars)
+      : last.type === 'api.retry' ? M.stepApiRetry(last.reason)
+      : last.type === 'api.repair' ? M.stepApiRepair
+      : last.type === 'api.error' ? last.message
+      : last.type === 'api.usage' ? M.watchTokens(last.usage) : M.watchEnded('done');
+  } else if (running.size) step = M.stepCommand(clip(oneLine(plainCommand([...running.values()].pop())), 160));
   else if (last?.item?.type === 'agent_message') step = M.stepSaid(clip(oneLine(last.item.text), 160));
   else if (last?.item?.type === 'file_change') step = M.stepFileChanged;
   else if (last?.type === 'item.completed' && last.item?.type === 'command_execution') step = M.stepCommandDone;
@@ -854,13 +1276,20 @@ function groupRuns(group, since = 0) {
   }).filter(({ meta }) => meta?.group === group && Date.parse(meta.started_at) >= since);
 }
 
-function checkGroup(meta) {
-  const running = groupRuns(meta.group).filter((r) => r.id < meta.id && isRunning(r.meta));
-  if (running.length >= CONFIG.max_parallel) return M.groupFull(meta.group, running.length, CONFIG.max_parallel);
-  if (meta.kind === 'discuss') return null;
+// 准入检查（在登记锁内）：同一协作方正在运行的任务不超过它的 max_parallel，所有组和会话都算，
+// 因为服务商的限流和额度是按账号的；同组的执行任务写入范围不能重叠。
+function checkAdmission(meta, cfg) {
+  const codexName = codexAgentName(cfg);
+  const running = listRuns().filter((id) => id !== meta.id)
+    .map((id) => { const dir = path.join(RUNS_ROOT, id); return { id, dir, meta: readMeta(dir) }; })
+    .filter((r) => isRunning(r.meta));
+  const limit = cfg.agents[meta.agent].max_parallel ?? DEFAULT_AGENT_PARALLEL;
+  const same = running.filter((r) => (r.meta.agent || codexName) === meta.agent); // 旧记录没有 agent 字段，都是 Codex
+  if (same.length >= limit) return M.agentFull(meta.agent, same.length, limit, M.list(same.map((r) => r.id)));
+  if (meta.group == null || meta.kind === 'discuss') return null;
   const absolute = (cwd, file) => pathKey(path.resolve(cwd, file.replace(/\\/g, '/')).replace(/\\/g, '/')).replace(/\/$/, '');
   for (const other of running) {
-    if (other.meta.kind === 'discuss') continue;
+    if (other.meta.group !== meta.group || other.meta.kind === 'discuss') continue;
     // 比较用归一化的绝对路径，报错里显示派活时写的原样路径。
     const paths = meta.scope.filter((mine) => (other.meta.scope || []).some((file) => {
       const a = absolute(meta.cwd, mine);
@@ -908,7 +1337,7 @@ function cmdStatus(o) {
     if (m.status === 'running' && !pidAlive(m.pid)) m.status = 'interrupted';
     const end = m.ended_at ? new Date(m.ended_at) : new Date();
     const mins = ((end - new Date(m.started_at)) / 60000).toFixed(1);
-    let row = `${rid}  ${m.mode.padEnd(6)}  ${m.status.padEnd(11)}  ${m.model_shown || m.model || '-'}  ${(m.level ? `${m.level}/${m.effort}` : m.effort).padEnd(14)}  ${mins.padStart(6)}min  ${m.group != null ? M.statusGroup(m.group) : ''}${m.round ? M.statusRound(m.round) : ''}${m.title || ''}  @ ${m.cwd}`;
+    let row = `${rid}  ${m.mode.padEnd(6)}  ${m.status.padEnd(11)}  ${m.agent_type === 'openai-compatible' ? `${m.agent}:` : ''}${m.model_shown || m.model || '-'}  ${(m.level ? `${m.level}/${m.effort ?? '-'}` : m.effort ?? '-').padEnd(14)}  ${mins.padStart(6)}min  ${m.group != null ? M.statusGroup(m.group) : ''}${m.round ? M.statusRound(m.round) : ''}${m.title || ''}  @ ${m.cwd}`;
     if (m.status === 'running') {
       const a = describeActivity(dir);
       const last = codexSessionStats(m.session_id, m.started_at)?.last_request;
@@ -1207,6 +1636,32 @@ function conciseRenderer(cwd, rel) {
   return { show, finish, goLive: () => { live = true; drawFoldLine(); } };
 }
 
+function apiRenderer(verbose, cwd, rel) {
+  const base = conciseRenderer(cwd, rel);
+  let lastThinking = -Infinity;
+  let answering = false;
+  const show = (ev) => {
+    const out = (text) => process.stdout.write(`${ev.ts ? new Date(ev.ts).toTimeString().slice(0, 8) : '        '} ${text}\n`);
+    if (ev.type === 'api.request') {
+      lastThinking = -Infinity;
+      answering = false;
+      out(M.watchApiRequest(ev.model, ev.effort, ev.attempt));
+    } else if (ev.type === 'api.reasoning') {
+      if (verbose) out(ev.text);
+      else if (Date.parse(ev.ts) - lastThinking >= 15000) {
+        lastThinking = Date.parse(ev.ts);
+        out(M.watchApiThinking(ev.total_chars));
+      }
+    } else if (ev.type === 'api.content') {
+      if (!answering) { out(M.watchApiAnswering); answering = true; }
+      if (verbose) out(ev.text);
+    } else if (ev.type === 'api.retry') out(M.watchApiRetry(ev.reason, ev.wait_s));
+    else if (ev.type === 'api.repair') out(M.watchApiRepair(M.list(ev.errors)));
+    else if (ev.type === 'api.error') out(ev.message);
+  };
+  return { ...base, show };
+}
+
 async function watchGroup(group) {
   const recentRuns = () => groupRuns(group, Date.now() - 86400000).reverse();
   let runs;
@@ -1234,7 +1689,7 @@ async function watchGroup(group) {
       const end = run.meta.ended_at ? Date.parse(run.meta.ended_at) : Date.now();
       const mins = ((end - Date.parse(run.meta.started_at)) / 60000).toFixed(1);
       const shown = status === 'done' ? result?.report?.status || status : status;
-      const line = `${running ? '●' : ok ? '✔' : '✗'} ${run.id}  ${oneLine(run.meta.title || '')}  ${shown}  ${mins}min${running ? `  ${oneLine(describeActivity(run.dir).step)}` : ''}`;
+      const line = `${running ? '●' : ok ? '✔' : '✗'} ${run.id}  ${run.meta.agent_type === 'openai-compatible' ? `${run.meta.agent}:${run.meta.model_shown || run.meta.model}  ` : ''}${oneLine(run.meta.title || '')}  ${shown}  ${mins}min${running ? `  ${oneLine(describeActivity(run.dir).step)}` : ''}`;
       if (process.stdout.isTTY) {
         const color = running ? C.cyan : ok ? C.green : C.red;
         lines.push(color(fitWidth(line, Math.max(1, (process.stdout.columns || 100) - 1))));
@@ -1260,6 +1715,7 @@ async function watchGroup(group) {
     process.stdout.write(`\n${C.bold(oneLine(run.meta.title || run.id))}\n`);
     process.stdout.write(`${(ok ? C.green : C.red)(M.watchFinished(status === 'done' ? r?.report?.status || status : status, seconds, changed))}\n`);
     if (r?.usage) process.stdout.write(`${C.dim(M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (run.meta.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total'))}\n`);
+    if (run.meta.agent_type === 'openai-compatible' && r?.report?.position) process.stdout.write(`${M.watchOpinion(r.report.position)}\n`);
   }
   process.stdout.write(`${groupSummary([...known.values()])}\n`);
 }
@@ -1269,8 +1725,8 @@ async function cmdWatch(o) {
   const { id, dir, meta } = await pickWatchRun(o.run);
   const cwd = meta.cwd;
   const rel = (p) => { const r = path.relative(cwd, p); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r : p; };
-  const view = (o.verbose ? verboseRenderer : conciseRenderer)(cwd, rel);
-  const header = M.watchHeader(meta.mode, meta.title || id, meta.model_shown || meta.model, meta.effort, meta.level, cwd, dir).split('\n');
+  const view = meta.agent_type === 'openai-compatible' ? apiRenderer(o.verbose, cwd, rel) : (o.verbose ? verboseRenderer : conciseRenderer)(cwd, rel);
+  const header = M.watchHeader(meta.agent || 'Codex', meta.mode, meta.title || id, meta.model_shown || meta.model, meta.effort, meta.level, cwd, dir).split('\n');
   process.stdout.write(`\n${C.bold(header[0])}\n${C.dim(header.slice(1).join('\n'))}\n\n`);
 
   const file = path.join(dir, 'events.jsonl');
@@ -1311,6 +1767,6 @@ async function cmdWatch(o) {
 }
 
 const { cmd, opts } = parseArgs(process.argv.slice(2));
-const commands = { run: cmdRun, discuss: cmdDiscuss, resume: cmdResume, review: cmdReview, status: cmdStatus, watch: cmdWatch, config: cmdConfig };
+const commands = { run: cmdRun, discuss: cmdDiscuss, resume: cmdResume, review: cmdReview, status: cmdStatus, watch: cmdWatch, config: cmdConfig, check: cmdCheck };
 if (!commands[cmd]) die(M.usage);
 await commands[cmd](opts);

@@ -17,6 +17,7 @@ const TARGET = path.join(ROOT, 'codex-bridge-en');
 const SHARED = [
   'skills/codex-dispatch/scripts/codex-run.mjs',
   'skills/codex-dispatch/scripts/messages.mjs',
+  'skills/codex-dispatch/scripts/api-chat.mjs',
   'hooks/guard-codex.mjs',
   'hooks/session-reminder.mjs',
 ];
