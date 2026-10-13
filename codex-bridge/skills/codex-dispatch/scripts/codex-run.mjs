@@ -59,15 +59,17 @@ const DEFAULT_CONFIG = {
   // auto：有终端面板工具时自动打开实时查看，没有就把 watch 命令发给用户；off：不主动打开
   watch: 'auto',
   // 同一任务组里最多同时运行几个任务
-  max_parallel: 3,
+  max_parallel: 4,
+  // 一场讨论最多几轮：第 1 轮的 discuss 加上之后每次续接
+  discuss_max_rounds: 2,
   // 各等级没写模型时用的模型；null 表示沿用 Codex 自己的配置（~/.codex/config.toml）
   model: null,
   // 各模式下，简单 / 常规 / 复杂三级任务分别用的模型和推理强度（Codex 的 model_reasoning_effort）。
-  // 某一级的 model 为 null 时用上面的 model。
+  // 某一级的 model 为 null 时用上面的 model；run 的某一级写成 'claude' 时由 Claude 自己做。
   levels: {
     run: {
-      simple: { model: null, effort: 'medium' },
-      normal: { model: null, effort: 'high' },
+      simple: 'claude',
+      normal: 'claude',
       complex: { model: null, effort: 'max' },
     },
     review: {
@@ -76,8 +78,8 @@ const DEFAULT_CONFIG = {
       complex: { model: null, effort: 'max' },
     },
     discuss: {
-      simple: { model: null, effort: 'high' },
-      normal: { model: null, effort: 'max' },
+      simple: { model: null, effort: 'medium' },
+      normal: { model: null, effort: 'high' },
       complex: { model: null, effort: 'max' },
     },
   },
@@ -85,14 +87,22 @@ const DEFAULT_CONFIG = {
   sandbox: { run: null, discuss: null, review: null },
   // 审批策略，如 never / on-request；null 沿用 Codex 配置
   approval: null,
-  timeout_min: 240,
+  timeout_min: 480,
   // 超过这么久没有任何事件、且没有命令在执行，判定为卡死；0 关闭。命令执行中不算（大计算本来就可能很久）。
-  stall_min: 20,
+  stall_min: 40,
   // codex 可执行文件或 codex.js 的路径；null 自动查找
   codex_bin: null,
   // 运行记录目录；null 为 ~/.claude/codex-runs
   runs_dir: null,
 };
+
+// 写成 'claude' 的等级被 --model 点名派给 Codex，或者被只写了部分字段的配置覆盖时，用这里的推理强度。
+const CODEX_LEVEL_FALLBACK = {
+  simple: { model: null, effort: 'medium' },
+  normal: { model: null, effort: 'high' },
+  complex: { model: null, effort: 'max' },
+};
+const levelFallback = (mode, lv) => (typeof DEFAULT_CONFIG.levels[mode]?.[lv] === 'object' ? DEFAULT_CONFIG.levels[mode][lv] : CODEX_LEVEL_FALLBACK[lv]);
 
 // 项目配置来自仓库本身，不允许它改可执行文件、记录目录、沙箱和审批，以免克隆来的仓库给自己提权。
 const PROJECT_KEYS = ['model', 'levels', 'timeout_min', 'stall_min'];
@@ -120,7 +130,7 @@ function mergeConfig(base, extra, keys = Object.keys(DEFAULT_CONFIG)) {
         for (const [lv, entry] of Object.entries(levels || {})) {
           // 整项写成 "claude" 时原样保留；基础值是 "claude" 而这里只改部分字段时，在内置默认值上合并。
           const prev = base.levels[mode]?.[lv];
-          out.levels[mode][lv] = typeof entry === 'string' ? entry : { ...(typeof prev === 'object' ? prev : DEFAULT_CONFIG.levels[mode]?.[lv]), ...entry };
+          out.levels[mode][lv] = typeof entry === 'string' ? entry : { ...(typeof prev === 'object' ? prev : levelFallback(mode, lv)), ...entry };
         }
       }
     } else {
@@ -134,7 +144,6 @@ function mergeConfig(base, extra, keys = Object.keys(DEFAULT_CONFIG)) {
 const STARTER_CONFIG = mergeConfig(DEFAULT_CONFIG, {
   model: 'gpt-6.1-sol',
   levels: {
-    run: { complex: { model: 'gpt-6-astra' } },
     review: { complex: { model: 'gpt-6-astra' } },
     discuss: { complex: { model: 'gpt-6-astra' } },
   },
@@ -151,7 +160,7 @@ function loadConfig(cwd) {
   if (!fs.existsSync(USER_CONFIG)) {
     try {
       writeStarterConfig();
-      process.stderr.write(`codex-run: ${M.starterCreated(USER_CONFIG, STARTER_CONFIG.model, STARTER_CONFIG.levels.run.complex.model)}\n`);
+      process.stderr.write(`codex-run: ${M.starterCreated(USER_CONFIG, STARTER_CONFIG.model, STARTER_CONFIG.levels.review.complex.model)}\n`);
     } catch (e) {
       process.stderr.write(`codex-run: ${M.starterFailed(USER_CONFIG, e.message)}\n`);
     }
@@ -232,7 +241,7 @@ function pickProfile(cfg, o, mode, fallbackModel = null) {
     if (entry === CLAUDE) {
       if (mode !== 'run') die(M.claudeOnlyRun(`levels.${mode}.${level}`));
       if (!o.model) die(M.levelForClaude(level));
-      entry = DEFAULT_CONFIG.levels.run[level];
+      entry = CODEX_LEVEL_FALLBACK[level];
     }
     if (typeof entry === 'string') die(M.badLevelConfig(`levels.${mode}.${level}`, JSON.stringify(entry), M.levelEntryChoices));
     if (entry.model === CLAUDE) die(M.claudeOldForm(`levels.${mode}.${level}`, level));
@@ -561,7 +570,7 @@ async function execute(ctx) {
   const modelShown = model || M.modelFromCodex(codexConfigModel() || M.unknownModel);
   const meta = {
     id, mode, kind, title: title || null, cwd, model, model_shown: modelShown, level, effort, sandbox,
-    parent: parent || null, track, group: opts.group ?? null, scope: opts.scope,
+    parent: parent || null, track, group: opts.group ?? null, scope: opts.scope, round: ctx.round ?? null,
     started_at: new Date(started).toISOString(), status: 'running', pid: process.pid, session_id: ctx.sessionId || null,
   };
   const writeMeta = () => {
@@ -658,6 +667,7 @@ async function execute(ctx) {
     cwd,
     track,
     group: meta.group,
+    round: meta.round,
     scope: meta.scope,
     model,
     model_shown: modelShown,
@@ -719,7 +729,7 @@ async function cmdDiscuss(o) {
     'exec', '--json', '--skip-git-repo-check', ...codexOptions(cfg, { model, effort, mode: 'discuss' }),
     '-C', cwd, '--output-schema', DISCUSS_SCHEMA, '-o', path.join(dir, 'last-message.txt'), '-',
   ];
-  await execute({ cfg, model, mode: 'discuss', kind: 'discuss', id, dir, release, cwd, level, effort, args, prompt: `${brief}\n\n${M.discussFooter(cwd)}\n`, title: o.title, opts: o, expectReport: true });
+  await execute({ cfg, model, mode: 'discuss', kind: 'discuss', id, dir, release, cwd, level, effort, args, prompt: `${brief}\n\n${M.discussFooter(cwd)}\n`, title: o.title, round: 1, opts: o, expectReport: true });
 }
 
 async function cmdResume(o) {
@@ -732,6 +742,20 @@ async function cmdResume(o) {
   if (kind === 'review') die(M.reviewNoResume);
   const discuss = kind === 'discuss';
   if (o.group != null && !discuss && !o.scope.length) die(M.groupNeedsScope);
+  let round = null;
+  if (discuss) {
+    const max = CONFIG.discuss_max_rounds;
+    if (!Number.isInteger(max) || max < 1) die(M.badDiscussMaxRounds);
+    // 沿续接链往回数已经完成的轮次；卡死或失败后的续接仍算同一轮。
+    let done = 0;
+    let rootId = parent.id;
+    for (let rid = parent.id, m = parent.meta; m; rid = m.parent, m = m.parent ? readMeta(path.join(RUNS_ROOT, m.parent)) : null) {
+      if (m.status === 'done') done++;
+      rootId = rid;
+    }
+    round = done + 1;
+    if (round > max) die(M.discussRoundsExceeded(rootId, done, max));
+  }
   const cfg = loadConfig(parent.meta.cwd);
   const brief = readBrief(o);
   // 什么模型都没配置时沿用上一轮记录的模型，同一会话不中途换模型。
@@ -744,7 +768,7 @@ async function cmdResume(o) {
   await execute({
     cfg, model, mode: 'resume', kind, id, dir, release, cwd: parent.meta.cwd, level, effort, args,
     prompt: `${brief}\n\n${discuss ? M.discussResumeFooter : M.resumeFooter}\n`,
-    title: o.title || parent.meta.title, parent: parent.id, sessionId: parent.meta.session_id, opts: o, expectReport: true,
+    title: o.title || parent.meta.title, parent: parent.id, sessionId: parent.meta.session_id, round, opts: o, expectReport: true,
   });
 }
 
@@ -884,7 +908,7 @@ function cmdStatus(o) {
     if (m.status === 'running' && !pidAlive(m.pid)) m.status = 'interrupted';
     const end = m.ended_at ? new Date(m.ended_at) : new Date();
     const mins = ((end - new Date(m.started_at)) / 60000).toFixed(1);
-    let row = `${rid}  ${m.mode.padEnd(6)}  ${m.status.padEnd(11)}  ${m.model_shown || m.model || '-'}  ${(m.level ? `${m.level}/${m.effort}` : m.effort).padEnd(14)}  ${mins.padStart(6)}min  ${m.group != null ? M.statusGroup(m.group) : ''}${m.title || ''}  @ ${m.cwd}`;
+    let row = `${rid}  ${m.mode.padEnd(6)}  ${m.status.padEnd(11)}  ${m.model_shown || m.model || '-'}  ${(m.level ? `${m.level}/${m.effort}` : m.effort).padEnd(14)}  ${mins.padStart(6)}min  ${m.group != null ? M.statusGroup(m.group) : ''}${m.round ? M.statusRound(m.round) : ''}${m.title || ''}  @ ${m.cwd}`;
     if (m.status === 'running') {
       const a = describeActivity(dir);
       const last = codexSessionStats(m.session_id, m.started_at)?.last_request;

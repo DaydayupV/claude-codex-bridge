@@ -6,13 +6,16 @@ const zh = {
 
   // ---------- 配置 ----------
   configBadJson: (file, err) => `配置文件不是合法 JSON：${file}（${err}）`,
-  starterCreated: (file, model, complexModel) => `首次使用，已生成配置文件 ${file}（默认模型 ${model}，复杂任务用 ${complexModel}），可按需修改`,
+  starterCreated: (file, model, complexModel) => `首次使用，已生成配置文件 ${file}：simple 和 normal 的执行任务由 Claude 自己做，复杂的执行任务用 ${model}，复杂的审查和讨论用 ${complexModel}，可按需修改`,
   starterFailed: (file, err) => `无法生成配置文件 ${file}（${err}），本次按内置默认值运行`,
   projectIgnored: (keys) => `项目配置里的 ${keys} 只能写在用户配置中，已忽略`,
 
   // ---------- 参数 ----------
   usage: '用法：codex-run.mjs <run|discuss|resume|review|status|watch|config> [选项]，run / resume / discuss / review 支持 [--track <路径>]...，run / resume / discuss 支持 [--group <组名>] [--scope <路径>]...，status / watch 支持 [--group <组名>]，详见文件头部注释',
   badMaxParallel: 'max_parallel 必须是不小于 1 的整数（在 ~/.claude/codex-bridge.json 里设置）',
+  badDiscussMaxRounds: 'discuss_max_rounds 必须是不小于 1 的整数（在 ~/.claude/codex-bridge.json 里设置）',
+  discussRoundsExceeded: (root, done, max) => `讨论 ${root} 已经完成 ${done} 轮，达到上限 ${max}（配置项 discuss_max_rounds）。请根据已有结果裁决；确实需要再讨论，调大 ~/.claude/codex-bridge.json 里的 discuss_max_rounds`,
+  statusRound: (n) => `［第 ${n} 轮］`,
   groupNeedsScope: '用 --group 派活时必须用 --scope 写明允许改动的路径（可以给多次），用来检查同组任务的范围是否重叠',
   groupFull: (group, n, max) => `任务组 ${group} 里已有 ${n} 个任务在运行，达到并发上限 ${max}。等其中一个结束再派，或者调大 ~/.claude/codex-bridge.json 里的 max_parallel`,
   scopeOverlap: (group, other, paths) => `和任务组 ${group} 里正在运行的任务 ${other} 写入范围重叠：${paths.join('、')}。同组任务写入的文件不能重叠，请重新划分范围`,
@@ -140,13 +143,16 @@ const en = {
 
   // ---------- config ----------
   configBadJson: (file, err) => `Config file is not valid JSON: ${file} (${err})`,
-  starterCreated: (file, model, complexModel) => `First run: created config file ${file} (default model ${model}, ${complexModel} for complex tasks). Edit it as needed`,
+  starterCreated: (file, model, complexModel) => `First run: created config file ${file}: simple and normal hands-on tasks are done by Claude itself, complex ones use ${model}, and complex reviews and discussions use ${complexModel}. Edit it as needed`,
   starterFailed: (file, err) => `Could not create config file ${file} (${err}); using built-in defaults for this run`,
   projectIgnored: (keys) => `${keys} can only be set in the user config; ignored in the project config`,
 
   // ---------- arguments ----------
   usage: 'Usage: codex-run.mjs <run|discuss|resume|review|status|watch|config> [options]; run / resume / discuss / review support [--track <path>]...; run / resume / discuss support [--group <name>] [--scope <path>]...; status / watch support [--group <name>]; see the comment at the top of the file',
   badMaxParallel: 'max_parallel must be a whole number of at least 1 (set it in ~/.claude/codex-bridge.json)',
+  badDiscussMaxRounds: 'discuss_max_rounds must be a whole number of at least 1 (set it in ~/.claude/codex-bridge.json)',
+  discussRoundsExceeded: (root, done, max) => `Discussion ${root} has already had ${done} rounds, the limit of ${max} (the discuss_max_rounds setting). Rule on the results you have; if another round is really needed, raise discuss_max_rounds in ~/.claude/codex-bridge.json`,
+  statusRound: (n) => `[round ${n}] `,
   groupNeedsScope: 'When handing off with --group, give the paths the task may change with --scope (can be repeated), so overlapping scopes in the group can be caught',
   groupFull: (group, n, max) => `Group ${group} already has ${n} runs in progress, the parallel limit of ${max}. Wait for one to finish, or raise max_parallel in ~/.claude/codex-bridge.json`,
   scopeOverlap: (group, other, paths) => `The write scope overlaps with run ${other} in progress in group ${group}: ${paths.join(', ')}. Runs in the same group must not write the same files; split the scope again`,

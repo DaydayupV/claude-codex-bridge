@@ -11,7 +11,7 @@ The idea is a split of roles: Claude does the planning, key decisions, design an
 | Command | What it does |
 |---|---|
 | `/codex-bridge-en:rescue <task>` | Hands a task to Codex. When it finishes, Claude reviews the diff, runs it to verify, and sends it back for rework if needed |
-| `/codex-bridge-en:discuss <topic>` | Discusses a complex design with Codex: up to 3 rounds of critiquing each other's proposals, then Claude rules on each point and writes up a decision record |
+| `/codex-bridge-en:discuss <topic>` | Discusses a complex design with Codex: rounds of critiquing each other's proposals (the limit is configurable, 2 by default), then Claude rules on each point and writes up a decision record |
 | `/codex-bridge-en:review` | Has Codex review uncommitted changes, a branch or a commit. Claude checks each finding and filters out false positives |
 | `/codex-bridge-en:status` | Lists recent Codex runs, or shows the details of one, with each run's token use, the size of its latest request and how much of the Codex quota is used |
 | `/codex-bridge-en:watch` | Shows what Codex is doing, live. The default view is concise (what Codex says, folded commands, file changes, the result); add `--verbose` for every detail |
@@ -41,7 +41,7 @@ Then run `/codex-bridge-en:config` to see the settings in effect.
 
 ## Configuration
 
-On first use, the plugin creates a user config at `~/.claude/codex-bridge.json` containing the example from "Task levels, models and reasoning effort" below: `gpt-6.1-sol` by default and `gpt-6-astra` for complex tasks. It doesn't set the sandbox or approval policy; those still come from Codex's own `~/.codex/config.toml`.
+On first use, the plugin creates a user config at `~/.claude/codex-bridge.json` containing the example from "Task levels, models and reasoning effort" below: Claude does simple and normal hands-on tasks itself, complex ones go to Codex with `gpt-6.1-sol`, and complex reviews and discussions use `gpt-6-astra`. It doesn't set the sandbox or approval policy; those still come from Codex's own `~/.codex/config.toml`.
 
 To change things, edit that file, or tell Claude something like "use `/codex-bridge-en:config` to switch complex tasks to ultra".
 
@@ -60,9 +60,9 @@ Claude only decides which level a task is: `simple`, `normal` or `complex`. You 
   "model": "gpt-6.1-sol",
   "levels": {
     "run": {
-      "simple":  { "model": null, "effort": "medium" },
-      "normal":  { "model": null, "effort": "high" },
-      "complex": { "model": "gpt-6-astra", "effort": "max" }
+      "simple":  "claude",
+      "normal":  "claude",
+      "complex": { "model": null, "effort": "max" }
     },
     "review": {
       "simple":  { "model": null, "effort": "medium" },
@@ -70,8 +70,8 @@ Claude only decides which level a task is: `simple`, `normal` or `complex`. You 
       "complex": { "model": "gpt-6-astra", "effort": "max" }
     },
     "discuss": {
-      "simple":  { "model": null, "effort": "high" },
-      "normal":  { "model": null, "effort": "max" },
+      "simple":  { "model": null, "effort": "medium" },
+      "normal":  { "model": null, "effort": "high" },
       "complex": { "model": "gpt-6-astra", "effort": "max" }
     }
   }
@@ -90,13 +90,14 @@ Claude only decides which level a task is: `simple`, `normal` or `complex`. You 
 |---|---|---|
 | `auto_dispatch` | `true`: Claude hands suitable tasks to Codex on its own. `false`: Claude suggests it first and waits for your OK | `true` |
 | `watch` | `auto`: open the live view after each handoff. `off`: don't open it | `auto` |
-| `max_parallel` | When a big task is split to run in parallel, how many Codex runs in one group may run at once. More parts means a shorter wait but more tokens in total; `1` turns parallel runs off | `3` |
+| `max_parallel` | When a big task is split to run in parallel, how many Codex runs in one group may run at once. More parts means a shorter wait but more tokens in total; `1` turns parallel runs off | `4` |
+| `discuss_max_rounds` | How many rounds one discussion may have (round 1 plus later resumes). Once reached, the script refuses further resumes and Claude rules on what it has | `2` |
 | `model` | Model for levels that don't set their own | `null` (use Codex config) |
-| `levels` | See above | All models `null`; effort medium / high / max for run and review, high / max / max for discuss |
+| `levels` | See above | run: `"claude"` for simple and normal, max for complex; review and discuss: medium / high / max; all models `null` |
 | `sandbox` | Sandbox for each of `run` / `discuss` / `review`: `read-only`, `workspace-write` or `danger-full-access` | All `null` (use Codex config) |
 | `approval` | Codex approval policy, e.g. `never` | `null` (use Codex config) |
-| `timeout_min` | Total time limit per run, in minutes | `240` |
-| `stall_min` | Stop a run after this many minutes with no activity and no command running; `0` turns it off | `20` |
+| `timeout_min` | Total time limit per run, in minutes | `480` |
+| `stall_min` | Stop a run after this many minutes with no activity and no command running; `0` turns it off | `40` |
 | `codex_bin` | Path to the codex executable or `codex.js` (or set `CODEX_BIN`) | Found automatically |
 | `runs_dir` | Where run records go (or set `CODEX_RUNS_DIR`) | `~/.claude/codex-runs` |
 

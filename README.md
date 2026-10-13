@@ -11,7 +11,7 @@
 | 命令 | 作用 |
 |---|---|
 | `/codex-bridge:rescue <任务>` | 把一个执行任务派给 Codex，完成后 Claude 审查改动、实际运行验证，不合格就返工 |
-| `/codex-bridge:discuss <议题>` | 就复杂的方案和 Codex 讨论，最多 3 轮交叉挑错，由 Claude 逐条裁决，最后给出决策记录 |
+| `/codex-bridge:discuss <议题>` | 就复杂的方案和 Codex 讨论，交叉挑错（轮数上限可配置，默认 2 轮），由 Claude 逐条裁决，最后给出决策记录 |
 | `/codex-bridge:review` | 让 Codex 审查未提交的改动、某个分支或某次提交，Claude 逐条核实，排除误报 |
 | `/codex-bridge:status` | 查看最近的 Codex 任务，或某次任务的详细结果。会列出每次任务的 token 消耗、最近一次请求的用量和 Codex 额度已用比例 |
 | `/codex-bridge:watch` | 实时查看 Codex 正在做什么。默认简洁显示：Codex 说的话、折叠后的命令、文件改动和结果；加 `--verbose` 看全部细节 |
@@ -41,7 +41,7 @@
 
 ## 配置
 
-第一次使用时，插件会自动生成用户配置 `~/.claude/codex-bridge.json`，内容就是下文"任务等级、模型和推理强度"里的示例：默认用 `gpt-6.1-sol`，复杂任务用 `gpt-6-astra`。沙箱和审批不在里面设置，沿用 Codex 自己的 `~/.codex/config.toml`。
+第一次使用时，插件会自动生成用户配置 `~/.claude/codex-bridge.json`，内容就是下文"任务等级、模型和推理强度"里的示例：simple 和 normal 的执行任务由 Claude 自己做，复杂的执行任务派给 Codex 用 `gpt-6.1-sol`，复杂的审查和讨论用 `gpt-6-astra`。沙箱和审批不在里面设置，沿用 Codex 自己的 `~/.codex/config.toml`。
 
 想调整时，直接编辑这个文件，或者在 Claude 里说"用 `/codex-bridge:config` 把复杂任务改成 ultra"。
 
@@ -60,9 +60,9 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
   "model": "gpt-6.1-sol",
   "levels": {
     "run": {
-      "simple":  { "model": null, "effort": "medium" },
-      "normal":  { "model": null, "effort": "high" },
-      "complex": { "model": "gpt-6-astra", "effort": "max" }
+      "simple":  "claude",
+      "normal":  "claude",
+      "complex": { "model": null, "effort": "max" }
     },
     "review": {
       "simple":  { "model": null, "effort": "medium" },
@@ -70,8 +70,8 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
       "complex": { "model": "gpt-6-astra", "effort": "max" }
     },
     "discuss": {
-      "simple":  { "model": null, "effort": "high" },
-      "normal":  { "model": null, "effort": "max" },
+      "simple":  { "model": null, "effort": "medium" },
+      "normal":  { "model": null, "effort": "high" },
       "complex": { "model": "gpt-6-astra", "effort": "max" }
     }
   }
@@ -90,13 +90,14 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 |---|---|---|
 | `auto_dispatch` | `true`：符合条件的任务由 Claude 主动派给 Codex；`false`：Claude 先提议，你同意后再派 | `true` |
 | `watch` | `auto`：派活后自动打开实时查看；`off`：不主动打开 | `auto` |
-| `max_parallel` | 一个大任务拆开并发时，同一组最多同时运行几个 Codex 任务。拆得越多等得越短，但总 token 更多；设成 `1` 就不并发 | `3` |
+| `max_parallel` | 一个大任务拆开并发时，同一组最多同时运行几个 Codex 任务。拆得越多等得越短，但总 token 更多；设成 `1` 就不并发 | `4` |
+| `discuss_max_rounds` | 一场讨论最多几轮（第 1 轮加上之后的续接）。达到上限后脚本拒绝再续接，Claude 按已有结果裁决 | `2` |
 | `model` | 各等级没单独写模型时用的模型 | `null`，沿用 Codex 配置 |
-| `levels` | 见上文 | 模型都是 `null`；推理强度 run 和 review 为 medium / high / max，discuss 为 high / max / max |
+| `levels` | 见上文 | run 的 simple、normal 为 `"claude"`，complex 为 max；review 和 discuss 为 medium / high / max；模型都是 `null` |
 | `sandbox` | `run` / `discuss` / `review` 各自的沙箱：`read-only`、`workspace-write`、`danger-full-access` | 都是 `null`，沿用 Codex 配置 |
 | `approval` | Codex 的审批策略，比如 `never` | `null`，沿用 Codex 配置 |
-| `timeout_min` | 单次任务的总超时（分钟） | `240` |
-| `stall_min` | 连续多少分钟没有任何活动、也没有命令在执行，就判定为卡死并结束；`0` 表示关闭 | `20` |
+| `timeout_min` | 单次任务的总超时（分钟） | `480` |
+| `stall_min` | 连续多少分钟没有任何活动、也没有命令在执行，就判定为卡死并结束；`0` 表示关闭 | `40` |
 | `codex_bin` | codex 可执行文件或 `codex.js` 的路径（也可以用环境变量 `CODEX_BIN`） | 自动查找 |
 | `runs_dir` | 运行记录目录（也可以用环境变量 `CODEX_RUNS_DIR`） | `~/.claude/codex-runs` |
 

@@ -22,7 +22,7 @@ The system prompt's rule "don't start subagents unless the user explicitly asks"
 - **Hand off to Codex**: the rest of the hands-on work. Codex is careful and good for grind work, but weak at design and front-end polish, so don't hand off anything visual.
 - **Threshold for handing off**: hand off only larger hands-on work, or work that needs long-running commands or repeated debugging. Claude does these itself: tasks expected to change fewer than about 100 lines with a clear approach, such as a small single-file feature, a small script, filling in code from an existing pattern, or a small fix whose cause is known. Handing these off costs more in handoff and checking than doing them, and Codex tends to make simple tasks too heavy.
 - **Levels left to Claude**: for any level written as `"claude"` under `levels.run` in the config, Claude does all hands-on tasks of that level itself (see `effective.levels.run` in the `config` output). The script also refuses to hand off tasks at that level. If the user explicitly wants Codex to do it, add `--model <model>`; the effort then uses the built-in default.
-- The thresholds and round counts in this skill (handoff threshold, review size, at most 3 discussion rounds, 1 rework) are defaults. If the preference files say otherwise, follow them.
+- The thresholds in this skill (handoff threshold, review size, 1 rework) are defaults. If the preference files say otherwise, follow them. The limit on discussion rounds comes from the `discuss_max_rounds` setting (2 by default), and the script refuses resumes beyond it.
 
 ### Claude owns all text meant for people
 Codex's writing is weak: piles of jargon, stiff phrasing, roundabout sentences that readers struggle with. Claude is responsible for any text meant to be read by people:
@@ -147,7 +147,7 @@ Most of the time a Codex run takes goes into the model thinking, and only a smal
 
 ### When to split
 Split only when **all** of these hold; otherwise hand it off as one task:
-1. It splits into 2 or more parts, no more than `max_parallel` in the config (`effective.max_parallel` in the `config` output, 3 by default); the parts **write to no shared files** and **don't depend on each other's output**.
+1. It splits into 2 or more parts, no more than `max_parallel` in the config (`effective.max_parallel` in the `config` output, 4 by default); the parts **write to no shared files** and **don't depend on each other's output**.
 2. Claude can settle the interfaces between the parts (function signatures, data formats, file paths) before handing off, and write them into every brief. If they can't be settled, don't split.
 3. Each part is expected to take more than 10 minutes. For small tasks, the fixed overhead outweighs the time saved.
 
@@ -203,7 +203,7 @@ Before research conclusions go into long-term records, reports or docs, or are h
 ## Rework and failures
 - If it isn't good enough, use `resume` for one rework, with a brief that says exactly what's wrong and how to fix it. If the cause was underestimating the task, move up one level for the rework (simple → normal → complex); otherwise keep the same level.
 - If it still isn't good enough after the rework, or Codex times out or errors, Claude takes over and finishes it, and tells the user why.
-- A `stalled` result (stuck: no activity for over 20 minutes and no command running, so the script stopped it) is usually a temporary network or service problem. `resume` once to continue from where it stopped; if it stalls again, Claude takes over. `--stall <minutes>` changes the threshold and `--stall 0` turns it off. The total time limit defaults to 240 minutes; change it with `--timeout`.
+- A `stalled` result (stuck: no activity for over `stall_min` minutes and no command running, so the script stopped it; 40 minutes by default) is usually a temporary network or service problem. `resume` once to continue from where it stopped; if it stalls again, Claude takes over. `--stall <minutes>` changes the threshold and `--stall 0` turns it off. The total time limit defaults to 480 minutes; change it with `--timeout`.
 - If you suspect a run is stuck, run `status` and look at "last activity X min ago" and the current step instead of guessing. Long gaps between events are normal while a command is running (such as a big computation). `interrupted` means the dispatcher process is gone (for example the session or app was closed); Claude won't get a completion notice, so check `status --run <run_id>` by hand and decide whether to resume or start over.
 - When `report.status` is `blocked`, read `report.decision_requests` and go through each one: if it's within the user's existing permission and Claude can decide, write down the decision and continue with resume; if the user needs to decide, give them the question, the options and Claude's recommendation. A resume to answer questions doesn't count as a rework.
 - A `quota_exhausted` status means the Codex quota is used up. Don't retry, and don't switch to Claude redoing the work on your own. Tell the user the quota is used up and when it should reset (`quota_resets_at`), and let them decide whether to resume once it resets or have Claude take over.
@@ -222,10 +222,10 @@ Start one directly when the user uses `/codex-bridge-en:discuss`. Starting one o
 
 Don't start one for ordinary implementation details, tasks with a clear plan, or decisions the user has already made. When you start one on your own, tell the user in one sentence: "I'll talk this through with Codex first."
 
-### Process (at most 3 rounds)
+### Process (round limit set by `discuss_max_rounds`, 2 by default)
 1. **Round 1, independent proposals**: start it with `discuss`. The topic brief only gives the background, the problem to solve, constraints, known facts, relevant code locations, and the specific questions to answer. **Don't include Claude's own leaning**, so Codex doesn't just go along with it. Before reading Codex's result, Claude writes its own proposal to a file (scratchpad directory or system temp directory), so it isn't swayed the other way either.
 2. **Round 2, critique each other**: only when the two proposals really disagree, or Codex's conclusions include something Claude hasn't checked that would change the outcome; if the two broadly agree, go straight to deciding. Continue with `resume --run <round 1 run_id>`. Send Claude's proposal and ask Codex to find its weakest points and compare it with its own. Claude also writes up its challenges to Codex's proposal.
-3. **Round 3 (optional)**: only when a key disagreement is unresolved and another round could really change the conclusion.
+3. **Round 3 and later (optional)**: only when a key disagreement is unresolved, another round could really change the conclusion, and `discuss_max_rounds` isn't reached. If the script refuses the resume, rule on the results you have.
 4. **Claude decides**: accept or reject each of Codex's points with reasons, and settle the final plan.
 
 - Discussions usually use `complex`; use `normal` when the topic isn't especially complex. Later rounds keep round 1's level.
