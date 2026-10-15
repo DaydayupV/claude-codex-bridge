@@ -21,7 +21,7 @@ const readJson = (file) => { try { return JSON.parse(readText(file)); } catch { 
 const REMINDERS = {
   zh: {
     intro: (auto) => `codex-bridge 插件已启用。下面两种情况，先加载 \`codex-bridge:dispatch\` skill，再按其中的规则判断：
-1. 动手做执行类编码工作之前（实现功能、批量修改、写脚本、重构、修 bug、性能优化等，包括用户同意你开始改代码的那一刻）：按 skill 的"分工"判断由谁做：除了只由 Claude 做的工作，都先定等级，再看配置把这一级交给谁。${auto ? '要派出的直接派（用户已开启 dispatch.auto）。' : '要派出的先向用户提议，同意后再派（dispatch.auto 已关闭）。'}
+1. 动手做执行类编码工作之前（实现功能、批量修改、写脚本、重构、修 bug、性能优化等，包括用户同意你开始改代码的那一刻），以及要生成或编辑图片（照片、插画、贴图等位图）时：按 skill 的"分工"判断由谁做：生成或编辑位图一律交给 Codex；只由 Claude 做的工作不派；其余都先定等级，再看配置把这一级交给谁。${auto ? '要派出的直接派（用户已开启 dispatch.auto）。' : '要派出的先向用户提议，同意后再派（dispatch.auto 已关闭）。'}
 2. 给出方案建议、研究方向、设计选型或计划之前，包括用户只是来要建议的时候：判断是否先和 Codex 讨论（discuss）；用户明确要求和 Codex 或其他模型讨论时，直接发起。
 项目自带的领域 skill 照常使用，两者不冲突：领域 skill 管怎么做，dispatch skill 管由谁来做、要不要先讨论、做完怎么验收和审查。调用 Codex 只能通过该 skill 的脚本。`,
     prefs: (file, text) => `用户偏好文件 ${file}（与 skill 冲突时以偏好文件为准）：\n${text}`,
@@ -34,7 +34,7 @@ const REMINDERS = {
   },
   en: {
     intro: (auto) => `The codex-bridge-en plugin is enabled. In these two cases, load the \`codex-bridge-en:dispatch\` skill first and follow its rules:
-1. Before starting hands-on coding work (implementing features, bulk changes, scripts, refactoring, bug fixes, performance work, and so on, including the moment the user agrees you can start changing code): decide who does it per "Who does what" in the skill: apart from work only Claude does, pick a level first, then see who the config gives that level to. ${auto ? 'Hand off what should be handed off directly (the user has dispatch.auto on).' : 'Suggest handing it off to the user first, and do so once they agree (dispatch.auto is off).'}
+1. Before starting hands-on coding work (implementing features, bulk changes, scripts, refactoring, bug fixes, performance work, and so on, including the moment the user agrees you can start changing code), and when an image needs to be generated or edited (photos, illustrations, textures and other bitmaps): decide who does it per "Who does what" in the skill: generating or editing bitmaps always goes to Codex; work only Claude does stays with Claude; for everything else, pick a level first, then see who the config gives that level to. ${auto ? 'Hand off what should be handed off directly (the user has dispatch.auto on).' : 'Suggest handing it off to the user first, and do so once they agree (dispatch.auto is off).'}
 2. Before giving design suggestions, research directions, technology choices or plans, including when the user only asks for advice: decide whether to discuss it with Codex first (discuss); when the user explicitly asks to discuss it with Codex or other models, start one.
 Keep using the project's own domain skills as usual; they don't conflict: domain skills say how to do the work, the dispatch skill decides who does it, whether to discuss first, and how it gets checked and reviewed. Codex may only be called through that skill's script.`,
     prefs: (file, text) => `User preference file ${file} (wins over the skill where they conflict):\n${text}`,

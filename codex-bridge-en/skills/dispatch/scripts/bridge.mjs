@@ -676,12 +676,22 @@ function makeTracker(runDir, cwd, track) {
 const RECONNECT = /^Reconnecting\.\.\.\s*(\d+)\/(\d+)/;
 const isReconnect = (msg) => RECONNECT.test(String(msg ?? ''));
 
-function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, onSession }) {
+// Codex 内置 image_gen 出的图存在 <CODEX_HOME>/generated_images/<会话 id>/ 下，按生成先后返回完整路径。
+function generatedImages(sessionId) {
+  if (!sessionId) return [];
+  const dir = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'generated_images', sessionId);
+  try {
+    return fs.readdirSync(dir).map((f) => path.join(dir, f))
+      .map((file) => [file, fs.statSync(file).mtimeMs]).sort((a, b) => a[1] - b[1]).map(([file]) => file);
+  } catch { return []; }
+}
+
+function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, sessionId, onSession }) {
   return new Promise((resolve) => {
     const { file, pre } = codexCommand(agent);
     const events = fs.createWriteStream(path.join(runDir, 'events.jsonl'));
     const errLog = fs.createWriteStream(path.join(runDir, 'stderr.log'));
-    const out = { code: null, sessionId: null, usage: null, errors: [], warnings: [], fileChanges: new Set(), quotaExhausted: false, timedOut: false, stalled: false, cancelled: false, commands: 0 };
+    const out = { code: null, sessionId: null, usage: null, errors: [], warnings: [], fileChanges: new Set(), images: [], quotaExhausted: false, timedOut: false, stalled: false, cancelled: false, commands: 0 };
     const runningCommands = new Set();
     let lastEventAt = Date.now();
     const child = spawn(file, [...pre, ...args], {
@@ -746,13 +756,28 @@ function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, onSe
       clearInterval(cancelCheck);
       killTree(child.pid);
     }, 1000);
+    // exec --json 里没有出图事件：定时查看图片目录，新图记成 image.generated 事件给 watch 显示。
+    // 续接时目录里已有的是上一轮的图，不算。
+    const seenImages = new Set(generatedImages(sessionId));
+    const scanImages = () => {
+      for (const image of generatedImages(out.sessionId || sessionId)) {
+        if (seenImages.has(image)) continue;
+        seenImages.add(image);
+        out.images.push(image);
+        lastEventAt = Date.now();
+        events.write(`${JSON.stringify({ type: 'image.generated', path: image, ts: new Date().toISOString() })}\n`);
+      }
+    };
+    const imageCheck = setInterval(scanImages, 2000);
     const finish = (code) => {
       clearTimeout(timer);
       clearInterval(stallCheck);
       clearInterval(cancelCheck);
+      clearInterval(imageCheck);
       process.removeListener('SIGINT', onSignal);
       process.removeListener('SIGTERM', onSignal);
       if (buf.trim()) record(buf);
+      scanImages();
       events.end();
       errLog.end();
       out.code = code;
@@ -849,6 +874,7 @@ async function execute(ctx) {
     agent, args, cwd, prompt, runDir: dir,
     timeoutMin: Number(opts.timeout) || cfg.dispatch.timeout_min,
     stallMin: Number(opts.stall ?? cfg.dispatch.stall_min),
+    sessionId: ctx.sessionId,
     onSession: (sid) => { meta.session_id = sid; writeMeta(); },
   });
 
@@ -939,6 +965,7 @@ async function execute(ctx) {
     changes: changes.available
       ? { ...changes, files: changes.files.slice(0, 300), files_total: changes.files.length, note: M.trackNote }
       : changes,
+    generated_images: r.images.length ? r.images : undefined, // 只列这一轮生成的
     run_dir: dir,
   };
   fs.writeFileSync(path.join(dir, 'result.json'), JSON.stringify(result, null, 2));
@@ -1356,6 +1383,7 @@ function describeActivity(dir) {
   } else if (running.size) step = M.stepCommand(clip(oneLine(plainCommand([...running.values()].pop())), 160));
   else if (last?.item?.type === 'agent_message') step = M.stepSaid(clip(oneLine(last.item.text), 160));
   else if (last?.item?.type === 'file_change') step = M.stepFileChanged;
+  else if (last?.type === 'image.generated') step = M.stepImageGenerated;
   else if (last?.type === 'item.completed' && last.item?.type === 'command_execution') step = M.stepCommandDone;
   else step = last ? M.stepLastEvent(`${last.type}${last.item?.type ? `/${last.item.type}` : ''}`) : M.noEvents;
   return { idle_min: Number(((Date.now() - st.mtimeMs) / 60000).toFixed(1)), step };
@@ -1635,6 +1663,8 @@ function verboseRenderer(meta, rel) {
       o('⚠', re ? M.watchReconnect(re[1], re[2]) : clip(oneLine(ev.message), 300));
     } else if (ev.type === 'turn.completed' && ev.usage) {
       o('Σ', M.watchTokens(ev.usage));
+    } else if (ev.type === 'image.generated') {
+      o('▣', M.watchImage(ev.path));
     } else if (ev.type === 'item.started' && it.type === 'command_execution') {
       o('▶', clip(oneLine(plainCommand(it.command)), 240));
     } else if (ev.type === 'item.completed') {
@@ -1915,6 +1945,9 @@ function timelineRenderer(meta, rel, { screen: useScreen = false, dir = null } =
       const re = RECONNECT.exec(msg);
       if (re) say(ev.ts, C.yellow('⚠'), M.watchReconnect(re[1], re[2]), C.yellow, 1);
       else say(ev.ts, C.red('✗'), oneLine(msg), C.red, 3);
+    } else if (ev.type === 'image.generated') {
+      flushFolded();
+      sub(`  ▣ ${M.watchImage(path.basename(ev.path))}`, C.green);
     } else if (ev.type === 'item.started' && it.type === 'command_execution') {
       const text = oneLine(plainCommand(it.command));
       commands.set(it.id, text);
@@ -2062,7 +2095,8 @@ function createFeed(run) {
       const msg = oneLine(ev.message || ev.error?.message || '');
       const re = RECONNECT.exec(msg);
       push(re ? `⚠ ${M.watchReconnect(re[1], re[2])}` : `✗ ${msg}`, re ? 'yellow' : 'red');
-    } else if (ev.type === 'item.started' && it.type === 'command_execution') push(`$ ${oneLine(plainCommand(it.command))}`, 'dim');
+    } else if (ev.type === 'image.generated') push(`▣ ${M.watchImage(path.basename(ev.path))}`, 'green');
+    else if (ev.type === 'item.started' && it.type === 'command_execution') push(`$ ${oneLine(plainCommand(it.command))}`, 'dim');
     else if (ev.type === 'item.completed') {
       if (it.type === 'agent_message') {
         const t = it.text.trim();
