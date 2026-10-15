@@ -632,6 +632,10 @@ function makeTracker(runDir, cwd, track) {
 
 // ---------- 执行 ----------
 
+// Codex 断线后自动重连时会发 error 事件（"Reconnecting... 1/5 …"），这只是临时状况，不算失败。
+const RECONNECT = /^Reconnecting\.\.\.\s*(\d+)\/(\d+)/;
+const isReconnect = (msg) => RECONNECT.test(String(msg ?? ''));
+
 function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, onSession }) {
   return new Promise((resolve) => {
     const { file, pre } = codexCommand(agent);
@@ -651,7 +655,7 @@ function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, onSe
     let buf = '';
     const handle = (line) => {
       let ev;
-      try { ev = JSON.parse(line); } catch { return; }
+      try { ev = JSON.parse(line); } catch { return null; }
       lastEventAt = Date.now();
       if (ev.item?.type === 'file_change') {
         for (const change of ev.item.changes || []) out.fileChanges.add(change.path);
@@ -663,16 +667,21 @@ function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, onSe
       if (ev.type === 'thread.started') { out.sessionId = ev.thread_id; onSession?.(ev.thread_id); }
       else if (ev.type === 'turn.completed') out.usage = ev.usage;
       else if (ev.type === 'turn.failed') out.errors.push(ev.error?.message || JSON.stringify(ev));
-      else if (ev.type === 'error') out.errors.push(ev.message || JSON.stringify(ev));
+      else if (ev.type === 'error') (isReconnect(ev.message) ? out.warnings : out.errors).push(ev.message || JSON.stringify(ev));
       else if (ev.type === 'item.completed' && ev.item?.type === 'error') out.warnings.push(ev.item.message);
       else if (ev.type === 'item.completed' && ev.item?.type === 'command_execution') out.commands++;
+      return ev;
+    };
+    // 每个事件记下收到的时间，watch 回放时也能显示时间线
+    const record = (line) => {
+      const ev = handle(line);
+      events.write(ev ? `${JSON.stringify({ ...ev, ts: new Date().toISOString() })}\n` : `${line}\n`);
     };
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
-      events.write(chunk);
       buf += chunk;
       let i;
-      while ((i = buf.indexOf('\n')) >= 0) { handle(buf.slice(0, i)); buf = buf.slice(i + 1); }
+      while ((i = buf.indexOf('\n')) >= 0) { record(buf.slice(0, i)); buf = buf.slice(i + 1); }
     });
     child.stderr.pipe(errLog);
     child.stderr.setEncoding('utf8');
@@ -695,7 +704,7 @@ function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, onSe
       clearInterval(stallCheck);
       process.removeListener('SIGINT', onSignal);
       process.removeListener('SIGTERM', onSignal);
-      if (buf.trim()) handle(buf);
+      if (buf.trim()) record(buf);
       events.end();
       errLog.end();
       out.code = code;
@@ -1432,6 +1441,8 @@ function fitWidth(s, width) {
 }
 
 const NO_LINE_START = /[、，。．！？：；）】』」》〉’”…—,.!?:;)\]}%]/;
+const NO_LINE_END = /[（【『「《〈‘“([{]/;
+const WORD = /[A-Za-z0-9_\-./\\]/; // 英文单词、文件名和路径，折行时不拆开
 
 function wrapWidth(s, width) {
   const lines = [];
@@ -1440,17 +1451,29 @@ function wrapWidth(s, width) {
     let w = 0;
     for (const ch of para) {
       if (w + charWidth(ch) > width) {
-        // 逗号、句号这类标点不放在行首：把上一行末尾的字（连同它后面的标点）一起带到下一行。
         const chars = [...line];
-        let carry = '';
+        let k = chars.length;
         if (NO_LINE_START.test(ch)) {
-          let k = chars.length;
+          // 逗号、句号这类标点不放在行首：把上一行末尾的字（连同它后面的标点）一起带到下一行。
           while (k > 0 && NO_LINE_START.test(chars[k - 1])) k--;
-          if (k > 1) carry = chars.splice(k - 1).join('');
+          k = k > 1 ? k - 1 : chars.length;
+          if (WORD.test(chars[k] || '')) { // 带走的是英文单词的末尾时，整个单词一起带走
+            let j = k;
+            while (j > 0 && WORD.test(chars[j - 1])) j--;
+            if (j > 0 && k - j < Math.min(40, width / 2)) k = j;
+          }
+        } else if (WORD.test(ch) && WORD.test(chars[k - 1] || '')) {
+          // 英文单词不拆开，整个带到下一行（超过半行的长单词照常截断）
+          let j = k;
+          while (j > 0 && WORD.test(chars[j - 1])) j--;
+          if (j > 0 && k - j < Math.min(40, width / 2)) k = j;
         }
-        lines.push(chars.join(''));
+        while (k > 1 && NO_LINE_END.test(chars[k - 1])) k--; // 开引号、开括号不留在行尾
+        const carry = chars.splice(k).join('');
+        lines.push(chars.join('').trimEnd());
         line = carry;
         w = textWidth(carry);
+        if (ch === ' ' && !line) continue; // 行首不留空格
       }
       line += ch;
       w += charWidth(ch);
@@ -1470,6 +1493,17 @@ const whoOf = (m) => M.who(modelOf(m), m?.agent_type === 'openai-compatible' ? M
 // 讨论和审查本来只读，只有真的改了文件才显示改动数（那是越界，要提醒）。
 const changedFor = (r, m) => (m?.kind === 'exec' || r?.changes?.codex_total ? changedText(r?.changes) : null);
 const C = { dim: paint('2'), bold: paint('1'), red: paint('31'), green: paint('32'), yellow: paint('33'), cyan: paint('36') };
+// 实时画面里的用时写成 12:03，结束后的用时由 M.duration 写成「19 分 18 秒」
+const clock = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return `${h ? `${h}:${String(m).padStart(2, '0')}` : m}:${String(s % 60).padStart(2, '0')}`;
+};
+const hhmm = (t) => (t ? new Date(t).toTimeString().slice(0, 5) : '     ');
+// 执行顺利结束时以报告里的状态为准（完成、部分完成、等待决定……）
+const shownStatus = (status, r) => (status === 'done' ? r?.report?.status || status : status);
+// 成功的任务不再列出临时的重连提示；旧记录把它记成了错误
+const realErrors = (r, ok) => (r?.errors || []).filter((e) => !(ok && isReconnect(e)));
+const SPIN = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
 
 async function pickWatchRun(ref) {
   if (ref) return findRun(ref);
@@ -1489,169 +1523,356 @@ async function pickWatchRun(ref) {
 }
 
 // 详细模式（--verbose）：每个事件一行，带时间戳，包括思考过程、命令输出和 token 用量。
-function verboseRenderer(cwd, rel) {
+function verboseRenderer(meta, rel) {
   let live = false;
-  const out = (sym, text) => process.stdout.write(`${live ? new Date().toTimeString().slice(0, 8) : '        '} ${sym} ${text}\n`);
+  const out = (sym, text, ts) => process.stdout.write(`${ts ? new Date(ts).toTimeString().slice(0, 8) : live ? new Date().toTimeString().slice(0, 8) : '        '} ${sym} ${text}\n`);
+  const header = (id, dir) => {
+    const [first, ...rest] = M.watchHeaderLines(M.modeNames[meta.mode] || meta.mode, meta.title || id, meta.level, meta.cwd, dir);
+    process.stdout.write(`\n${C.bold(`${whoOf(meta)} · ${first}`)}\n${C.dim(rest.join('\n'))}\n\n`);
+  };
   const show = (ev) => {
     const it = ev.item || {};
-    if (ev.type === 'thread.started') out('●', M.watchSession(ev.thread_id));
-    else if (ev.type === 'turn.failed') out('✗', M.watchTurnFailed(ev.error?.message || ''));
-    else if (ev.type === 'error') out('⚠', clip(oneLine(ev.message), 300));
-    else if (ev.type === 'turn.completed' && ev.usage) {
-      out('Σ', M.watchTokens(ev.usage));
+    const o = (sym, text) => out(sym, text, ev.ts);
+    if (ev.type === 'thread.started') o('●', M.watchSession(ev.thread_id));
+    else if (ev.type === 'turn.failed') o('✗', M.watchTurnFailed(ev.error?.message || ''));
+    else if (ev.type === 'error') {
+      const re = RECONNECT.exec(ev.message || '');
+      o('⚠', re ? M.watchReconnect(re[1], re[2]) : clip(oneLine(ev.message), 300));
+    } else if (ev.type === 'turn.completed' && ev.usage) {
+      o('Σ', M.watchTokens(ev.usage));
     } else if (ev.type === 'item.started' && it.type === 'command_execution') {
-      out('▶', clip(oneLine(plainCommand(it.command)), 240));
+      o('▶', clip(oneLine(plainCommand(it.command)), 240));
     } else if (ev.type === 'item.completed') {
       if (it.type === 'agent_message') {
         const t = it.text.trim();
         let report = null;
         if (t.startsWith('{')) try { report = JSON.parse(t); } catch { /* 普通消息 */ }
-        if (report?.position) out('■', M.watchOpinion(clip(oneLine(report.position), 400)));
-        else if (report?.status) out('■', M.watchReport(report.status, clip(oneLine(report.summary), 300)));
-        else out('💬', clip(oneLine(t), 600));
+        if (report?.position) o('■', M.watchOpinion(clip(oneLine(report.position), 400)));
+        else if (report?.status) o('■', M.watchReport(report.status, clip(oneLine(report.summary), 300)));
+        else o('💬', clip(oneLine(t), 600));
       } else if (it.type === 'reasoning') {
-        out('…', clip(oneLine(it.text), 200));
+        o('…', clip(oneLine(it.text), 200));
       } else if (it.type === 'command_execution') {
         const lines = String(it.aggregated_output || '').replace(/\r/g, '').split('\n').map((x) => x.trimEnd()).filter(Boolean);
-        out(it.exit_code === 0 ? '✓' : '✗', M.watchExit(it.exit_code, lines.length ? clip(lines.slice(-3).join(' ⏎ '), 240) : ''));
+        o(it.exit_code === 0 ? '✓' : '✗', M.watchExit(it.exit_code, lines.length ? clip(lines.slice(-3).join(' ⏎ '), 240) : ''));
       } else if (it.type === 'file_change') {
-        for (const c of it.changes || []) out('✏', `${M.fileKinds[c.kind] || c.kind} ${rel(c.path)}`);
+        for (const c of it.changes || []) o('✏', `${M.fileKinds[c.kind] || c.kind} ${rel(c.path)}`);
       } else if (it.type === 'error') {
-        if (!/^Under-development features enabled/.test(it.message)) out('⚠', clip(oneLine(it.message), 300));
+        if (!/^Under-development features enabled/.test(it.message)) o('⚠', clip(oneLine(it.message), 300));
       } else if (it.type === 'web_search') {
-        out('🔎', clip(oneLine(it.query), 200));
+        if (oneLine(it.query)) o('◎', clip(oneLine(it.query), 200));
       } else if (it.type === 'todo_list') {
-        out('☐', (it.items || []).map((x) => `${x.completed ? '✔' : '·'} ${x.text}`).join('   '));
+        o('☐', (it.items || []).map((x) => `${x.completed ? '✔' : '·'} ${x.text}`).join('   '));
       } else if (it.type) {
-        out('•', it.type);
+        o('•', it.type);
       }
     }
   };
   const finish = (r, m) => {
-    if (r) out('■', M.watchFinished(r.status, r.duration_s, changedFor(r, m)));
-    else out('■', m?.status === 'running' ? M.watchInterrupted : M.watchEnded(m?.status));
-    if (r?.usage) out('Σ', M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total'));
+    if (r) out('■', M.watchFinished(M.statusName(shownStatus(r.status, r)), M.duration(r.duration_s), changedFor(r, m)), m?.ended_at);
+    else out('■', m?.status === 'running' ? M.watchInterrupted : M.watchEnded(m?.status), m?.ended_at);
+    if (r?.usage) out('Σ', M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total'), m?.ended_at);
   };
-  return { show, finish, goLive: () => { live = true; } };
+  return { header, show, finish, goLive: () => { live = true; } };
 }
 
-// 简洁模式（默认）：只显示模型说的话、执行的命令、改动的文件、计划和最终结果，失败的命令才显示输出。
-// 长段文字不手动折行，交给终端自动折行，拉动窗口时终端才能重新排版。
-function conciseRenderer(cwd, rel, speaker) {
-  const width = () => Math.max(40, (process.stdout.columns || 100) - 1);
-  // 实时跟踪时，折叠行留在最后一行原地刷新（不换行），写别的内容前先擦掉。
-  let foldLineShown = false;
-  const clearFoldLine = () => {
-    if (foldLineShown) process.stdout.write('\r\x1b[2K');
-    foldLineShown = false;
+// API 协作方的详细模式：思考和回答的原文逐段输出
+function apiVerboseRenderer(meta, rel) {
+  const base = verboseRenderer(meta, rel);
+  const show = (ev) => {
+    if (!ev.type?.startsWith('api.')) return base.show(ev);
+    const out = (text) => process.stdout.write(`${ev.ts ? new Date(ev.ts).toTimeString().slice(0, 8) : '        '} ${text}\n`);
+    if (ev.type === 'api.request') out(M.watchApiRequest(ev.model, ev.effort, ev.attempt));
+    else if (ev.type === 'api.reasoning' || ev.type === 'api.content') out(ev.text);
+    else if (ev.type === 'api.retry') out(M.watchApiRetry(ev.reason, ev.wait_s));
+    else if (ev.type === 'api.repair') out(M.watchApiRepair(M.list(ev.errors)));
+    else if (ev.type === 'api.error') out(ev.message);
   };
-  // 窗口变窄后，原地刷新的折叠行可能被终端折成两行，擦不干净；改成留下这一行，从新的一行重画。
-  process.stdout.on('resize', () => {
-    if (!foldLineShown) return;
-    process.stdout.write('\n');
-    foldLineShown = false;
-    drawFoldLine();
-  });
-  const write = (s = '') => { clearFoldLine(); process.stdout.write(`${s}\n`); };
-  let lastKind = null; // 连续的命令或文件改动挤在一起，换类型时空一行
+  return { ...base, show };
+}
+
+// 实时画面：在终端的备用屏幕里整屏重画。关闭自动换行，超出窗口的部分直接截掉，不会折到下一行把画面挤乱；
+// 每行先定位光标再写。窗口大小变化时清屏重画，停下来 0.2 秒后再补画一次：
+// Windows 的 ConPTY 调整大小后会自己重绘一遍，可能盖掉刚画好的画面。
+function liveScreen(render, { wheel = false } = {}) {
+  let active = false;
+  let timer = null;
+  const draw = () => {
+    if (!active) return;
+    const rows = process.stdout.rows || 30;
+    const lines = render(process.stdout.columns || 100, rows).slice(0, rows);
+    let out = '';
+    lines.forEach((l, i) => { out += `\x1b[${i + 1};1H\x1b[2K${l}`; });
+    if (lines.length < rows) out += `\x1b[${lines.length + 1};1H\x1b[J`;
+    process.stdout.write(out);
+  };
+  const onResize = () => {
+    process.stdout.write('\x1b[2J');
+    draw();
+    clearTimeout(timer);
+    timer = setTimeout(draw, 200);
+  };
+  return {
+    draw,
+    start() {
+      if (active) return;
+      active = true;
+      // 1049 备用屏幕，25 光标，7 自动换行，1007 让鼠标滚轮在备用屏幕里变成上下方向键
+      process.stdout.write(`\x1b[?1049h\x1b[?25l\x1b[?7l${wheel ? '\x1b[?1007h' : ''}\x1b[2J`);
+      process.stdout.on('resize', onResize);
+      draw();
+    },
+    stop() {
+      if (!active) return;
+      active = false;
+      clearTimeout(timer);
+      process.stdout.off('resize', onResize);
+      process.stdout.write(`${wheel ? '\x1b[?1007l' : ''}\x1b[?7h\x1b[?25h\x1b[?1049l`);
+    },
+  };
+}
+
+// 把一段键盘输入拆成单个按键（方向键、翻页键是 ESC 开头的一串）
+const splitKeys = (s) => s.match(/\x1b\[[0-9;]*[A-Za-z~]|\x1bO[A-Za-z]|[\s\S]/g) || [];
+
+// 简洁模式（默认）：时间线。左边一列是时间，模型说的话是节点（◆），命令、搜索、改动挂在竖线下面，
+// 失败的命令才显示输出。长段文字按宽度折行，接在竖线后面。
+// 任务还在运行时，时间线画在备用屏幕里：最后一行是状态行（用时、命令数、改动数、计划进度），
+// 窗口大小变化时整屏按新宽度重新排版，可以用方向键和翻页键往回翻；结束或退出查看时，
+// 把完整的时间线写进普通屏幕留作记录。任务已经结束时直接按当前宽度输出。
+function timelineRenderer(meta, rel, { screen: useScreen = false } = {}) {
+  const cols = () => process.stdout.columns || 100;
+  const TIME_W = 6; // "00:41 "
+  const inner = (W) => Math.max(20, W - 1 - TIME_W - 2);
+  const rail = () => `${' '.repeat(TIME_W)}${C.dim('│')} `;
+  let live = false;
+  const at = (ts) => ts || (live ? Date.now() : null); // 旧记录的事件没有时间，实时跟踪时用收到的时间
+  const node = (t, mark) => `${C.dim(hhmm(t))} ${mark} `;
+
+  // 时间线由一条条记录组成，每条按给定宽度生成若干行，同一宽度只排一次版。
+  const entries = [];
+  let screen = useScreen ? liveScreen(render, { wheel: true }) : null;
+  let lastCommand = null; // 紧挨着的上一行是哪条命令，失败时不在它下面就把命令再写一遍
+  const linesOf = (e, W) => {
+    if (e.width !== W) { e.lines = e.render(W); e.width = W; }
+    return e.lines;
+  };
+  const add = (renderEntry) => {
+    const e = { render: renderEntry, width: null, lines: null };
+    entries.push(e);
+    lastCommand = null;
+    if (!screen) for (const l of linesOf(e, cols())) process.stdout.write(`${l}\n`);
+  };
+
+  // 一个节点：第一行带时间和符号，其余行接在竖线后面；篇幅超过 maxLines 行的折叠
+  const say = (ts, mark, text, color = (s) => s, maxLines = 20) => {
+    const t = at(ts);
+    add((W) => {
+      const lines = wrapWidth(String(text).trim(), inner(W));
+      const out = lines.slice(0, maxLines).map((l, i) => (i === 0 ? node(t, mark) : rail()) + color(l));
+      if (lines.length > maxLines) out.push(rail() + C.dim(M.watchMoreLines(lines.length - maxLines)));
+      return out;
+    });
+  };
+  // 挂在竖线下的一行，超长截断
+  const sub = (text, color = C.dim) => add((W) => [rail() + color(fitWidth(text, inner(W)))]);
+
   // 连续的命令只显示前几条，其余折叠成一行；折叠里的命令失败了照样显示。
   const MAX_COMMANDS = 3;
   let shownCommands = 0;
-  const foldedCommands = new Map(); // item id → 命令文字
-  let latestFolded = '';
-  const drawFoldLine = () => {
-    if (!live || !process.stdout.isTTY || !foldedCommands.size) return;
-    clearFoldLine();
-    process.stdout.write(C.dim(`  ${fitWidth(M.watchFoldedLive(foldedCommands.size, latestFolded), width() - 3)}`));
-    foldLineShown = true;
-  };
+  const commands = new Map(); // item id → 命令文字
+  const folded = new Set(); // 折叠起来的命令 id
   const flushFolded = () => {
-    if (foldedCommands.size) write(C.dim(`  ${M.watchFoldedCommands(foldedCommands.size)}`));
-    foldedCommands.clear();
+    if (folded.size) sub(`  ${M.watchFoldedCommands(folded.size)}`);
+    folded.clear();
   };
-  const block = (kind) => {
-    if (lastKind === 'command' && kind !== 'command') flushFolded();
-    if (lastKind !== 'command' && kind === 'command') shownCommands = 0;
-    if (lastKind && (kind !== lastKind || kind === 'message')) write();
-    lastKind = kind;
-  };
-  const commandLine = (text) => C.dim(`  $ ${fitWidth(text, width() - 4)}`);
-  let live = false; // 回放已有事件时没有真实时间，只在实时跟踪时显示
-  const time = () => (live ? ` ${C.dim(new Date().toTimeString().slice(0, 5))}` : '');
-  // 按原文的换行输出，超长的行交给终端自动折行；篇幅按约 maxLines 屏幕行估算，超出的折叠。
-  const paragraph = (text, indent = '  ', maxLines = 20) => {
-    const lines = String(text).trim().replace(/\r/g, '').split('\n');
-    let budget = maxLines * Math.max(40, width() - textWidth(indent));
-    let shown = 0;
-    for (const l of lines) {
-      if (budget <= 0) break;
-      write(indent + (textWidth(l) > budget ? fitWidth(l, budget) : l));
-      budget -= Math.max(textWidth(l), 1);
-      shown++;
-    }
-    if (shown < lines.length) write(indent + C.dim(M.watchMoreLines(lines.length - shown)));
-  };
+  const newBlock = () => { flushFolded(); shownCommands = 0; };
   let lastPlan = '';
   let lastFile = '';
 
+  const header = (id, dir) => {
+    if (!screen) process.stdout.write('\n');
+    const lines = M.watchHeaderLines(M.modeNames[meta.mode] || meta.mode, meta.title || id, meta.level, meta.cwd, dir);
+    add((W) => [
+      node(meta.started_at, C.cyan('┌')) + C.bold(fitWidth(whoOf(meta), inner(W))),
+      ...lines.map((l, i) => rail() + (i ? C.dim(fitWidth(l, inner(W))) : fitWidth(l, inner(W)))),
+      rail().trimEnd(),
+    ]);
+  };
+
+  // ---- 状态行、翻看 ----
+  const started = Date.parse(meta.started_at);
+  const stats = { commands: 0, searches: 0, files: new Set(), plan: null, latest: '' };
+  const api = { req: null, chars: 0, answerChars: 0, answering: false };
+  let tick = 0;
+  let ticker = null;
+  let offset = 0; // 往回翻了多少行，0 表示跟着最新的内容
+  let lastTotal = 0;
+  let lastWidth = 0;
+  function statusLine(W) {
+    const room = W - 3;
+    const spin = C.cyan(SPIN[tick % SPIN.length]);
+    const main = `${modelOf(meta)} · ${api.req
+      ? M.watchApiLive(api.answering, clock(Date.now() - Date.parse(api.req)), (api.answering ? api.answerChars : api.chars).toLocaleString('en-US'))
+      : M.watchLive({ time: clock(Date.now() - started), commands: stats.commands, searches: stats.searches, files: stats.files.size, plan: stats.plan })}`;
+    if (offset) return `${spin} ${C.yellow(fitWidth(`${main} · ${M.watchScrolled(offset)}`, room))}`;
+    const text = main + (stats.latest && !api.req ? ` · ${stats.latest}` : '');
+    const hint = M.watchKeys;
+    if (textWidth(main) + textWidth(hint) + 2 > room) return `${spin} ${C.dim(fitWidth(text, room))}`;
+    const body = fitWidth(text, room - textWidth(hint) - 2);
+    return `${spin} ${C.dim(body)}${' '.repeat(room - textWidth(body) - textWidth(hint))}${C.dim(hint)}`;
+  }
+  function render(W, H) {
+    const all = entries.flatMap((e) => linesOf(e, W));
+    const room = Math.max(1, H - 1);
+    // 往回翻着的时候来了新内容，画面停在原处不动
+    if (offset && W === lastWidth) offset += all.length - lastTotal;
+    lastTotal = all.length;
+    lastWidth = W;
+    offset = Math.max(0, Math.min(offset, all.length - room));
+    const end = all.length - offset;
+    const body = all.slice(Math.max(0, end - room), end);
+    return [...body, ...Array(room - body.length).fill(''), statusLine(W)];
+  }
+  const onKeys = (d) => {
+    const page = Math.max(1, (process.stdout.rows || 30) - 2);
+    for (const k of splitKeys(d.toString('utf8'))) {
+      if (k === '\x03' || k === 'q') { detach(k === '\x03' ? 130 : 0); return; }
+      if (k === '\x1b[A' || k === '\x1bOA' || k === 'k') offset += 1;
+      else if (k === '\x1b[B' || k === '\x1bOB' || k === 'j') offset = Math.max(0, offset - 1);
+      else if (k === '\x1b[5~' || k === 'b') offset += page;
+      else if (k === '\x1b[6~' || k === ' ') offset = Math.max(0, offset - page);
+      else if (k === '\x1b[H' || k === '\x1b[1~' || k === 'g') offset = Number.MAX_SAFE_INTEGER;
+      else if (k === '\x1b[F' || k === '\x1b[4~' || k === 'G') offset = 0;
+    }
+    screen?.draw();
+  };
+  // 离开实时画面：恢复终端，把完整的时间线写进普通屏幕
+  const stopLive = () => {
+    clearInterval(ticker);
+    if (!screen) return;
+    screen.stop();
+    screen = null;
+    if (process.stdin.isTTY) { process.stdin.off('data', onKeys); process.stdin.setRawMode(false); process.stdin.pause(); }
+    process.stdout.write('\n');
+    for (const e of entries) for (const l of linesOf(e, cols())) process.stdout.write(`${l}\n`);
+  };
+  // 按 q 或 Ctrl+C 退出查看，任务照常运行
+  const detach = (code) => {
+    stopLive();
+    process.stdout.write(`${C.dim(M.watchDetached)}\n`);
+    process.exit(code);
+  };
+
+  const showApi = (ev) => {
+    if (ev.type === 'api.request') {
+      Object.assign(api, { req: ev.ts, chars: 0, answerChars: 0, answering: false });
+      say(ev.ts, C.cyan('◆'), M.watchApiRequest(ev.model, ev.effort, ev.attempt));
+    } else if (ev.type === 'api.reasoning') {
+      api.chars = ev.total_chars;
+    } else if (ev.type === 'api.content') {
+      // 回答是 JSON 报告，不逐字显示；开始回答时记一笔思考了多久
+      if (!api.answering) {
+        api.answering = true;
+        const thought = (Date.parse(ev.ts) - Date.parse(api.req)) / 1000;
+        say(ev.ts, C.cyan('◆'), api.chars ? M.watchApiThought(M.duration(thought), api.chars.toLocaleString('en-US')) : M.watchApiAnswering);
+      }
+      api.answerChars = ev.total_chars;
+    } else if (ev.type === 'api.retry') say(ev.ts, C.yellow('⚠'), M.watchApiRetry(ev.reason, ev.wait_s), C.yellow, 3);
+    else if (ev.type === 'api.repair') say(ev.ts, C.yellow('⚠'), M.watchApiRepair(M.list(ev.errors)), C.yellow, 3);
+    else if (ev.type === 'api.error') say(ev.ts, C.red('✗'), oneLine(ev.message), C.red, 3);
+  };
+
   const show = (ev) => {
+    if (ev.type?.startsWith('api.')) { showApi(ev); return; }
     const it = ev.item || {};
     if (ev.type === 'turn.failed' || ev.type === 'error') {
-      block('error');
-      write(C.red(`✗ ${fitWidth(oneLine(ev.error?.message || ev.message || ''), width() - 2)}`));
+      newBlock();
+      const msg = ev.error?.message || ev.message || '';
+      const re = RECONNECT.exec(msg);
+      if (re) say(ev.ts, C.yellow('⚠'), M.watchReconnect(re[1], re[2]), C.yellow, 1);
+      else say(ev.ts, C.red('✗'), oneLine(msg), C.red, 3);
     } else if (ev.type === 'item.started' && it.type === 'command_execution') {
-      block('command');
       const text = oneLine(plainCommand(it.command));
-      if (shownCommands < MAX_COMMANDS) { write(commandLine(text)); shownCommands++; }
-      else { foldedCommands.set(it.id, text); latestFolded = text; drawFoldLine(); }
+      commands.set(it.id, text);
+      stats.latest = `$ ${text}`;
+      if (shownCommands < MAX_COMMANDS) { sub(`  $ ${text}`); lastCommand = it.id; shownCommands++; } else folded.add(it.id);
     } else if (ev.type === 'item.completed') {
       if (it.type === 'agent_message') {
         const t = it.text.trim();
         if (t.startsWith('{')) { try { JSON.parse(t); return; } catch { /* 普通消息 */ } } // 最终报告在结束时单独显示
-        block('message');
-        write(`${C.cyan(C.bold(speaker))}${time()}`);
-        paragraph(t);
-      } else if (it.type === 'command_execution' && it.exit_code !== 0) {
+        newBlock();
+        stats.latest = '';
+        say(ev.ts, C.cyan('◆'), t);
+      } else if (it.type === 'command_execution') {
+        stats.commands++;
+        if (it.exit_code === 0 || it.exit_code == null) return;
         const lines = String(it.aggregated_output || '').replace(/\r/g, '').split('\n').map((x) => x.trim()).filter(Boolean);
-        if (foldedCommands.has(it.id)) { write(commandLine(foldedCommands.get(it.id))); foldedCommands.delete(it.id); }
-        write(C.red(`    ${fitWidth(M.watchExit(it.exit_code, lines.length ? lines.slice(-2).join(' ⏎ ') : ''), width() - 4)}`));
-        drawFoldLine();
+        folded.delete(it.id);
+        if (lastCommand !== it.id && commands.has(it.id)) sub(`  $ ${commands.get(it.id)}`);
+        sub(`    ✗ ${M.watchExit(it.exit_code, lines.length ? lines.slice(-2).join(' ⏎ ') : '')}`, C.red);
       } else if (it.type === 'file_change') {
+        flushFolded();
         for (const c of it.changes || []) {
-          const line = `  ✎ ${M.fileKinds[c.kind] || c.kind} ${fitWidth(rel(c.path), width() - 10)}`;
-          if (lastKind === 'file' && line === lastFile) continue; // 同一个文件连着改几次只显示一行
-          block('file');
-          write(C.green(line));
+          stats.files.add(c.path);
+          const line = `  ✎ ${M.fileKinds[c.kind] || c.kind} ${rel(c.path)}`;
+          if (line === lastFile) continue; // 同一个文件连着改几次只显示一行
+          sub(line, C.green);
           lastFile = line;
         }
       } else if (it.type === 'todo_list') {
-        const plan = (it.items || []).map((x) => `${x.completed ? '✔' : '○'} ${x.text}`);
-        if (plan.join('\n') === lastPlan) return;
-        lastPlan = plan.join('\n');
-        block('plan');
-        write(C.yellow(M.watchPlan));
-        for (const p of plan) write(`  ${fitWidth(p, width() - 2)}`);
+        const items = it.items || [];
+        const done = items.filter((x) => x.completed).length;
+        stats.plan = `${done}/${items.length}`;
+        const plan = items.map((x) => `${x.completed ? '✔' : '○'} ${x.text}`).join('\n');
+        if (plan === lastPlan) return;
+        lastPlan = plan;
+        newBlock();
+        const t = at(ev.ts);
+        add(() => [node(t, C.yellow('◇')) + C.yellow(M.watchPlan(done, items.length))]);
+        for (const x of items) sub(`  ${x.completed ? '✔' : '○'} ${x.text}`, x.completed ? C.dim : (s) => s);
       } else if (it.type === 'web_search') {
-        block('command');
-        write(C.dim(`  🔎 ${fitWidth(oneLine(it.query), width() - 5)}`));
+        const q = oneLine(it.query);
+        if (!q) return;
+        stats.searches++;
+        stats.latest = `◎ ${q}`;
+        flushFolded();
+        sub(`  ◎ ${q}`);
       } else if (it.type === 'error' && !/^Under-development features enabled/.test(it.message)) {
-        block('error');
-        write(C.yellow(`⚠ ${fitWidth(oneLine(it.message), width() - 2)}`));
+        newBlock();
+        say(ev.ts, C.yellow('⚠'), oneLine(it.message), C.yellow, 3);
       }
     }
   };
 
   const finish = (r, m) => {
     flushFolded();
-    write();
-    write(C.dim('─'.repeat(Math.min(width(), 60))));
+    stopLive();
+    live = false;
+    const W = cols();
+    const write = (s = '') => process.stdout.write(`${s}\n`);
+    // 结论按原文换行输出，超长的行交给终端自动折行；篇幅按约 maxLines 屏幕行估算，超出的折叠。
+    const paragraph = (text, indent, maxLines) => {
+      const lines = String(text).trim().replace(/\r/g, '').split('\n');
+      let budget = maxLines * Math.max(40, W - 1 - textWidth(indent));
+      let shown = 0;
+      for (const l of lines) {
+        if (budget <= 0) break;
+        write(indent + (textWidth(l) > budget ? fitWidth(l, budget) : l));
+        budget -= Math.max(textWidth(l), 1);
+        shown++;
+      }
+      if (shown < lines.length) write(indent + C.dim(M.watchMoreLines(lines.length - shown)));
+    };
+    write(rail().trimEnd());
     if (!r) {
-      write(m?.status === 'running' ? C.red(M.watchInterrupted) : M.watchEnded(m?.status));
+      write(node(m?.ended_at, C.red('└')) + (m?.status === 'running' ? C.red(M.watchInterrupted) : M.watchEnded(m?.status)));
       return;
     }
     const ok = r.status === 'done' && (!r.report?.status || r.report.status === 'completed');
-    write((ok ? C.green : C.red)(C.bold(M.watchFinished(r.status === 'done' ? r.report?.status || r.status : r.status, r.duration_s, changedFor(r, m)))));
-    if (r.usage) write(C.dim(M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total')));
+    const color = ok ? C.green : C.red;
+    write(node(m?.ended_at, color('└')) + color(C.bold(`${ok ? '✔' : '✗'} ${M.watchFinished(M.statusName(shownStatus(r.status, r)), M.duration(r.duration_s), changedFor(r, m))}`)));
+    if (r.usage) write(' '.repeat(TIME_W + 2) + C.dim(M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total')));
     const summary = r.report?.summary || r.report?.position;
     if (summary) { write(); paragraph(summary, '  ', 12); }
     const issues = r.report?.open_issues || r.report?.open_questions || [];
@@ -1660,48 +1881,33 @@ function conciseRenderer(cwd, rel, speaker) {
       write(C.yellow(M.watchOpenIssues));
       for (const x of issues) paragraph(`· ${x}`, '  ', 4);
     }
-    for (const e of r.errors || []) write(C.red(`✗ ${fitWidth(oneLine(e), width() - 2)}`));
+    for (const e of realErrors(r, ok)) write(C.red(`✗ ${fitWidth(oneLine(e), W - 3)}`));
   };
-  return { show, finish, goLive: () => { live = true; drawFoldLine(); } };
+
+  const goLive = () => {
+    live = true;
+    if (!screen) return;
+    screen.start();
+    ticker = setInterval(() => { tick++; screen?.draw(); }, 250);
+    if (process.stdin.isTTY) { process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.on('data', onKeys); }
+    process.on('SIGINT', () => detach(130));
+    process.on('exit', () => screen?.stop());
+  };
+  return { header, show, finish, goLive };
 }
 
-function apiRenderer(verbose, cwd, rel, speaker) {
-  const base = conciseRenderer(cwd, rel, speaker);
-  let lastThinking = -Infinity;
-  let answering = false;
-  const show = (ev) => {
-    const out = (text) => process.stdout.write(`${ev.ts ? new Date(ev.ts).toTimeString().slice(0, 8) : '        '} ${text}\n`);
-    if (ev.type === 'api.request') {
-      lastThinking = -Infinity;
-      answering = false;
-      out(M.watchApiRequest(ev.model, ev.effort, ev.attempt));
-    } else if (ev.type === 'api.reasoning') {
-      if (verbose) out(ev.text);
-      else if (Date.parse(ev.ts) - lastThinking >= 15000) {
-        lastThinking = Date.parse(ev.ts);
-        out(M.watchApiThinking(ev.total_chars));
-      }
-    } else if (ev.type === 'api.content') {
-      if (!answering) { out(M.watchApiAnswering); answering = true; }
-      if (verbose) out(ev.text);
-    } else if (ev.type === 'api.retry') out(M.watchApiRetry(ev.reason, ev.wait_s));
-    else if (ev.type === 'api.repair') out(M.watchApiRepair(M.list(ev.errors)));
-    else if (ev.type === 'api.error') out(ev.message);
-  };
-  return { ...base, show };
-}
-
-// 组视图里每个任务的信息流：从 events.jsonl 增量读取，整理成简短的条目，只留最近的一些。
+// 组视图里每个任务的信息流：从 events.jsonl 增量读取，整理成简短的条目，只留最近的一些；
+// 同时记下命令数和 API 的思考进度，放在每块的标题行右侧。
 function createFeed(run) {
   const cwd = run.meta.cwd;
   const rel = (p) => { const r = path.relative(cwd, p); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r : p; };
   const file = path.join(run.dir, 'events.jsonl');
   const decoder = new TextDecoder('utf-8');
   const items = []; // { text, style, clip }：clip 的条目只占一行，超出截断；其余按面板宽度折行
+  const stats = { commands: 0, api: false, req: null, chars: 0, answerChars: 0, answering: false };
   let offset = 0;
   let buf = '';
   let thinking = null; // API 的思考内容一直追加在同一条里
-  let answering = null;
   const push = (text, style, clip = true) => {
     items.push({ text, style, clip });
     if (items.length > 40) items.splice(0, items.length - 40);
@@ -1709,28 +1915,35 @@ function createFeed(run) {
   const take = (ev) => {
     const it = ev.item || {};
     if (ev.type === 'api.request') {
-      thinking = answering = null;
+      Object.assign(stats, { api: true, req: ev.ts, chars: 0, answerChars: 0, answering: false });
+      thinking = null;
       push(M.watchApiRequest(ev.model, ev.effort, ev.attempt), 'dim');
     } else if (ev.type === 'api.reasoning') {
+      stats.chars = ev.total_chars;
       if (!thinking) { thinking = { text: '', style: 'dim', clip: false }; items.push(thinking); }
       thinking.text = (thinking.text + ev.text).slice(-3000);
     } else if (ev.type === 'api.content') {
-      // 回答是 JSON 报告，不逐字展示，只显示进度
-      if (!answering) { answering = { text: '', style: 'cyan', clip: true }; items.push(answering); }
-      answering.text = M.stepApiAnswering(ev.total_chars);
+      // 回答是 JSON 报告，不逐字展示，进度在标题行右侧
+      stats.answering = true;
+      stats.answerChars = ev.total_chars;
     } else if (ev.type === 'api.retry') push(M.watchApiRetry(ev.reason, ev.wait_s), 'yellow');
     else if (ev.type === 'api.repair') push(M.watchApiRepair(M.list(ev.errors)), 'yellow');
-    else if (ev.type === 'api.error' || ev.type === 'turn.failed' || ev.type === 'error') push(`✗ ${oneLine(ev.message || ev.error?.message || '')}`, 'red');
-    else if (ev.type === 'item.started' && it.type === 'command_execution') push(`$ ${oneLine(plainCommand(it.command))}`, 'dim');
+    else if (ev.type === 'api.error' || ev.type === 'turn.failed' || ev.type === 'error') {
+      const msg = oneLine(ev.message || ev.error?.message || '');
+      const re = RECONNECT.exec(msg);
+      push(re ? `⚠ ${M.watchReconnect(re[1], re[2])}` : `✗ ${msg}`, re ? 'yellow' : 'red');
+    } else if (ev.type === 'item.started' && it.type === 'command_execution') push(`$ ${oneLine(plainCommand(it.command))}`, 'dim');
     else if (ev.type === 'item.completed') {
       if (it.type === 'agent_message') {
         const t = it.text.trim();
         if (t.startsWith('{')) { try { JSON.parse(t); return; } catch { /* 普通消息 */ } } // 最终报告在任务结束后显示
         push(t, null, false);
-      } else if (it.type === 'command_execution' && it.exit_code !== 0) push(`  ${M.watchExit(it.exit_code, '')}`, 'red');
-      else if (it.type === 'file_change') for (const c of it.changes || []) push(`✎ ${M.fileKinds[c.kind] || c.kind} ${rel(c.path)}`, 'green');
-      else if (it.type === 'web_search') push(`${M.dashSearch} ${oneLine(it.query)}`, 'dim');
-      else if (it.type === 'todo_list') push(`${M.watchPlan} ${(it.items || []).filter((x) => x.completed).length}/${(it.items || []).length}`, 'yellow');
+      } else if (it.type === 'command_execution') {
+        stats.commands++;
+        if (it.exit_code !== 0 && it.exit_code != null) push(`  ${M.watchExit(it.exit_code, '')}`, 'red');
+      } else if (it.type === 'file_change') for (const c of it.changes || []) push(`✎ ${M.fileKinds[c.kind] || c.kind} ${rel(c.path)}`, 'green');
+      else if (it.type === 'web_search') { if (oneLine(it.query)) push(`◎ ${oneLine(it.query)}`, 'dim'); }
+      else if (it.type === 'todo_list') push(M.watchPlan((it.items || []).filter((x) => x.completed).length, (it.items || []).length), 'yellow');
       else if (it.type === 'error' && !/^Under-development features enabled/.test(it.message)) push(`⚠ ${oneLine(it.message)}`, 'yellow');
     }
   };
@@ -1752,25 +1965,33 @@ function createFeed(run) {
       take(ev);
     }
   };
-  return { read, items };
+  return { read, items, stats };
 }
 
-// 组视图的一块面板：标题行加固定行数的正文。运行中显示最新的信息流，结束后显示结论。
+// 组视图的一块：标题行（左边是模型，右边是状态和用时）加固定行数的正文。运行中显示最新的信息流，结束后显示结论。
 function panelLines(run, feed, rows, width, withTitle) {
   const { running, status, result: r, ok } = runOutcome(run);
   const m = run.meta;
-  const end = m.ended_at ? Date.parse(m.ended_at) : Date.now();
-  const mins = ((end - Date.parse(m.started_at)) / 60000).toFixed(1);
-  const shown = status === 'done' ? r?.report?.status || status : status;
+  const elapsed = (m.ended_at ? Date.parse(m.ended_at) : Date.now()) - Date.parse(m.started_at);
   const color = running ? C.cyan : ok ? C.green : C.red;
-  const title = withTitle ? `  ${oneLine(m.title || '')}` : '';
-  const head = color(C.bold(fitWidth(`${running ? '●' : ok ? '✔' : '✗'} ${whoOf(m)}  ${shown}  ${mins}min${title}`, width)));
+  const left = `${running ? '●' : ok ? '✔' : '✗'} ${whoOf(m)}${withTitle && m.title ? `  ${oneLine(m.title)}` : ''}`;
+  const s = feed.stats;
+  const right = !running ? `${M.statusName(shownStatus(status, r))} · ${M.duration(r?.duration_s ?? elapsed / 1000)}`
+    : s.req ? M.watchApiLive(s.answering, clock(elapsed), (s.answering ? s.answerChars : s.chars).toLocaleString('en-US'))
+    : [M.statusName('running'), clock(elapsed), s.commands ? M.panelCommands(s.commands) : ''].filter(Boolean).join(' · ');
+  // 放不下右侧时只留左侧
+  let head;
+  if (textWidth(right) + 16 <= width) {
+    const l = fitWidth(left, width - textWidth(right) - 2);
+    head = color(C.bold(l)) + ' '.repeat(width - textWidth(l) - textWidth(right)) + C.dim(right);
+  } else head = color(C.bold(fitWidth(left, width)));
   const inner = width - 2;
   let body = [];
   const final = r?.report?.position || r?.report?.summary;
-  if (!running && (final || r?.errors?.length)) {
+  const errors = realErrors(r, ok);
+  if (!running && (final || errors.length)) {
     if (final) body = wrapWidth(M.watchOpinion(final.trim()), inner).map((l) => ({ l }));
-    for (const e of r?.errors || []) body.push({ l: fitWidth(`✗ ${oneLine(e)}`, inner), style: 'red' });
+    for (const e of errors) body.push({ l: fitWidth(`✗ ${oneLine(e)}`, inner), style: 'red' });
     body = body.slice(0, rows);
   } else {
     for (const item of feed.items) {
@@ -1782,6 +2003,15 @@ function panelLines(run, feed, rows, width, withTitle) {
   }
   while (body.length < rows) body.push({ l: '' });
   return [head, ...body.map(({ l, style }) => `  ${style ? C[style](l) : l}`)];
+}
+
+// 组的标题行右侧：运行中、完成、失败各几个，为 0 的不写
+function groupCounts(all) {
+  const outcomes = all.map(runOutcome);
+  const running = outcomes.filter((o) => o.running).length;
+  const ok = outcomes.filter((o) => o.ok).length;
+  const failed = all.length - running - ok;
+  return [running && C.cyan(M.groupCount.running(running)), ok && C.green(M.groupCount.ok(ok)), failed && C.red(M.groupCount.failed(failed))].filter(Boolean).join(C.dim(' · '));
 }
 
 async function watchGroup(group) {
@@ -1813,38 +2043,41 @@ async function watchGroup(group) {
   };
 
   if (process.stdout.isTTY && anyRunning()) {
-    // 实时面板：在终端的备用屏幕里整屏重画，窗口大小变化时也只是重画，不会留下残影。
+    // 实时面板：用 liveScreen 在备用屏幕里整屏重画，窗口大小变化时按新尺寸重画。
     // 结束后回到原来的屏幕，再输出最终汇总，留作记录。
-    const draw = () => {
+    const render = (W, H) => {
       const all = [...known.values()];
-      const width = Math.max(20, (process.stdout.columns || 100) - 1);
-      const height = Math.max(8, process.stdout.rows || 30);
+      const width = Math.max(20, W - 1);
       for (const run of all) feeds.get(run.id).read();
-      // 每块面板的正文行数按窗口高度平均分，最多 8 行
-      const rows = Math.max(2, Math.min(8, Math.floor((height - 1 - all.length) / all.length) - 1));
+      // 顶部标题一行、底部提示一行，每块有分隔线和标题行；正文行数按窗口高度平均分，最多 8 行
+      const rows = Math.max(2, Math.min(8, Math.floor((H - 2 - all.length * 2) / all.length)));
       const title = sharedTitle();
-      const out = [
-        C.bold(fitWidth(M.groupHeader(group, title, all.length), width)),
-        C.dim(fitWidth(`${groupSummary(all)}｜${M.dashHint}`, width)),
-      ];
-      for (const run of all) out.push('', ...panelLines(run, feeds.get(run.id), rows, width, !title));
-      process.stdout.write(`\x1b[H${out.slice(0, height).map((l) => `\x1b[2K${l}`).join('\n')}\x1b[J`);
+      const counts = groupCounts(all);
+      const countsW = textWidth(counts.replace(/\x1b\[[0-9;]*m/g, ''));
+      let head;
+      if (countsW + 14 <= width) {
+        const left = fitWidth(M.groupHeader(group, title, all.length), width - countsW - 2);
+        head = C.bold(left) + ' '.repeat(width - textWidth(left) - countsW) + counts;
+      } else head = C.bold(fitWidth(M.groupHeader(group, title, all.length), width));
+      const out = [head];
+      for (const run of all) out.push(C.dim('─'.repeat(width)), ...panelLines(run, feeds.get(run.id), rows, width, !title));
+      const lines = out.slice(0, H - 1);
+      while (lines.length < H - 1) lines.push('');
+      lines.push(C.dim(fitWidth(M.dashHint, width)));
+      return lines;
     };
-    let restored = false;
-    const restore = () => { if (!restored) { restored = true; process.stdout.write('\x1b[?25h\x1b[?1049l'); } };
-    process.stdout.write('\x1b[?1049h\x1b[?25l');
-    process.on('exit', restore);
-    process.on('SIGINT', () => { restore(); process.exit(130); });
-    process.stdout.on('resize', draw);
+    const screen = liveScreen(render);
+    process.on('exit', () => screen.stop());
+    process.on('SIGINT', () => { screen.stop(); process.exit(130); });
+    screen.start();
     for (let tick = 0; ; tick++) {
-      draw();
+      screen.draw();
       if (settled()) break;
       await sleep(1000);
       for (const run of known.values()) run.meta = readMeta(run.dir) || run.meta;
       if (tick % 2 === 1) { runs = recentRuns(); refresh(); }
     }
-    process.stdout.off('resize', draw);
-    restore();
+    screen.stop();
   } else if (!process.stdout.isTTY && anyRunning()) {
     // 输出被重定向时（比如被别的程序读取），每个任务状态变化时写一行。
     process.stdout.write(`${M.groupHeader(group, sharedTitle(), known.size)}\n`);
@@ -1852,7 +2085,7 @@ async function watchGroup(group) {
     for (;;) {
       for (const run of known.values()) {
         const { status, result } = runOutcome(run);
-        const shown = status === 'done' ? result?.report?.status || status : status;
+        const shown = M.statusName(shownStatus(status, result));
         if (states.get(run.id) !== shown) process.stdout.write(`${whoOf(run.meta)}  ${shown}\n`);
         states.set(run.id, shown);
       }
@@ -1870,13 +2103,12 @@ async function watchGroup(group) {
   for (const run of all) {
     const { status, result: r, ok } = runOutcome(run);
     const seconds = r?.duration_s ?? Math.round(((Date.parse(run.meta.ended_at) || Date.now()) - Date.parse(run.meta.started_at)) / 1000);
-    const shown = status === 'done' ? r?.report?.status || status : status;
     const head = `${ok ? '✔' : '✗'} ${whoOf(run.meta)}${title ? '' : `  ${oneLine(run.meta.title || '')}`}`;
-    process.stdout.write(`\n${(ok ? C.green : C.red)(C.bold(head))}\n  ${M.watchFinished(shown, seconds, changedFor(r, run.meta))}\n`);
+    process.stdout.write(`\n${(ok ? C.green : C.red)(C.bold(head))}\n  ${M.watchFinished(M.statusName(shownStatus(status, r)), M.duration(seconds), changedFor(r, run.meta))}\n`);
     if (r?.usage) process.stdout.write(`  ${C.dim(M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (run.meta.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total'))}\n`);
     const final = r?.report?.position || r?.report?.summary;
     if (final) process.stdout.write(`  ${M.watchOpinion(final.trim()).replace(/\n+/g, '\n  ')}\n`);
-    for (const e of r?.errors || []) process.stdout.write(`  ${C.red(`✗ ${oneLine(e)}`)}\n`);
+    for (const e of realErrors(r, ok)) process.stdout.write(`  ${C.red(`✗ ${oneLine(e)}`)}\n`);
   }
 }
 
@@ -1885,10 +2117,10 @@ async function cmdWatch(o) {
   const { id, dir, meta } = await pickWatchRun(o.run);
   const cwd = meta.cwd;
   const rel = (p) => { const r = path.relative(cwd, p); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r : p; };
-  const speaker = modelOf(meta);
-  const view = meta.agent_type === 'openai-compatible' ? apiRenderer(o.verbose, cwd, rel, speaker) : (o.verbose ? verboseRenderer : conciseRenderer)(cwd, rel, speaker);
-  const header = M.watchHeader(whoOf(meta), meta.mode, meta.title || id, meta.level, cwd, dir).split('\n');
-  process.stdout.write(`\n${C.bold(header[0])}\n${C.dim(header.slice(1).join('\n'))}\n\n`);
+  // 任务还在运行、输出到终端时，时间线画在可以随窗口重排的实时画面里
+  const view = !o.verbose ? timelineRenderer(meta, rel, { screen: process.stdout.isTTY && isRunning(meta) })
+    : (meta.agent_type === 'openai-compatible' ? apiVerboseRenderer : verboseRenderer)(meta, rel);
+  view.header(id, dir);
 
   const file = path.join(dir, 'events.jsonl');
   const decoder = new TextDecoder('utf-8');

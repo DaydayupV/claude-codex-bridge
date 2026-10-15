@@ -9,6 +9,6 @@ Run the watch launcher as described in the "Live view" section of the `codex-bri
 - No argument: follow the run in progress, or show the most recent one if none is running
 - A run_id or `last`: add `--run <argument>` to the command
 - A group name: add `--group <argument>` to follow the whole group at once: one window split into a block per model, each showing its latest few lines
-- If the user wants every detail (reasoning, each command and its output, token usage), also add `--verbose`. The default concise view shows only what the model says, folded commands, file changes and the final result.
+- If the user wants every detail (reasoning, each command and its output, token usage), also add `--verbose`. The default view is a timeline of what the model says, folded commands, file changes and the final result, with a bottom line that keeps showing elapsed time and progress. While the run is going, the view re-flows when the window is resized; scroll back with ↑↓, PgUp/PgDn or the mouse wheel, press End to jump to the latest, and q to stop watching. When it ends, the full timeline stays in the terminal.
 
 If it was opened in the terminal panel, send the user the tab link.
