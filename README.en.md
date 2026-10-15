@@ -75,6 +75,7 @@ How to reach an agent goes only under `agents`; who gets what goes only under `l
     "discuss_max_rounds": 2,
     "timeout_min": 480,
     "stall_min": 40,
+    "busy_ask_min": 2,
     "runs_dir": null
   },
   "agents": {
@@ -123,13 +124,13 @@ How to reach an agent goes only under `agents`; who gets what goes only under `l
 
 ### Task levels, models and reasoning effort
 
-Claude only decides which level a task is: `simple`, `normal` or `complex`. You decide in `levels` who gets each level and which model and reasoning effort it uses. There are no hidden defaults: Claude must give a level every time, and the script refuses to start without one instead of quietly picking an effort.
+Claude only decides which level a task is: `simple`, `normal` or `complex`. The level depends on how much judgment a task needs and how costly a mistake would be, not on how much it changes: mechanically changing 20 files from a list is simple; changing the interfaces between modules is complex. You decide in `levels` who gets each level (Claude itself included) and which model and reasoning effort it uses. There are no hidden defaults: Claude must give a level every time, and the script refuses to start without one instead of quietly picking an effort.
 
 - Each level names an `agent` (which entry under `agents` gets it) and an `effort`; add `model` when you want to override that agent's default model. Without `model`, the agent's default model under `agents` is used; if Codex's default model is `null` too, Codex's own configured model is used. This is just one possible setup; pick models your account has and that suit your tasks.
 - Codex's `effort` can be `low`, `medium`, `high`, `xhigh`, `max` or `ultra`. If a model doesn't support an effort, Codex rejects it and the error shows up in the result.
 - To override for one task, tell Claude "run it with ultra" or "use model X"; Claude will pass `--effort` or `--model` instead.
-- To have Claude do a `run` level itself instead of handing it to Codex, write the whole level as `"claude"`, for example `"simple": "claude"`. That level then has no model or effort to set: Claude does its tasks itself, and the script refuses to hand them off. If you explicitly want a task handed to Codex, Claude adds `--model`, and the effort uses the built-in default. Reviews and discussions need a second model, so this isn't supported there.
-- Whatever the config, Claude does small tasks with a clear approach (under about 100 lines of change) itself: handing them off doesn't pay, and Codex tends to make them too heavy.
+- To have Claude do a `run` level itself instead of handing it to Codex, write the whole level as `"claude"`, for example `"simple": "claude"`. That level then has no model or effort to set: Claude does its tasks itself, and the script refuses to hand them off. If you explicitly want a task handed to Codex, Claude adds `--agent codex`, which uses Codex's default model, and the effort uses the built-in default. Reviews and discussions need a second model, so this isn't supported there.
+- Small tasks follow the levels too: a small change with a clear approach is `simple`. In the default config Claude does `simple` itself; if you give `simple` to Codex, even very small changes get handed off.
 
 ### Adding other models to discussions
 
@@ -180,6 +181,7 @@ API models can't look through your code themselves, so Claude sends the relevant
 | `dispatch.discuss_max_rounds` | How many rounds one discussion may have (round 1 plus later resumes), counted per participant. Once reached, the script refuses further resumes and Claude rules on what it has | `2` |
 | `dispatch.timeout_min` | Total time limit per run, in minutes | `480` |
 | `dispatch.stall_min` | Stop a run after this many minutes without activity: for Codex, no activity and no command running; for API models, no data at all in the stream. `0` turns it off | `40` |
+| `dispatch.busy_ask_min` | Once an API model has been queued this many minutes because its service is busy, Claude asks whether to stop it and go ahead with the other participants' results. `0` means never ask | `2` |
 | `dispatch.runs_dir` | Where run records go (or set `CODEX_RUNS_DIR`) | `~/.claude/codex-runs` |
 | `agents.codex.bin` | Path to the codex executable or `codex.js` (or set `CODEX_BIN`) | Found automatically |
 | `agents.codex.model` | Codex's default model | `null` (use Codex config) |
@@ -189,7 +191,7 @@ API models can't look through your code themselves, so Claude sends the relevant
 | `agents.<name>` (API model) | `type` is `openai-compatible`; `base_url` and `model` are required; `api_key` (the key itself, left empty until filled in) and/or `api_key_env` (the environment variable holding it), with `api_key` used if both are set; an agent with neither can't take part in discussions; `extra_body` is optional | None |
 | `levels` | See above | run: `"claude"` for simple and normal, Codex max for complex; review: Codex medium / high / max; discuss: only Codex at all three levels, medium / high / max |
 
-Project config only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `agents.codex.model` and `levels`, and it can't add API models as participants, only remove them. Everything else must go in your user config, so that a repository you cloned can't loosen the sandbox, swap the executable, send your code to another address, or spend your quota on its own. For a sensitive project, keep only Codex under `levels.discuss` in its project config to turn API models off.
+Project config only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `dispatch.busy_ask_min`, `agents.codex.model` and `levels`, and it can't add API models as participants, only remove them. Everything else must go in your user config, so that a repository you cloned can't loosen the sandbox, swap the executable, send your code to another address, or spend your quota on its own. For a sensitive project, keep only Codex under `levels.discuss` in its project config to turn API models off.
 
 ### Preference files
 
@@ -227,7 +229,12 @@ When the Codex quota runs out or an API model's balance is too low, the run is m
 
 ## Platforms
 
-Tested on Windows. The macOS and Linux code paths are written but not yet tested; issue reports are welcome.
+Tested on Windows, in both the CLI and the desktop app (including the Microsoft Store version). The macOS and Linux code paths are written but not yet tested in practice; issue reports are welcome.
+
+A few things to know:
+- **The live view in the desktop app** opens in the terminal panel, which only accepts ASCII commands. If the run directory (`~/.claude/codex-runs` by default) has non-English characters in its path (for example a Windows user name in Chinese), `/codex-bridge-en:setup` will point it out; set `dispatch.runs_dir` in the config to a plain-English path. The CLI isn't affected.
+- **Programs started from a graphical app** (such as the macOS desktop app) may have a PATH without Homebrew, nvm and similar directories. If the script can't find `codex`, it also looks in the directory node runs from, `/opt/homebrew/bin`, `/usr/local/bin` and other common places; if it's still not found, put the full path to `codex` in `agents.codex.bin` in the config. The plugin's hooks run `node`, so it also needs to be on the PATH.
+- The live view redraws the whole screen. Windows Terminal, macOS Terminal and iTerm2, the VS Code terminal and common Linux terminals all support this; simple terminals such as `TERM=dumb` get line-by-line output instead.
 
 ## English and Chinese versions
 

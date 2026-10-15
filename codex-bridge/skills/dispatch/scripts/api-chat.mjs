@@ -5,10 +5,13 @@ function apiError(kind, message, status) {
   return Object.assign(new Error(message), { kind, status });
 }
 
-export async function chatStream({ url, apiKey, body, timeoutMs, stallMs, onEvent = () => {} }) {
+export async function chatStream({ url, apiKey, body, timeoutMs, stallMs, signal, onEvent = () => {} }) {
   const controller = new AbortController();
   let abortKind = null;
   const abort = (kind) => { abortKind ??= kind; controller.abort(); };
+  // 调用方要求终止（用户取消）
+  if (signal?.aborted) abort('cancelled');
+  else signal?.addEventListener('abort', () => abort('cancelled'), { once: true });
   const timeout = setTimeout(() => abort('timeout'), timeoutMs);
   let stall;
   const activity = () => {
@@ -21,6 +24,11 @@ export async function chatStream({ url, apiKey, body, timeoutMs, stallMs, onEven
   let usage = null;
   let finishReason = null;
   let completed = false;
+  // 服务繁忙时，请求会先在服务端排队：连接保持着，只有保活注释行（": keep-alive"），没有数据。
+  const startedAt = Date.now();
+  let gotData = false;
+  let keepalives = 0;
+  let queuedEventAt = 0;
   let pendingContent = '';
   let pendingReasoning = '';
   const flush = () => {
@@ -66,6 +74,7 @@ export async function chatStream({ url, apiKey, body, timeoutMs, stallMs, onEven
       const text = data.join('\n');
       data = [];
       if (!text.trim()) return; // SSE 规范里 data 为空的事件不派发
+      gotData = true;
       if (text.trim() === '[DONE]') { ended = true; return; }
       let event;
       try { event = JSON.parse(text); }
@@ -88,6 +97,14 @@ export async function chatStream({ url, apiKey, body, timeoutMs, stallMs, onEven
     const line = (text) => {
       if (!text) dispatch();
       else if (text.startsWith('data:')) data.push(text.slice(5).replace(/^ /, ''));
+      else if (text.startsWith(':') && !gotData) {
+        keepalives++;
+        // 还在排队：第一次马上报，之后每 30 秒报一次
+        if (Date.now() - queuedEventAt >= 30000) {
+          queuedEventAt = Date.now();
+          onEvent({ type: 'api.queued', waited_s: Math.round((Date.now() - startedAt) / 1000) });
+        }
+      }
     };
     while (!ended) {
       const { value, done } = await reader.read();
@@ -111,6 +128,12 @@ export async function chatStream({ url, apiKey, body, timeoutMs, stallMs, onEven
     completed = true;
     return { content, reasoning, usage, finishReason };
   } catch (error) {
+    if (abortKind === 'cancelled') throw apiError('cancelled', 'Cancelled by the user');
+    // 只收到过保活信号就断了或超时了：请求一直在服务端排队，没开始处理。
+    if (!gotData && keepalives && (!error.kind || error.kind === 'network')) {
+      const waited = Math.round((Date.now() - startedAt) / 1000);
+      throw Object.assign(apiError('busy', abortKind === 'timeout' ? 'Still queued when the time limit was reached' : `Dropped by the server after ${waited}s in its queue`), { waited_s: waited });
+    }
     if (error.kind) throw error;
     if (abortKind) throw apiError(abortKind, abortKind === 'stall' ? 'No bytes received within the stall limit' : 'Request timed out');
     // fetch / undici 的连接、headers 和 body 超时都按网络故障处理。

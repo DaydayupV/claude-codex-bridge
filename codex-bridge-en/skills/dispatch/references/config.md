@@ -21,6 +21,7 @@ How to reach an agent goes only under `agents`; who gets what goes only under `l
 | `discuss_max_rounds` | How many rounds one discussion may have (round 1 plus later resumes), counted per participant; the script refuses resumes beyond it | `2` |
 | `timeout_min` | Total time limit for one run, in minutes | `480` |
 | `stall_min` | How long without activity counts as stuck, in minutes (0 turns it off). Codex: no events and no command running; API agents: no data at all in the stream | `40` |
+| `busy_ask_min` | Ask the user whether to stop an API agent once it has been queued this many minutes because its service is busy (0 means never ask) | `2` |
 | `runs_dir` | Run record directory (or the `CODEX_RUNS_DIR` environment variable) | `~/.claude/codex-runs` |
 
 ## agents
@@ -64,7 +65,7 @@ Defaults: run uses `"claude"` for simple and normal and Codex max for complex; r
 
 - If the user config doesn't exist, the script's first run (any subcommand) creates one: `gpt-6.1-sol` as Codex's default model, and `gpt-6-astra` for complex reviews and discussions; plus two example agents, `deepseek` and `mimo`, with an empty `api_key` and not in any discussion level, as a reminder that they can be added. `check` reports them as having no API key yet; if the user doesn't plan to use them, nothing needs doing.
 - A user config in the old layout (`auto_dispatch`, top-level `model`, `sandbox` and so on at the top level) is rewritten into the new layout the first time the script runs, with the original saved as `codex-bridge.json.bak`.
-- Project config only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `agents.codex.model` and `levels`. `levels` can contain just the parts to change. Project config **can't add API agents**: an API agent that the user config doesn't have at that level is dropped even if the project config adds it. It can remove them, though, which is how a sensitive project turns API agents off. A project config in the old layout is converted when read; the file isn't rewritten.
+- Project config only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `dispatch.busy_ask_min`, `agents.codex.model` and `levels`. `levels` can contain just the parts to change. Project config **can't add API agents**: an API agent that the user config doesn't have at that level is dropped even if the project config adds it. It can remove them, though, which is how a sensitive project turns API agents off. A project config in the old layout is converted when read; the file isn't rewritten.
 - Each agent's parallel limit counts only its own runs in progress, across all groups and sessions; at the limit the script refuses to start a new run, and the error lists the runs holding the slots.
 - Everything else (handing off on your own, parallel limits, executable, API address and key, sandbox, approval, run directory) can only be set in the user config, so a cloned repository can't raise its own permissions, send code elsewhere, or spend the user's quota.
 - When the sandbox isn't `read-only` / `workspace-write` (for example `danger-full-access`), Codex can write to any directory. `--cwd` only sets where it starts working; **it doesn't limit what it can write**. The scope is then held only by the brief and by reviewing the diff afterwards.

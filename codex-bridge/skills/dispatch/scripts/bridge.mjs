@@ -16,6 +16,10 @@
 //   node bridge.mjs config [--cwd <目录>]
 //   node bridge.mjs check  [--agent <名字>]
 //                          检查 Node.js、Git、Codex（必需）和各个 API 协作方（可选，会发一个很小的请求）能不能用
+//   node bridge.mjs await-busy (--group <组名> | --run <run_id>) [--after <分钟>]
+//                          等到有 API 协作方排队超过给定分钟数（默认 dispatch.busy_ask_min），或者全部结束，再退出
+//   node bridge.mjs cancel --run <run_id>
+//                          终止一个正在运行的任务，结果记为 cancelled
 //
 // watch 把 events.jsonl 实时翻译成可读进度；不给 --run 时跟踪正在运行的任务（没有就等新任务出现）。
 // 每次运行还会在记录目录下写一个 watch.mjs 启动器，方便在终端面板里直接运行（插件路径可能含非 ASCII 字符）。
@@ -56,11 +60,20 @@ const PROJECT_CONFIG = path.join('.claude', 'codex-bridge.json');
 const USER_PREFS = path.join(path.dirname(USER_CONFIG), 'codex-bridge.md');
 const PROJECT_PREFS = path.join('.claude', 'codex-bridge.md');
 
+// 终止标记：cancel 命令和实时查看里按 x 时写进任务的记录目录，运行中的任务看到就停下。
+const CANCEL_FILE = 'cancel';
+// 没有正常结束的几种状态：会话开始的提醒会列出这样的执行任务，对它们运行 cancel 表示已经处理，不再提醒
+const UNFINISHED_STATUSES = ['interrupted', 'quota_exhausted', 'stalled', 'timeout'];
+
+// 派活的 Claude 会话：Claude Code 运行命令时会带上会话 ID，记进任务元数据。
+// 不同会话可能起了同一个组名（比如同一天讨论同一个话题），按组查看时只算同一会话派出的那一批。
+const CLAUDE_SESSION = process.env.CLAUDE_CODE_SESSION_ID || null;
+
 // 每个协作方同时最多运行几个任务，配置里没写时用它。
 const DEFAULT_AGENT_PARALLEL = 4;
 
 const DEFAULT_CONFIG = {
-  dispatch: { auto: true, watch: 'auto', discuss_max_rounds: 2, timeout_min: 480, stall_min: 40, runs_dir: null },
+  dispatch: { auto: true, watch: 'auto', discuss_max_rounds: 2, timeout_min: 480, stall_min: 40, busy_ask_min: 2, runs_dir: null },
   agents: {
     codex: { type: 'codex', bin: null, model: null, max_parallel: DEFAULT_AGENT_PARALLEL, sandbox: { run: null, review: null, discuss: null }, approval: null },
   },
@@ -71,7 +84,7 @@ const DEFAULT_CONFIG = {
   },
 };
 
-// 写成 'claude' 的等级被 --model 点名派给 Codex，或者被只写了部分字段的配置覆盖时，用这里的推理强度。
+// 写成 'claude' 的等级被 --agent 或 --model 点名派给 Codex，或者被只写了部分字段的配置覆盖时，用这里的推理强度。
 const CODEX_LEVEL_FALLBACK = {
   simple: { agent: 'codex', effort: 'medium' },
   normal: { agent: 'codex', effort: 'high' },
@@ -200,7 +213,7 @@ function validateConfig(cfg) {
   check(typeof cfg.dispatch.auto === 'boolean', 'dispatch.auto', why.boolean);
   check(['auto', 'off'].includes(cfg.dispatch.watch), 'dispatch.watch', why.watch);
   check(Number.isInteger(cfg.dispatch.discuss_max_rounds) && cfg.dispatch.discuss_max_rounds >= 1, 'dispatch.discuss_max_rounds', why.positiveInt);
-  for (const key of ['timeout_min', 'stall_min']) check(Number.isFinite(cfg.dispatch[key]) && (key === 'stall_min' ? cfg.dispatch[key] >= 0 : cfg.dispatch[key] > 0), `dispatch.${key}`, why.minutes);
+  for (const key of ['timeout_min', 'stall_min', 'busy_ask_min']) check(Number.isFinite(cfg.dispatch[key]) && (key === 'timeout_min' ? cfg.dispatch[key] > 0 : cfg.dispatch[key] >= 0), `dispatch.${key}`, why.minutes);
   check(cfg.dispatch.runs_dir === null || text(cfg.dispatch.runs_dir), 'dispatch.runs_dir', why.pathOrNull);
   let codexCount = 0;
   for (const [name, agent] of Object.entries(cfg.agents)) {
@@ -258,7 +271,7 @@ function projectConfig(cfg, project) {
     if (key === 'dispatch' && isObject(value)) {
       allowed.dispatch = {};
       for (const [field, val] of Object.entries(value)) {
-        if (['timeout_min', 'stall_min'].includes(field)) allowed.dispatch[field] = val;
+        if (['timeout_min', 'stall_min', 'busy_ask_min'].includes(field)) allowed.dispatch[field] = val;
         else ignored.push(`dispatch.${field}`);
       }
     } else if (key === 'agents' && isObject(value)) {
@@ -400,8 +413,9 @@ function pickProfile(cfg, o, mode, fallbackModel = null, parentAgent = null) {
       entry = found;
     }
     if (entry === CLAUDE) {
-      if (!o.model) die(M.levelForClaude(level));
-      entry = { ...CODEX_LEVEL_FALLBACK[level], agent: codexName };
+      // 用户点名要派给 Codex：--agent 指定协作方（模型用它的默认模型），或者 --model 直接指定模型
+      if (!o.model && !o.agent) die(M.levelForClaude(level, codexName));
+      entry = { ...CODEX_LEVEL_FALLBACK[level], agent: selected || codexName };
     }
     if (selected && selected !== entry.agent) die(M.agentMismatch(selected, key, entry.agent));
   }
@@ -470,7 +484,22 @@ function focusFiles(files) {
 function codexCommand(agent = CONFIG.agents[codexAgentName(CONFIG)]) {
   const bin = agent?.bin;
   if (bin) return /\.[cm]?js$/i.test(bin) ? { file: process.execPath, pre: [bin] } : { file: bin, pre: [] };
-  if (process.platform !== 'win32') return { file: 'codex', pre: [] };
+  if (process.platform !== 'win32') {
+    // 从图形界面启动的程序（比如 macOS 桌面版）PATH 可能不含 Homebrew、nvm 等目录，按常见位置再找一遍。
+    // npm 装的 codex 是 JS 脚本，用当前的 node 运行，不依赖 PATH 里有 node。
+    const home = os.homedir();
+    const dirs = [...(process.env.PATH || '').split(path.delimiter), path.dirname(process.execPath),
+      '/opt/homebrew/bin', '/usr/local/bin', path.join(home, '.local', 'bin'), path.join(home, '.npm-global', 'bin'), path.join(home, '.volta', 'bin')];
+    for (const dir of dirs) {
+      if (!dir) continue;
+      const file = path.join(dir, 'codex');
+      try { fs.accessSync(file, fs.constants.X_OK); } catch { continue; }
+      let real = file;
+      try { real = fs.realpathSync(file); } catch { /* 用原路径 */ }
+      return /\.[cm]?js$/i.test(real) ? { file: process.execPath, pre: [real] } : { file, pre: [] };
+    }
+    return { file: 'codex', pre: [] };
+  }
   // npm 全局安装的 codex 在 Windows 上是 .ps1/.cmd 包装，spawn 不经 shell 找不到它；
   // 直接用 node 跑入口脚本，也避开 shell 引号问题。
   const entry = (root) => path.join(root, '@openai', 'codex', 'bin', 'codex.js');
@@ -493,8 +522,19 @@ function codexConfigModel() {
   return /^\s*model\s*=\s*["']([^"']+)["']/m.exec(top)?.[1] || null;
 }
 
+// Microsoft Store 版的 Claude 桌面应用会把对 AppData\Roaming 的写入重定向到 AppData\Local\Packages\<应用>\LocalCache\Roaming：
+// 应用里的进程按原路径能找到插件，终端面板里的进程不行。所以启动器里先写实际路径，再写原路径，用第一个存在的。
 function writeWatchLauncher() {
-  const launcher = `// 自动生成：转调 bridge.mjs watch。\nprocess.argv.splice(2, 0, 'watch');\nawait import(${JSON.stringify(pathToFileURL(fileURLToPath(import.meta.url)).href)});\n`;
+  const self = fileURLToPath(import.meta.url);
+  let real = self;
+  try { real = fs.realpathSync.native(self); } catch { /* 用原路径 */ }
+  const launcher = `// 自动生成：转调 bridge.mjs watch。按顺序用第一个存在的脚本路径（应用里外看到的路径可能不同）。
+import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+const candidates = ${JSON.stringify([...new Set([real, self])])};
+process.argv.splice(2, 0, 'watch');
+await import(pathToFileURL(candidates.find((p) => fs.existsSync(p)) ?? candidates[0]).href);
+`;
   try { fs.writeFileSync(path.join(RUNS_ROOT, 'watch.mjs'), launcher); } catch { /* 不影响主流程 */ }
 }
 
@@ -641,7 +681,7 @@ function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, onSe
     const { file, pre } = codexCommand(agent);
     const events = fs.createWriteStream(path.join(runDir, 'events.jsonl'));
     const errLog = fs.createWriteStream(path.join(runDir, 'stderr.log'));
-    const out = { code: null, sessionId: null, usage: null, errors: [], warnings: [], fileChanges: new Set(), quotaExhausted: false, timedOut: false, stalled: false, commands: 0 };
+    const out = { code: null, sessionId: null, usage: null, errors: [], warnings: [], fileChanges: new Set(), quotaExhausted: false, timedOut: false, stalled: false, cancelled: false, commands: 0 };
     const runningCommands = new Set();
     let lastEventAt = Date.now();
     const child = spawn(file, [...pre, ...args], {
@@ -699,9 +739,17 @@ function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, onSe
       clearInterval(stallCheck);
       killTree(child.pid);
     }, 30000);
+    // cancel 命令或实时查看里按 x 会在记录目录里留一个终止标记
+    const cancelCheck = setInterval(() => {
+      if (!fs.existsSync(path.join(runDir, CANCEL_FILE))) return;
+      out.cancelled = true;
+      clearInterval(cancelCheck);
+      killTree(child.pid);
+    }, 1000);
     const finish = (code) => {
       clearTimeout(timer);
       clearInterval(stallCheck);
+      clearInterval(cancelCheck);
       process.removeListener('SIGINT', onSignal);
       process.removeListener('SIGTERM', onSignal);
       if (buf.trim()) record(buf);
@@ -768,6 +816,7 @@ async function execute(ctx) {
     id, mode, kind, title: title || null, cwd, model, model_shown: modelShown, model_name: model || codexConfigModel() || null, level, effort, sandbox,
     parent: parent || null, track, group: opts.group ?? null, scope: opts.scope, round: ctx.round ?? null,
     started_at: new Date(started).toISOString(), status: 'running', pid: process.pid, session_id: ctx.sessionId || null,
+    claude_session: CLAUDE_SESSION,
   };
   const writeMeta = () => {
     const file = path.join(dir, 'meta.json');
@@ -836,7 +885,8 @@ async function execute(ctx) {
     if (tail) r.errors.push(M.exitCode(r.code, tail));
   }
   const quotaExhausted = !ok && (r.quotaExhausted || r.errors.some((e) => /usage limit|quota/i.test(e)));
-  meta.status = ok ? 'done' : quotaExhausted ? 'quota_exhausted' : r.stalled ? 'stalled' : r.timedOut ? 'timeout' : 'failed';
+  meta.status = ok ? 'done' : r.cancelled ? 'cancelled' : quotaExhausted ? 'quota_exhausted' : r.stalled ? 'stalled' : r.timedOut ? 'timeout' : 'failed';
+  if (r.cancelled) r.errors = [M.runCancelled(modelOf(meta))];
   meta.session_id = r.sessionId || meta.session_id;
   meta.ended_at = new Date().toISOString();
   const stats = codexSessionStats(meta.session_id, meta.started_at);
@@ -943,6 +993,7 @@ async function executeApi(ctx) {
     agent: agentName, agent_type: agent.type, sandbox: null, parent: ctx.parent || null,
     track: [], group: opts.group ?? null, scope: opts.scope, round: ctx.round,
     started_at: new Date(started).toISOString(), status: 'running', pid: process.pid, session_id: null,
+    claude_session: CLAUDE_SESSION,
   };
   const writeMeta = () => {
     const file = path.join(dir, 'meta.json');
@@ -961,10 +1012,19 @@ async function executeApi(ctx) {
   fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
   fs.writeFileSync(path.join(dir, 'messages.json'), JSON.stringify(history, null, 2));
   process.stderr.write(`bridge: ${M.started(mode, whoOf(meta), level, dir)}\n`);
+  // 提醒 Claude 在后台启动排队检查：服务繁忙时好及时问用户要不要终止这一方
+  if (cfg.dispatch.busy_ask_min > 0) {
+    const target = meta.group != null ? `--group ${meta.group}` : `--run ${id}`;
+    process.stderr.write(`bridge: ${M.busyHint(`node "${fileURLToPath(import.meta.url)}" await-busy ${target}`, cfg.dispatch.busy_ask_min)}\n`);
+  }
   const usage = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 };
   const notes = [];
   const warnings = [];
   const errors = [];
+  // cancel 命令或实时查看里按 x 会在记录目录里留一个终止标记，看到就中止请求
+  const cancel = new AbortController();
+  const cancelCheck = setInterval(() => { if (fs.existsSync(path.join(dir, CANCEL_FILE))) cancel.abort(); }, 1000);
+  const cancelled = () => Object.assign(new Error('Cancelled by the user'), { kind: 'cancelled' });
   let attempt = 0;
   let retried = false;
   let formatRemoved = false;
@@ -972,6 +1032,7 @@ async function executeApi(ctx) {
   let report = null;
   const request = async (messages) => {
     for (;;) {
+      if (cancel.signal.aborted) throw cancelled();
       if (Date.now() >= deadline) {
         event({ type: 'api.error', kind: 'timeout', status: null, message: 'Run timed out' });
         throw Object.assign(new Error('Run timed out'), { kind: 'timeout' });
@@ -981,7 +1042,7 @@ async function executeApi(ctx) {
       if (formatRemoved) delete body.response_format;
       event({ type: 'api.request', attempt: ++attempt, model: body.model, effort: body.reasoning_effort ?? null });
       try {
-        const reply = await chatStream({ url: agent.base_url, apiKey, body, timeoutMs: deadline - Date.now(), stallMs: Number(opts.stall ?? cfg.dispatch.stall_min) * 60000,
+        const reply = await chatStream({ url: agent.base_url, apiKey, body, timeoutMs: deadline - Date.now(), stallMs: Number(opts.stall ?? cfg.dispatch.stall_min) * 60000, signal: cancel.signal,
           onEvent: (ev) => {
             if (ev.type === 'api.usage') {
               ev.usage = apiUsage(ev.usage);
@@ -995,19 +1056,24 @@ async function executeApi(ctx) {
         if (formatRemoved && !notes.includes(M.apiNoResponseFormat)) notes.push(M.apiNoResponseFormat);
         return reply;
       } catch (e) {
-        event({ type: 'api.error', kind: e.kind, status: e.status ?? null, message: redact(e.message) });
+        event({ type: 'api.error', kind: e.kind, status: e.status ?? null, message: redact(e.message), ...(e.waited_s != null ? { waited_s: e.waited_s } : {}) });
         if (e.kind === 'bad_request' && body.response_format && !formatRemoved) {
           formatRemoved = true;
           event({ type: 'api.retry', reason: 'response_format', wait_s: 0 });
           continue;
         }
-        if (!retried && ['network', 'rate_limit', 'server', 'stall'].includes(e.kind)) {
+        if (!retried && ['network', 'rate_limit', 'server', 'stall', 'busy'].includes(e.kind)) {
           retried = true;
-          event({ type: 'api.retry', reason: e.kind, wait_s: 5 });
-          await sleep(Math.min(5000, Math.max(0, deadline - Date.now())));
+          const wait = e.kind === 'busy' ? 30 : 5; // 服务繁忙时隔久一点再排
+          event({ type: 'api.retry', reason: e.kind, wait_s: wait });
+          // 等待重试时也随时响应终止
+          await new Promise((done) => {
+            const t = setTimeout(done, Math.min(wait * 1000, Math.max(0, deadline - Date.now())));
+            cancel.signal.addEventListener('abort', () => { clearTimeout(t); done(); }, { once: true });
+          });
           continue;
         }
-        throw e;
+        throw Object.assign(e, { retried });
       }
     }
   };
@@ -1037,10 +1103,14 @@ async function executeApi(ctx) {
     }
     meta.status = 'done';
   } catch (e) {
-    meta.status = { balance: 'quota_exhausted', stall: 'stalled', timeout: 'timeout' }[e.kind] || 'failed';
+    meta.status = { balance: 'quota_exhausted', stall: 'stalled', timeout: 'timeout', cancelled: 'cancelled' }[e.kind] || 'failed';
     const message = redact(e.message);
-    errors.push(e.kind === 'balance' ? M.apiBalance(agentName, message) : e.kind === 'length' ? message : M.apiError(agentName, e.kind, e.status, message));
+    errors.push(e.kind === 'balance' ? M.apiBalance(agentName, message) : e.kind === 'length' ? message
+      : e.kind === 'cancelled' ? M.runCancelled(modelOf(meta))
+      : e.kind === 'busy' ? M.apiBusy(agentName, M.duration(e.waited_s || 0), e.retried)
+      : M.apiError(agentName, e.kind, e.status, message));
   }
+  clearInterval(cancelCheck);
   fs.writeFileSync(path.join(dir, 'last-message.txt'), last);
   fs.writeFileSync(path.join(dir, 'messages.json'), JSON.stringify(last || meta.status === 'done' ? [...history, { role: 'assistant', content: last }] : history, null, 2));
   meta.ended_at = new Date().toISOString();
@@ -1192,6 +1262,7 @@ function cmdConfig(o) {
     resolved_levels,
     runs_dir: RUNS_ROOT,
     watch_launcher: path.join(RUNS_ROOT, 'watch.mjs'),
+    watch_launcher_ascii: isAscii(path.join(RUNS_ROOT, 'watch.mjs')),
     preferences: [USER_PREFS, ...(o.cwd ? [path.join(resolveDir(o.cwd), PROJECT_PREFS)] : [])]
       .map((file) => ({ file, exists: fs.existsSync(file) })),
     codex: codexCommand(),
@@ -1224,6 +1295,8 @@ async function cmdCheck(o) {
       model: codexAgent.model || codexConfigModel(),
       fix: !installed ? M.fixCodexMissing : loggedIn ? null : M.fixCodexLogin,
     },
+    // 只影响桌面版终端面板里的实时查看，不计入总体结果
+    watch: { ok: isAscii(path.join(RUNS_ROOT, 'watch.mjs')), launcher: path.join(RUNS_ROOT, 'watch.mjs'), fix: isAscii(path.join(RUNS_ROOT, 'watch.mjs')) ? null : M.fixLauncherNotAscii },
     agents: {},
   };
   for (const [name, agent] of Object.entries(cfg.agents)) {
@@ -1245,7 +1318,7 @@ async function checkApiAgent(name, agent) {
     });
     return { ...out, ok: true, seconds: Number(((Date.now() - started) / 1000).toFixed(1)), reply: redactKey(reply.content, apiKey).trim().slice(0, 40), usage: apiUsage(reply.usage), fix: null };
   } catch (e) {
-    const fix = { auth: M.fixApiAuth(name, source, agent.api_key_env), balance: M.fixApiBalance, bad_request: M.fixApiRequest(name), network: M.fixApiNetwork(agent.base_url) }[e.kind] || M.fixApiRetry;
+    const fix = { auth: M.fixApiAuth(name, source, agent.api_key_env), balance: M.fixApiBalance, bad_request: M.fixApiRequest(name), network: M.fixApiNetwork(agent.base_url), busy: M.fixApiBusy }[e.kind] || M.fixApiRetry;
     return { ...out, error: `${e.kind}${e.status ? ` ${e.status}` : ''}: ${redactKey(e.message, apiKey)}`, fix };
   }
 }
@@ -1275,6 +1348,7 @@ function describeActivity(dir) {
     step = last.type === 'api.request' ? M.stepApiWaiting
       : last.type === 'api.reasoning' ? M.stepApiThinking(last.total_chars)
       : last.type === 'api.content' ? M.stepApiAnswering(last.total_chars)
+      : last.type === 'api.queued' ? M.stepApiQueued
       : last.type === 'api.retry' ? M.stepApiRetry(last.reason)
       : last.type === 'api.repair' ? M.stepApiRepair
       : last.type === 'api.error' ? last.message
@@ -1287,11 +1361,18 @@ function describeActivity(dir) {
   return { idle_min: Number(((Date.now() - st.mtimeMs) / 60000).toFixed(1)), step };
 }
 
+// 一个组的任务，只取同一会话派出的那一批：当前会话用过这个组名就取当前会话的，
+// 否则（比如在终端里查看）跟最新派出的任务所在的会话。旧记录没有会话 ID，彼此算同一批。
 function groupRuns(group, since = 0) {
-  return listRuns().map((id) => {
+  const runs = listRuns().map((id) => {
     const dir = path.join(RUNS_ROOT, id);
     return { id, dir, meta: readMeta(dir) };
   }).filter(({ meta }) => meta?.group === group && Date.parse(meta.started_at) >= since);
+  if (!runs.length) return runs;
+  const sessionOf = (run) => run.meta.claude_session ?? null;
+  const newest = runs.reduce((a, b) => (Date.parse(b.meta.started_at) > Date.parse(a.meta.started_at) ? b : a));
+  const batch = CLAUDE_SESSION && runs.some((run) => sessionOf(run) === CLAUDE_SESSION) ? CLAUDE_SESSION : sessionOf(newest);
+  return runs.filter((run) => sessionOf(run) === batch);
 }
 
 // 准入检查（在登记锁内）：同一协作方正在运行的任务不超过它的 max_parallel，所有组和会话都算，
@@ -1317,6 +1398,17 @@ function checkAdmission(meta, cfg) {
     if (paths.length) return M.scopeOverlap(meta.group, other.id, paths);
   }
   return null;
+}
+
+// 任务的结束时间。中断的任务没写结束时间，用记录文件最后修改的时间，也就是最后一次活动的时间。
+function runEnd(dir, meta) {
+  if (meta.ended_at) return Date.parse(meta.ended_at);
+  if (isRunning(meta)) return Date.now();
+  let last = 0;
+  for (const file of ['events.jsonl', 'meta.json']) {
+    try { last = Math.max(last, fs.statSync(path.join(dir, file)).mtimeMs); } catch { /* 没有这个文件 */ }
+  }
+  return last || Date.now();
 }
 
 function runOutcome(run) {
@@ -1353,8 +1445,7 @@ function cmdStatus(o) {
     const dir = path.join(RUNS_ROOT, rid);
     const m = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
     if (m.status === 'running' && !pidAlive(m.pid)) m.status = 'interrupted';
-    const end = m.ended_at ? new Date(m.ended_at) : new Date();
-    const mins = ((end - new Date(m.started_at)) / 60000).toFixed(1);
+    const mins = ((runEnd(dir, m) - Date.parse(m.started_at)) / 60000).toFixed(1);
     let row = `${rid}  ${m.mode.padEnd(6)}  ${m.status.padEnd(11)}  ${(m.level || '-').padEnd(7)}  ${whoOf(m)}  ${mins.padStart(6)}min  ${m.group != null ? M.statusGroup(m.group) : ''}${m.round ? M.statusRound(m.round) : ''}${m.title || ''}  @ ${m.cwd}`;
     if (m.status === 'running') {
       const a = describeActivity(dir);
@@ -1484,6 +1575,10 @@ function wrapWidth(s, width) {
 }
 
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+// 能画实时画面的终端：输出到终端，而且不是 TERM=dumb 这种不认光标控制的终端
+const liveCapable = () => process.stdout.isTTY && process.env.TERM !== 'dumb';
+// 桌面版的终端面板只接受 ASCII 命令；记录目录路径里有非 ASCII 字符时，实时查看的命令发不出去
+const isAscii = (s) => /^[ -~]*$/.test(s);
 // 结果里的改动数只算有证据是 Codex 改的；旧记录没有归属信息，按全部改动算。
 const changedText = (c) => (c?.available ? M.watchChanged(c.codex_total ?? c.files_total, c.codex_total == null ? 0 : c.unknown_total) : M.watchNotTracked);
 const paint = (code) => (s) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -1584,6 +1679,7 @@ function apiVerboseRenderer(meta, rel) {
     const out = (text) => process.stdout.write(`${ev.ts ? new Date(ev.ts).toTimeString().slice(0, 8) : '        '} ${text}\n`);
     if (ev.type === 'api.request') out(M.watchApiRequest(ev.model, ev.effort, ev.attempt));
     else if (ev.type === 'api.reasoning' || ev.type === 'api.content') out(ev.text);
+    else if (ev.type === 'api.queued') out(M.watchApiQueuedLive(clock(ev.waited_s * 1000)));
     else if (ev.type === 'api.retry') out(M.watchApiRetry(ev.reason, ev.wait_s));
     else if (ev.type === 'api.repair') out(M.watchApiRepair(M.list(ev.errors)));
     else if (ev.type === 'api.error') out(ev.message);
@@ -1640,7 +1736,7 @@ const splitKeys = (s) => s.match(/\x1b\[[0-9;]*[A-Za-z~]|\x1bO[A-Za-z]|[\s\S]/g)
 // 任务还在运行时，时间线画在备用屏幕里：最后一行是状态行（用时、命令数、改动数、计划进度），
 // 窗口大小变化时整屏按新宽度重新排版，可以用方向键和翻页键往回翻；结束或退出查看时，
 // 把完整的时间线写进普通屏幕留作记录。任务已经结束时直接按当前宽度输出。
-function timelineRenderer(meta, rel, { screen: useScreen = false } = {}) {
+function timelineRenderer(meta, rel, { screen: useScreen = false, dir = null } = {}) {
   const cols = () => process.stdout.columns || 100;
   const TIME_W = 6; // "00:41 "
   const inner = (W) => Math.max(20, W - 1 - TIME_W - 2);
@@ -1703,21 +1799,28 @@ function timelineRenderer(meta, rel, { screen: useScreen = false } = {}) {
   // ---- 状态行、翻看 ----
   const started = Date.parse(meta.started_at);
   const stats = { commands: 0, searches: 0, files: new Set(), plan: null, latest: '' };
-  const api = { req: null, chars: 0, answerChars: 0, answering: false };
+  const api = { req: null, chars: 0, answerChars: 0, answering: false, queued: false };
   let tick = 0;
   let ticker = null;
   let offset = 0; // 往回翻了多少行，0 表示跟着最新的内容
+  // 排队时按 x 终止：第一次按要求确认，第二次才写终止标记
+  let confirmCancel = false;
+  let cancelSent = false;
   let lastTotal = 0;
   let lastWidth = 0;
   function statusLine(W) {
     const room = W - 3;
     const spin = C.cyan(SPIN[tick % SPIN.length]);
-    const main = `${modelOf(meta)} · ${api.req
+    const main = `${modelOf(meta)} · ${api.queued
+      ? M.watchApiQueuedLive(clock(Date.now() - Date.parse(api.req)))
+      : api.req
       ? M.watchApiLive(api.answering, clock(Date.now() - Date.parse(api.req)), (api.answering ? api.answerChars : api.chars).toLocaleString('en-US'))
       : M.watchLive({ time: clock(Date.now() - started), commands: stats.commands, searches: stats.searches, files: stats.files.size, plan: stats.plan })}`;
+    if (cancelSent) return `${spin} ${C.yellow(fitWidth(`${main} · ${M.watchCancelSent}`, room))}`;
+    if (confirmCancel) return `${spin} ${C.yellow(fitWidth(M.watchCancelConfirm(modelOf(meta)), room))}`;
     if (offset) return `${spin} ${C.yellow(fitWidth(`${main} · ${M.watchScrolled(offset)}`, room))}`;
     const text = main + (stats.latest && !api.req ? ` · ${stats.latest}` : '');
-    const hint = M.watchKeys;
+    const hint = api.queued && dir ? M.watchKeysQueued : M.watchKeys;
     if (textWidth(main) + textWidth(hint) + 2 > room) return `${spin} ${C.dim(fitWidth(text, room))}`;
     const body = fitWidth(text, room - textWidth(hint) - 2);
     return `${spin} ${C.dim(body)}${' '.repeat(room - textWidth(body) - textWidth(hint))}${C.dim(hint)}`;
@@ -1738,6 +1841,15 @@ function timelineRenderer(meta, rel, { screen: useScreen = false } = {}) {
     const page = Math.max(1, (process.stdout.rows || 30) - 2);
     for (const k of splitKeys(d.toString('utf8'))) {
       if (k === '\x03' || k === 'q') { detach(k === '\x03' ? 130 : 0); return; }
+      if ((k === 'x' || k === 'X') && api.queued && dir && !cancelSent) {
+        if (confirmCancel) {
+          fs.writeFileSync(path.join(dir, CANCEL_FILE), new Date().toISOString());
+          cancelSent = true;
+        }
+        confirmCancel = !confirmCancel && !cancelSent;
+        continue;
+      }
+      confirmCancel = false;
       if (k === '\x1b[A' || k === '\x1bOA' || k === 'k') offset += 1;
       else if (k === '\x1b[B' || k === '\x1bOB' || k === 'j') offset = Math.max(0, offset - 1);
       else if (k === '\x1b[5~' || k === 'b') offset += page;
@@ -1766,20 +1878,31 @@ function timelineRenderer(meta, rel, { screen: useScreen = false } = {}) {
 
   const showApi = (ev) => {
     if (ev.type === 'api.request') {
-      Object.assign(api, { req: ev.ts, chars: 0, answerChars: 0, answering: false });
+      Object.assign(api, { req: ev.ts, begin: null, chars: 0, answerChars: 0, answering: false, queued: false });
       say(ev.ts, C.cyan('◆'), M.watchApiRequest(ev.model, ev.effort, ev.attempt));
+    } else if (ev.type === 'api.queued') {
+      // 服务繁忙，请求在排队：只在第一次记一笔，状态行显示已经等了多久
+      if (!api.queued) say(ev.ts, C.yellow('⋯'), M.watchApiQueued, C.yellow, 1);
+      api.queued = true;
+    } else if ((ev.type === 'api.reasoning' || ev.type === 'api.content') && api.queued) {
+      api.queued = false;
+      api.begin = ev.ts;
+      say(ev.ts, C.cyan('◆'), M.watchApiDequeued(M.duration((Date.parse(ev.ts) - Date.parse(api.req)) / 1000)));
+      showApi(ev);
     } else if (ev.type === 'api.reasoning') {
       api.chars = ev.total_chars;
     } else if (ev.type === 'api.content') {
       // 回答是 JSON 报告，不逐字显示；开始回答时记一笔思考了多久
       if (!api.answering) {
         api.answering = true;
-        const thought = (Date.parse(ev.ts) - Date.parse(api.req)) / 1000;
+        const thought = (Date.parse(ev.ts) - Date.parse(api.begin || api.req)) / 1000; // 排过队的从开始处理算起
         say(ev.ts, C.cyan('◆'), api.chars ? M.watchApiThought(M.duration(thought), api.chars.toLocaleString('en-US')) : M.watchApiAnswering);
       }
       api.answerChars = ev.total_chars;
     } else if (ev.type === 'api.retry') say(ev.ts, C.yellow('⚠'), M.watchApiRetry(ev.reason, ev.wait_s), C.yellow, 3);
     else if (ev.type === 'api.repair') say(ev.ts, C.yellow('⚠'), M.watchApiRepair(M.list(ev.errors)), C.yellow, 3);
+    else if (ev.type === 'api.error' && ev.kind === 'cancelled') { /* 用户终止，结尾那行会写明 */ }
+    else if (ev.type === 'api.error' && ev.kind === 'busy') say(ev.ts, C.yellow('⚠'), M.watchApiDropped(M.duration(ev.waited_s || 0)), C.yellow, 2);
     else if (ev.type === 'api.error') say(ev.ts, C.red('✗'), oneLine(ev.message), C.red, 3);
   };
 
@@ -1904,7 +2027,7 @@ function createFeed(run) {
   const file = path.join(run.dir, 'events.jsonl');
   const decoder = new TextDecoder('utf-8');
   const items = []; // { text, style, clip }：clip 的条目只占一行，超出截断；其余按面板宽度折行
-  const stats = { commands: 0, api: false, req: null, chars: 0, answerChars: 0, answering: false };
+  const stats = { commands: 0, api: false, req: null, chars: 0, answerChars: 0, answering: false, queued: false };
   let offset = 0;
   let buf = '';
   let thinking = null; // API 的思考内容一直追加在同一条里
@@ -1915,19 +2038,26 @@ function createFeed(run) {
   const take = (ev) => {
     const it = ev.item || {};
     if (ev.type === 'api.request') {
-      Object.assign(stats, { api: true, req: ev.ts, chars: 0, answerChars: 0, answering: false });
+      Object.assign(stats, { api: true, req: ev.ts, chars: 0, answerChars: 0, answering: false, queued: false });
       thinking = null;
       push(M.watchApiRequest(ev.model, ev.effort, ev.attempt), 'dim');
+    } else if (ev.type === 'api.queued') {
+      if (!stats.queued) push(`⋯ ${M.watchApiQueued}`, 'yellow');
+      stats.queued = true;
     } else if (ev.type === 'api.reasoning') {
+      stats.queued = false;
       stats.chars = ev.total_chars;
       if (!thinking) { thinking = { text: '', style: 'dim', clip: false }; items.push(thinking); }
       thinking.text = (thinking.text + ev.text).slice(-3000);
     } else if (ev.type === 'api.content') {
       // 回答是 JSON 报告，不逐字展示，进度在标题行右侧
+      stats.queued = false;
       stats.answering = true;
       stats.answerChars = ev.total_chars;
     } else if (ev.type === 'api.retry') push(M.watchApiRetry(ev.reason, ev.wait_s), 'yellow');
     else if (ev.type === 'api.repair') push(M.watchApiRepair(M.list(ev.errors)), 'yellow');
+    else if (ev.type === 'api.error' && ev.kind === 'cancelled') stats.queued = false;
+    else if (ev.type === 'api.error' && ev.kind === 'busy') { stats.queued = false; push(`⚠ ${M.watchApiDropped(M.duration(ev.waited_s || 0))}`, 'yellow'); }
     else if (ev.type === 'api.error' || ev.type === 'turn.failed' || ev.type === 'error') {
       const msg = oneLine(ev.message || ev.error?.message || '');
       const re = RECONNECT.exec(msg);
@@ -1968,23 +2098,27 @@ function createFeed(run) {
   return { read, items, stats };
 }
 
-// 组视图的一块：标题行（左边是模型，右边是状态和用时）加固定行数的正文。运行中显示最新的信息流，结束后显示结论。
-function panelLines(run, feed, rows, width, withTitle) {
+// 组视图一块的标题行：左边是模型，右边是状态和用时（结束后加上改动），放不下右侧时只留左侧
+function panelHead(run, stats, width, withTitle) {
   const { running, status, result: r, ok } = runOutcome(run);
   const m = run.meta;
-  const elapsed = (m.ended_at ? Date.parse(m.ended_at) : Date.now()) - Date.parse(m.started_at);
+  const elapsed = runEnd(run.dir, m) - Date.parse(m.started_at);
   const color = running ? C.cyan : ok ? C.green : C.red;
   const left = `${running ? '●' : ok ? '✔' : '✗'} ${whoOf(m)}${withTitle && m.title ? `  ${oneLine(m.title)}` : ''}`;
-  const s = feed.stats;
-  const right = !running ? `${M.statusName(shownStatus(status, r))} · ${M.duration(r?.duration_s ?? elapsed / 1000)}`
+  const s = stats;
+  const right = !running ? [M.statusName(shownStatus(status, r)), M.duration(r?.duration_s ?? elapsed / 1000), changedFor(r, m)].filter(Boolean).join(' · ')
+    : s.queued ? M.watchApiQueuedLive(clock(Date.now() - Date.parse(s.req)))
     : s.req ? M.watchApiLive(s.answering, clock(elapsed), (s.answering ? s.answerChars : s.chars).toLocaleString('en-US'))
     : [M.statusName('running'), clock(elapsed), s.commands ? M.panelCommands(s.commands) : ''].filter(Boolean).join(' · ');
-  // 放不下右侧时只留左侧
-  let head;
-  if (textWidth(right) + 16 <= width) {
-    const l = fitWidth(left, width - textWidth(right) - 2);
-    head = color(C.bold(l)) + ' '.repeat(width - textWidth(l) - textWidth(right)) + C.dim(right);
-  } else head = color(C.bold(fitWidth(left, width)));
+  if (textWidth(right) + 16 > width) return color(C.bold(fitWidth(left, width)));
+  const l = fitWidth(left, width - textWidth(right) - 2);
+  return color(C.bold(l)) + ' '.repeat(width - textWidth(l) - textWidth(right)) + C.dim(right);
+}
+
+// 组视图的一块：标题行加固定行数的正文。运行中显示最新的信息流，结束后显示结论。
+function panelLines(run, feed, rows, width, withTitle) {
+  const { running, result: r, ok } = runOutcome(run);
+  const head = panelHead(run, feed.stats, width, withTitle);
   const inner = width - 2;
   let body = [];
   const final = r?.report?.position || r?.report?.summary;
@@ -2014,20 +2148,38 @@ function groupCounts(all) {
   return [running && C.cyan(M.groupCount.running(running)), ok && C.green(M.groupCount.ok(ok)), failed && C.red(M.groupCount.failed(failed))].filter(Boolean).join(C.dim(' · '));
 }
 
+// 组的标题行：左边是组名和标题，右边是各状态的个数，放不下右侧时只留左侧
+function groupHeadLine(group, title, all, width) {
+  const counts = groupCounts(all);
+  const countsW = textWidth(counts.replace(/\x1b\[[0-9;]*m/g, ''));
+  if (countsW + 14 > width) return C.bold(fitWidth(M.groupHeader(group, title, all.length), width));
+  const left = fitWidth(M.groupHeader(group, title, all.length), width - countsW - 2);
+  return C.bold(left) + ' '.repeat(width - textWidth(left) - countsW) + counts;
+}
+
 async function watchGroup(group) {
-  const recentRuns = () => groupRuns(group, Date.now() - 86400000).reverse();
+  // 被续接过的任务（讨论的上一轮、返工前的那次）由续接的新任务代替，不再单独显示
+  const current = (runs) => {
+    const replaced = new Set(runs.map((run) => run.meta.parent).filter(Boolean));
+    return runs.filter((run) => !replaced.has(run.id));
+  };
+  const recentRuns = () => current(groupRuns(group, Date.now() - 86400000)).reverse();
   let runs;
   for (let waited = 0; ; waited += 500) {
     runs = recentRuns();
-    if (runs.length) break;
+    // 找到的一批都已结束时多等几秒：可能是别的会话用过的同名组，新派出的任务还没登记
+    if (runs.some((run) => isRunning(run.meta)) || (runs.length && waited >= 5000)) break;
     if (waited >= 15000) die(M.groupNotFound(group));
-    if (waited === 0) process.stdout.write(`${M.watchWaiting}\n`);
+    if (waited === 0 && !runs.length) process.stdout.write(`${M.watchWaiting}\n`);
     await sleep(500);
   }
   const known = new Map();
   const feeds = new Map();
   let lastAdded = Date.now();
   const refresh = () => {
+    // 换成了另一批（新会话用同一个组名派出了任务），上一批的不再显示
+    const ids = new Set(runs.map((run) => run.id));
+    for (const id of [...known.keys()]) if (!ids.has(id)) { known.delete(id); feeds.delete(id); }
     for (const run of runs) {
       if (!known.has(run.id)) { lastAdded = Date.now(); feeds.set(run.id, createFeed(run)); }
       known.set(run.id, run);
@@ -2037,14 +2189,23 @@ async function watchGroup(group) {
   const anyRunning = () => [...known.values()].some((run) => isRunning(run.meta));
   const settled = () => !anyRunning() && Date.now() - lastAdded >= 5000; // 等几秒，同组后派出的任务也能收进来
   // 同组任务标题相同时（比如一场讨论）标题只在顶上写一次；不同时（拆开的执行任务）写在每块面板上。
+  // 讨论的第 2 轮起，标题后面写上第几轮
   const sharedTitle = () => {
-    const titles = new Set([...known.values()].map((run) => run.meta.title || ''));
-    return titles.size === 1 ? [...titles][0] : '';
+    const all = [...known.values()];
+    const titles = new Set(all.map((run) => run.meta.title || ''));
+    if (titles.size !== 1) return '';
+    const rounds = new Set(all.map((run) => run.meta.round ?? null));
+    const round = rounds.size === 1 ? [...rounds][0] : null;
+    return [[...titles][0], round > 1 ? M.watchRound(round) : ''].filter(Boolean).join(' · ');
   };
 
-  if (process.stdout.isTTY && anyRunning()) {
+  if (liveCapable() && anyRunning()) {
     // 实时面板：用 liveScreen 在备用屏幕里整屏重画，窗口大小变化时按新尺寸重画。
     // 结束后回到原来的屏幕，再输出最终汇总，留作记录。
+    // 有模型在排队时按 x 终止：第一次按要求确认，第二次给所有排队中的任务写终止标记
+    let confirmCancel = false;
+    const cancelSent = new Set();
+    const queuedRuns = () => [...known.values()].filter((run) => isRunning(run.meta) && feeds.get(run.id).stats.queued && !cancelSent.has(run.id));
     const render = (W, H) => {
       const all = [...known.values()];
       const width = Math.max(20, W - 1);
@@ -2052,21 +2213,29 @@ async function watchGroup(group) {
       // 顶部标题一行、底部提示一行，每块有分隔线和标题行；正文行数按窗口高度平均分，最多 8 行
       const rows = Math.max(2, Math.min(8, Math.floor((H - 2 - all.length * 2) / all.length)));
       const title = sharedTitle();
-      const counts = groupCounts(all);
-      const countsW = textWidth(counts.replace(/\x1b\[[0-9;]*m/g, ''));
-      let head;
-      if (countsW + 14 <= width) {
-        const left = fitWidth(M.groupHeader(group, title, all.length), width - countsW - 2);
-        head = C.bold(left) + ' '.repeat(width - textWidth(left) - countsW) + counts;
-      } else head = C.bold(fitWidth(M.groupHeader(group, title, all.length), width));
-      const out = [head];
+      const out = [groupHeadLine(group, title, all, width)];
       for (const run of all) out.push(C.dim('─'.repeat(width)), ...panelLines(run, feeds.get(run.id), rows, width, !title));
       const lines = out.slice(0, H - 1);
       while (lines.length < H - 1) lines.push('');
-      lines.push(C.dim(fitWidth(M.dashHint, width)));
+      const queued = queuedRuns();
+      if (confirmCancel && queued.length) lines.push(C.yellow(fitWidth(M.dashCancelConfirm(M.list(queued.map((run) => modelOf(run.meta)))), width)));
+      else lines.push((queued.length ? C.yellow : C.dim)(fitWidth(queued.length ? M.dashHintQueued : M.dashHint, width)));
       return lines;
     };
     const screen = liveScreen(render);
+    const onKeys = (d) => {
+      for (const k of splitKeys(d.toString('utf8'))) {
+        if (k === '\x03' || k === 'q') { screen.stop(); process.exit(k === '\x03' ? 130 : 0); }
+        if ((k === 'x' || k === 'X') && queuedRuns().length) {
+          if (confirmCancel) {
+            for (const run of queuedRuns()) { fs.writeFileSync(path.join(run.dir, CANCEL_FILE), new Date().toISOString()); cancelSent.add(run.id); }
+          }
+          confirmCancel = !confirmCancel;
+        } else confirmCancel = false;
+      }
+      screen.draw();
+    };
+    if (process.stdin.isTTY) { process.stdin.setRawMode(true); process.stdin.resume(); process.stdin.on('data', onKeys); }
     process.on('exit', () => screen.stop());
     process.on('SIGINT', () => { screen.stop(); process.exit(130); });
     screen.start();
@@ -2077,8 +2246,9 @@ async function watchGroup(group) {
       for (const run of known.values()) run.meta = readMeta(run.dir) || run.meta;
       if (tick % 2 === 1) { runs = recentRuns(); refresh(); }
     }
+    if (process.stdin.isTTY) { process.stdin.off('data', onKeys); process.stdin.setRawMode(false); process.stdin.pause(); }
     screen.stop();
-  } else if (!process.stdout.isTTY && anyRunning()) {
+  } else if (anyRunning()) {
     // 输出被重定向时（比如被别的程序读取），每个任务状态变化时写一行。
     process.stdout.write(`${M.groupHeader(group, sharedTitle(), known.size)}\n`);
     const states = new Map();
@@ -2096,20 +2266,21 @@ async function watchGroup(group) {
     }
   }
 
-  // 最终汇总：写在正常屏幕里；长段文字交给终端自动折行，拉动窗口时会重新排版。
+  // 最终汇总：写在正常屏幕里，排版和实时面板一致（标题行、分隔线、每块的标题行），正文不限行数。
   const all = [...known.values()];
   const title = sharedTitle();
-  process.stdout.write(`\n${C.bold(M.groupHeader(group, title, all.length))}\n${groupSummary(all)}\n`);
+  const width = Math.max(20, (process.stdout.columns || 100) - 1);
+  const inner = width - 2;
+  const out = ['', groupHeadLine(group, title, all, width)];
   for (const run of all) {
-    const { status, result: r, ok } = runOutcome(run);
-    const seconds = r?.duration_s ?? Math.round(((Date.parse(run.meta.ended_at) || Date.now()) - Date.parse(run.meta.started_at)) / 1000);
-    const head = `${ok ? '✔' : '✗'} ${whoOf(run.meta)}${title ? '' : `  ${oneLine(run.meta.title || '')}`}`;
-    process.stdout.write(`\n${(ok ? C.green : C.red)(C.bold(head))}\n  ${M.watchFinished(M.statusName(shownStatus(status, r)), M.duration(seconds), changedFor(r, run.meta))}\n`);
-    if (r?.usage) process.stdout.write(`  ${C.dim(M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (run.meta.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total'))}\n`);
+    const { result: r, ok } = runOutcome(run);
+    out.push(C.dim('─'.repeat(width)), panelHead(run, feeds.get(run.id).stats, width, !title));
+    if (r?.usage) out.push(`  ${C.dim(fitWidth(M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (run.meta.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total'), inner))}`);
     const final = r?.report?.position || r?.report?.summary;
-    if (final) process.stdout.write(`  ${M.watchOpinion(final.trim()).replace(/\n+/g, '\n  ')}\n`);
-    for (const e of realErrors(r, ok)) process.stdout.write(`  ${C.red(`✗ ${oneLine(e)}`)}\n`);
+    if (final) for (const l of wrapWidth(M.watchOpinion(final.trim()), inner)) out.push(`  ${l}`);
+    for (const e of realErrors(r, ok)) for (const l of wrapWidth(`✗ ${oneLine(e)}`, inner)) out.push(`  ${C.red(l)}`);
   }
+  process.stdout.write(`${out.join('\n')}\n`);
 }
 
 async function cmdWatch(o) {
@@ -2118,7 +2289,7 @@ async function cmdWatch(o) {
   const cwd = meta.cwd;
   const rel = (p) => { const r = path.relative(cwd, p); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r : p; };
   // 任务还在运行、输出到终端时，时间线画在可以随窗口重排的实时画面里
-  const view = !o.verbose ? timelineRenderer(meta, rel, { screen: process.stdout.isTTY && isRunning(meta) })
+  const view = !o.verbose ? timelineRenderer(meta, rel, { screen: liveCapable() && isRunning(meta), dir })
     : (meta.agent_type === 'openai-compatible' ? apiVerboseRenderer : verboseRenderer)(meta, rel);
   view.header(id, dir);
 
@@ -2159,7 +2330,91 @@ async function cmdWatch(o) {
   view.finish(fs.existsSync(resFile) ? JSON.parse(fs.readFileSync(resFile, 'utf8')) : null, m);
 }
 
+// ---------- cancel / await-busy ----------
+
+// 终止一个正在运行的任务：先留终止标记，让它自己停下、写好结果；10 秒内没停（比如旧版本的脚本）就直接结束进程。
+// 已经结束、没正常完成的任务，标记为已处理。
+async function cmdCancel(o) {
+  const run = findRun(need(o, 'run'));
+  const print = (x) => process.stdout.write(`${JSON.stringify({ run_id: run.id, ...x }, null, 2)}\n`);
+  if (!isRunning(run.meta)) {
+    const status = run.meta.status === 'running' ? 'interrupted' : run.meta.status;
+    if (!UNFINISHED_STATUSES.includes(status)) { print({ ok: false, status }); return; }
+    const m = readMeta(run.dir) || run.meta;
+    m.dismissed_at = new Date().toISOString();
+    fs.writeFileSync(path.join(run.dir, 'meta.json'), JSON.stringify(m, null, 2));
+    print({ ok: true, status, dismissed: true });
+    return;
+  }
+  fs.writeFileSync(path.join(run.dir, CANCEL_FILE), new Date().toISOString());
+  for (let i = 0; i < 20; i++) {
+    await sleep(500);
+    const m = readMeta(run.dir);
+    if (!isRunning(m)) { print({ ok: true, status: m?.status }); return; }
+  }
+  killTree(run.meta.pid);
+  const m = readMeta(run.dir) || run.meta;
+  Object.assign(m, { status: 'cancelled', ended_at: new Date().toISOString() });
+  fs.writeFileSync(path.join(run.dir, 'meta.json'), JSON.stringify(m, null, 2));
+  print({ ok: true, status: 'cancelled', forced: true });
+}
+
+// API 协作方这次请求排队了多少秒：最近一次 api.request 之后收到过 api.queued、还没收到思考或回答。不在排队返回 null。
+function queuedSeconds(dir) {
+  const file = path.join(dir, 'events.jsonl');
+  let text;
+  try {
+    const st = fs.statSync(file);
+    const len = Math.min(st.size, 512 * 1024);
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(file, 'r');
+    try { fs.readSync(fd, buf, 0, len, st.size - len); } finally { fs.closeSync(fd); }
+    text = buf.toString('utf8');
+  } catch { return null; }
+  let request = null;
+  let queued = false;
+  for (const line of text.split('\n')) {
+    let ev;
+    try { ev = JSON.parse(line); } catch { continue; }
+    if (ev.type === 'api.request') { request = ev; queued = false; }
+    else if (ev.type === 'api.queued') queued = true;
+    else if (ev.type === 'api.reasoning' || ev.type === 'api.content' || ev.type === 'api.error') queued = false;
+  }
+  return request && queued ? Math.round((Date.now() - Date.parse(request.ts)) / 1000) : null;
+}
+
+// 在后台盯着一组或一个任务：有 API 协作方排队超过 --after 分钟就退出，列出是哪几个；全部结束也退出。
+// Claude 收到它退出的通知后，按输出决定要不要问用户终止排队的那一方。
+async function cmdAwaitBusy(o) {
+  if (o.group == null && !o.run) die(M.missingOpt('group'));
+  if (o.after != null && !(Number(o.after) > 0)) die(M.badAfter(CONFIG.dispatch.busy_ask_min));
+  const after = Number(o.after ?? CONFIG.dispatch.busy_ask_min);
+  const print = (x) => process.stdout.write(`${JSON.stringify(x, null, 2)}\n`);
+  if (!(after > 0)) { print({ busy: [], running: [], done: true, disabled: true }); return; }
+  const pick = () => (o.group != null ? groupRuns(o.group, Date.now() - 86400000) : [findRun(o.run)]);
+  // 刚派出的任务可能还没登记，最多等 30 秒
+  for (let waited = 0; o.group != null && !pick().length; waited += 1000) {
+    if (waited >= 30000) { print({ busy: [], running: [], done: true }); return; }
+    await sleep(1000);
+  }
+  for (;;) {
+    const running = pick().filter((run) => isRunning(run.meta));
+    const busy = running.map((run) => ({ run, s: queuedSeconds(run.dir) })).filter((x) => x.s != null && x.s >= after * 60);
+    if (busy.length || !running.length) {
+      print({
+        busy: busy.map(({ run, s }) => ({ run_id: run.id, agent: run.meta.agent, model: modelOf(run.meta), queued_min: Number((s / 60).toFixed(1)) })),
+        running: running.map((run) => run.id),
+        done: !running.length,
+      });
+      return;
+    }
+    await sleep(3000);
+  }
+}
+
 const { cmd, opts } = parseArgs(process.argv.slice(2));
-const commands = { run: cmdRun, discuss: cmdDiscuss, resume: cmdResume, review: cmdReview, status: cmdStatus, watch: cmdWatch, config: cmdConfig, check: cmdCheck };
+// 新建任务组时组名只用 ASCII：实时查看要把它写进终端命令，桌面版的终端面板只接受 ASCII 命令。
+if (['run', 'discuss', 'resume'].includes(cmd) && opts.group != null && !/^[A-Za-z0-9._-]{1,64}$/.test(opts.group)) die(M.badGroupName(opts.group));
+const commands = { run: cmdRun, discuss: cmdDiscuss, resume: cmdResume, review: cmdReview, status: cmdStatus, watch: cmdWatch, config: cmdConfig, check: cmdCheck, cancel: cmdCancel, 'await-busy': cmdAwaitBusy };
 if (!commands[cmd]) die(M.usage);
 await commands[cmd](opts);

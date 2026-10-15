@@ -75,6 +75,7 @@
     "discuss_max_rounds": 2,
     "timeout_min": 480,
     "stall_min": 40,
+    "busy_ask_min": 2,
     "runs_dir": null
   },
   "agents": {
@@ -123,13 +124,13 @@
 
 ### 任务等级、模型和推理强度
 
-Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复杂 `complex`。每一级交给谁、用哪个模型和推理强度，由你在 `levels` 里决定。没有隐式默认：Claude 每次都必须给出等级，漏了脚本直接报错，不会悄悄按某个档位运行。
+Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复杂 `complex`。等级看的是需要多少判断、出错的代价有多大，不看改动多少：照清单机械地改 20 个文件是简单，改模块之间的接口是复杂。每一级交给谁（包括 Claude 自己）、用哪个模型和推理强度，由你在 `levels` 里决定。没有隐式默认：Claude 每次都必须给出等级，漏了脚本直接报错，不会悄悄按某个档位运行。
 
 - 每一级写 `agent`（交给 `agents` 里的哪一方）和 `effort`（推理强度）；需要时再写 `model`，覆盖这一方的默认模型。不写 `model` 时用 `agents` 里的默认模型；Codex 的默认模型也是 `null` 时，用 Codex 自己配置的模型。示例只是一种搭配，换成你账号能用、适合你任务的模型。
 - Codex 的 `effort` 可选 `low`、`medium`、`high`、`xhigh`、`max`、`ultra`。模型不支持的档位会被 Codex 拒绝，报错会出现在结果里。
 - 你想临时指定时，可以对 Claude 说"用 ultra 跑"或"用某某模型跑"，Claude 会改用 `--effort` 或 `--model`。
-- `run` 的某一级想让 Claude 自己做、不派给 Codex，就把那一级整个写成 `"claude"`，比如 `"simple": "claude"`。这一级没有模型和推理强度可设：Claude 遇到这一级的执行任务会自己动手，脚本也会拒绝把它派出去。你明确要求某个任务派给 Codex 时，Claude 会加 `--model`，推理强度用内置默认值。审查和讨论需要另一个模型，不支持这样写。
-- 不管怎么配置，改动不到约 100 行、做法明确的小任务，Claude 都会自己做：这类任务派出去不划算，Codex 也容易做得过重。
+- `run` 的某一级想让 Claude 自己做、不派给 Codex，就把那一级整个写成 `"claude"`，比如 `"simple": "claude"`。这一级没有模型和推理强度可设：Claude 遇到这一级的执行任务会自己动手，脚本也会拒绝把它派出去。你明确要求某个任务派给 Codex 时，Claude 会加 `--agent codex`，用 Codex 的默认模型，推理强度用内置默认值。审查和讨论需要另一个模型，不支持这样写。
+- 小任务也一样按等级走：做法明确的小改动算 `simple`。默认配置里 `simple` 由 Claude 自己做；把它改成交给 Codex 的话，连很小的改动也会派出去。
 
 ### 让其他模型参加讨论
 
@@ -180,6 +181,7 @@ API 模型自己翻不了代码，Claude 会把相关文件随议题一起发过
 | `dispatch.discuss_max_rounds` | 一场讨论最多几轮（第 1 轮加上之后的续接），每个参与方各自计数。达到上限后脚本拒绝再续接，Claude 按已有结果裁决 | `2` |
 | `dispatch.timeout_min` | 单次任务的总超时（分钟） | `480` |
 | `dispatch.stall_min` | 连续多少分钟没有动静就判定为卡死并结束：Codex 是没有任何活动、也没有命令在执行；API 模型是流式输出里没有任何数据。`0` 表示关闭 | `40` |
+| `dispatch.busy_ask_min` | API 模型因为服务繁忙排队超过多少分钟，Claude 就问你要不要终止它、先用其他参与方的结果继续。`0` 表示不问 | `2` |
 | `dispatch.runs_dir` | 运行记录目录（也可以用环境变量 `CODEX_RUNS_DIR`） | `~/.claude/codex-runs` |
 | `agents.codex.bin` | codex 可执行文件或 `codex.js` 的路径（也可以用环境变量 `CODEX_BIN`） | 自动查找 |
 | `agents.codex.model` | Codex 的默认模型 | `null`，沿用 Codex 配置 |
@@ -189,7 +191,7 @@ API 模型自己翻不了代码，Claude 会把相关文件随议题一起发过
 | `agents.<名字>`（API 模型） | `type` 为 `openai-compatible`；`base_url`、`model` 必填；`api_key`（key 本身，还没填就留空）和 `api_key_env`（存放 key 的环境变量名）任选，都填时用 `api_key`，都没有的不能参加讨论；`extra_body` 可选 | 无 |
 | `levels` | 见上文 | run 的 simple、normal 为 `"claude"`，complex 为 Codex max；review 为 Codex medium / high / max；discuss 三级都只有 Codex，medium / high / max |
 
-项目配置只认 `dispatch.timeout_min`、`dispatch.stall_min`、`agents.codex.model` 和 `levels`，而且不能新增 API 模型参与方，只能去掉。其余字段只能写在用户配置里，这样别人的仓库没法通过项目配置放宽沙箱、换掉可执行文件、把代码发到别的地址，或者擅自花你的额度。敏感项目可以在项目配置的 `levels.discuss` 里只留 Codex，关掉 API 模型。
+项目配置只认 `dispatch.timeout_min`、`dispatch.stall_min`、`dispatch.busy_ask_min`、`agents.codex.model` 和 `levels`，而且不能新增 API 模型参与方，只能去掉。其余字段只能写在用户配置里，这样别人的仓库没法通过项目配置放宽沙箱、换掉可执行文件、把代码发到别的地址，或者擅自花你的额度。敏感项目可以在项目配置的 `levels.discuss` 里只留 Codex，关掉 API 模型。
 
 ### 偏好文件
 
@@ -227,7 +229,12 @@ Codex 额度用完、API 模型余额不足时，任务会标记为 `quota_exhau
 
 ## 平台支持
 
-Windows 上已经实际测试过。macOS 和 Linux 的代码路径已经写好，但还没有测试，欢迎反馈问题。
+Windows 上已经实际测试过，包括命令行版和桌面版（含 Microsoft Store 版）。macOS 和 Linux 的代码路径已经写好，但还没有实际测试，欢迎反馈问题。
+
+几点注意：
+- **桌面版的实时查看**开在终端面板里，终端面板只接受 ASCII 命令。记录目录（默认 `~/.claude/codex-runs`）的路径里有中文等字符时（比如 Windows 用户名是中文），`/codex-bridge:setup` 会提示；在配置里把 `dispatch.runs_dir` 设成纯英文路径就行。命令行版不受影响。
+- **从图形界面启动的程序**（比如 macOS 桌面版）PATH 里可能没有 Homebrew、nvm 等目录。脚本找不到 `codex` 时，会再到 node 所在的目录、`/opt/homebrew/bin`、`/usr/local/bin` 等常见位置找；仍然找不到，就在配置的 `agents.codex.bin` 里写上 `codex` 的完整路径。插件的钩子要用 `node`，也需要能在 PATH 里找到它。
+- 实时查看用到全屏重画，Windows Terminal、macOS 的终端和 iTerm2、VS Code 的终端以及常见的 Linux 终端都支持；`TERM=dumb` 这类简单终端会改成逐行输出。
 
 ## 中文版和英文版
 

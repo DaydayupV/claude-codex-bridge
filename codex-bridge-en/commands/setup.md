@@ -9,9 +9,10 @@ $ARGUMENTS
 
 The script is `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/bridge.mjs`. Go through these steps in order, and tell the user the result of each one briefly:
 
-1. **Check the environment**: run `node "<script path>" check` and show each result in a table (Node.js, Git, Codex, each API model).
+1. **Check the environment**: run `node "<script path>" check` and show each result in a table (Node.js, Git, Codex, live view, each API model).
    - Codex is required. If `codex.ok` is `false`, pass on the `fix` from the result (for example installing the Codex CLI or running `codex login`), ask the user to run `/codex-bridge-en:setup` again once that's done, and stop here.
    - If Git fails, tell the user change tracking won't work and suggest installing it, but carry on.
+   - If the live view (`watch`) fails, pass on its `fix`: it only affects opening live progress automatically in the desktop app's terminal panel, so carry on.
    - API models are optional. If one fails, pass on its `fix` and carry on. The generated config has DeepSeek and MiMo examples that show as failing until their key is filled in; that's expected, so just say they'll work once a key is added.
    - If the script printed "First run: created config file", tell the user where the config file is.
 2. **Review the settings**: run `node "<script path>" config --cwd "<current project dir>"` and use a table to explain `resolved_levels`: who each level of hands-on work, reviews and discussions goes to, with which model and effort. Add that `/codex-bridge-en:config` changes them.

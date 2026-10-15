@@ -9,9 +9,10 @@ $ARGUMENTS
 
 脚本路径是 `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/bridge.mjs`。按下面的顺序进行，每一步用简短的中文告诉用户结果：
 
-1. **检查环境**：运行 `node "<脚本路径>" check`，用表格展示每一项的结果（Node.js、Git、Codex、各个 API 模型）。
+1. **检查环境**：运行 `node "<脚本路径>" check`，用表格展示每一项的结果（Node.js、Git、Codex、实时查看、各个 API 模型）。
    - Codex 是必需的。`codex.ok` 为 `false` 时，把结果里的 `fix` 转告用户（比如安装 Codex CLI、运行 `codex login`），请用户处理好之后再运行一次 `/codex-bridge:setup`，到这里就结束。
    - Git 不通过时，告诉用户改动追踪用不了，建议安装，但可以继续。
+   - 实时查看（`watch`）不通过时，转告 `fix`：只影响桌面版终端面板里自动打开实时进度，可以继续。
    - API 模型是可选的，不通过时转告 `fix`，不影响继续。自动生成的配置里有 DeepSeek 和 MiMo 两个示例，没填 key 时会显示不通过，这是正常的，说一句"填上 key 就能用"即可。
    - 脚本输出了"首次使用，已生成配置文件"时，告诉用户配置文件在哪里。
 2. **查看配置**：运行 `node "<脚本路径>" config --cwd "<当前项目目录>"`，用表格说明 `resolved_levels`：执行、审查、讨论的每个等级分别交给谁、什么模型和推理强度。再说一句：想改的话用 `/codex-bridge:config`。

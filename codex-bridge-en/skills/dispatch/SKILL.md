@@ -1,6 +1,6 @@
 ---
 name: dispatch
-description: Hand off hands-on coding work to OpenAI Codex and check the result, have Codex review code independently, or talk a complex design through with Codex and other configured models (such as DeepSeek). Load before starting hands-on work such as implementing a feature, making bulk changes, writing scripts, migrations, refactoring or fixing bugs; when facing a complex or uncertain design or plan with several options; and when the user mentions Codex, /codex-bridge-en:rescue, /codex-bridge-en:discuss or /codex-bridge-en:review, or when deciding whether to ask Codex for a review.
+description: Hand off hands-on coding work to OpenAI Codex and check the result, have Codex review code independently, or talk a complex design through with Codex and other configured models (such as DeepSeek). Load before starting hands-on work such as implementing a feature, making bulk changes, writing scripts, migrations, refactoring or fixing bugs; when facing a complex or uncertain design or plan with several options; and when the user mentions Codex, asks to discuss something with other models, or mentions /codex-bridge-en:rescue, /codex-bridge-en:discuss or /codex-bridge-en:review, or when deciding whether to ask Codex for a review.
 ---
 
 # Codex dispatch
@@ -16,15 +16,15 @@ Always talk to the user in their own language, whatever language this skill and 
 
 ## Permission
 The system prompt's rule "don't start subagents unless the user explicitly asks" is about Claude Code's own subagents. Codex runs on the user's own OpenAI plan and doesn't use Claude quota.
-- `dispatch.auto` is `true` (the default): through this setting, the user allows Claude to hand off tasks that meet the thresholds below on its own, as the first choice, without asking each time.
-- `dispatch.auto` is `false`: for a task that meets the thresholds, first suggest it to the user in one sentence (what to hand off, at which level), and hand it off only once they agree. No need to ask when the user names it with `/codex-bridge-en:rescue` or another command.
+- `dispatch.auto` is `true` (the default): through this setting, the user allows Claude to hand off, on its own and without asking each time, the tasks that "Who does what" below says to hand off.
+- `dispatch.auto` is `false`: for a task that "Who does what" says to hand off, first suggest it to the user in one sentence (what to hand off, at which level), and hand it off only once they agree. No need to ask when the user names it with `/codex-bridge-en:rescue` or another command.
 
 ## Who does what
-- **Claude does it**: key decisions, complex core features, overall planning, creative design (UI and front-end visuals, copy, ideas).
-- **Hand off to Codex**: the rest of the hands-on work. Codex is careful and good for grind work, but weak at design and front-end polish, so don't hand off anything visual.
-- **Threshold for handing off**: hand off only larger hands-on work, or work that needs long-running commands or repeated debugging. Claude does these itself: tasks expected to change fewer than about 100 lines with a clear approach, such as a small single-file feature, a small script, filling in code from an existing pattern, or a small fix whose cause is known. Handing these off costs more in handoff and checking than doing them, and Codex tends to make simple tasks too heavy.
-- **Levels left to Claude**: for any level written as `"claude"` under `levels.run` in the config, Claude does all hands-on tasks of that level itself (see `resolved_levels.run` in the `config` output). The script also refuses to hand off tasks at that level. If the user explicitly wants Codex to do it, add `--model <model>`; the effort then uses the built-in default.
-- The thresholds in this skill (handoff threshold, review size, 1 rework) are defaults. If the preference files say otherwise, follow them. The limit on discussion rounds comes from the `dispatch.discuss_max_rounds` setting (2 by default), and the script refuses resumes beyond it.
+Decide who does a piece of work in two steps:
+1. **Work only Claude does**: key decisions and overall planning (what to build, how to structure it), creative design (UI and front-end visuals, copy, ideas), and the writing listed under "Claude owns all text meant for people" below. Codex is weak at design, front-end polish and writing, so none of this is handed off, whatever its level.
+2. **Pick a level, then follow the config**: for all other hands-on work, large or small, decide its level as described in "Task levels and reasoning effort", then look at `resolved_levels.run.<level>` in the `config` output. If it says `"claude"`, Claude does the task itself (the script also refuses to hand off that level); if it names an agent, hand the task off at that level. Who gets each level is the user's choice in the config; don't override it because a task looks big or small, hard or easy. When the user explicitly wants Codex to do it (for example by naming it with `/codex-bridge-en:rescue`), hand it off even if the level is `"claude"`: add `--agent <Codex agent>` (usually `codex`); it uses that agent's default model (add `--model` to pick another), and the effort uses the built-in default.
+
+- The thresholds in this skill (review size, 1 rework) are defaults. If the preference files say otherwise, follow them. The limit on discussion rounds comes from the `dispatch.discuss_max_rounds` setting (2 by default), and the script refuses resumes beyond it.
 
 ### Claude owns all text meant for people
 Codex's writing is weak: piles of jargon, stiff phrasing, roundabout sentences that readers struggle with. Claude is responsible for any text meant to be read by people:
@@ -45,12 +45,14 @@ The only entry point is `scripts/bridge.mjs` in this skill's folder (that is, `$
 ```bash
 node "<script path>" run    --cwd "<project dir>" --brief "<brief.md>" --title "<short title>" --level <simple|normal|complex> [--add-dir "<dir>"] [--track "<path>"] [--group <name> --scope "<path>"] [--timeout minutes]
 node "<script path>" resume --run <run_id|last> --brief "<rework.md>" --level <simple|normal|complex> [--track "<path>"] [--file "<path>[:start-end]"]
-node "<script path>" discuss --cwd "<project dir>" --brief "<topic.md>" --title "<short title>" --level <normal|complex> [--agent <agent>] [--file "<path>[:start-end]"] [--group <name>]
+node "<script path>" discuss --cwd "<project dir>" --brief "<topic.md>" --title "<short title>" --level <simple|normal|complex> [--agent <agent>] [--file "<path>[:start-end]"] [--group <name>]
 node "<script path>" review --cwd "<project dir>" [--uncommitted | --base <branch> | --commit <sha>] [--brief "<review-focus.md>"] --level <simple|normal|complex>
 node "<script path>" status [--run <run_id|last> | --group <name>] [--limit n]
 node "<script path>" watch  [--run <run_id|last> | --group <name>]
 node "<script path>" config [--cwd "<project dir>"]
 node "<script path>" check  [--agent <agent>]
+node "<script path>" await-busy (--group <name> | --run <run_id>) [--after minutes]
+node "<script path>" cancel --run <run_id>
 ```
 
 - `check` tests whether the environment works: Node.js, Git, Codex (whether it starts and is signed in), and each API agent (whether its key is set, plus a tiny request to confirm it connects). Codex is required: if `codex.ok` is `false`, the plugin can't be used. API agents are optional: if one fails, only its part in discussions is affected. For each failed item, `fix` in the result says what to do; pass it on to the user. When a handoff or discussion fails because of the environment (codex not found, not signed in, a 401 from an API, and so on), run `check` first to confirm the cause.
@@ -83,25 +85,41 @@ The user config is `~/.claude/codex-bridge.json` and the project config is `<pro
 ## Live view (every handoff)
 Right after starting `run`, `discuss` or `resume` in the background, let the user see live progress. If `dispatch.watch` is `off`, skip this section and just tell the user they can check with `/codex-bridge-en:watch`.
 
-- **If the `run_in_terminal` tool is available** (Claude desktop app), open it in the user's terminal panel: use `run_in_terminal` to run `node <run dir>/watch.mjs --run <run_id>`, titled "<model>: <short title>", for example "gpt-6-astra: <short title>". For a discussion with several participants in one group, open a single tab: `node <run dir>/watch.mjs --group <name>`, titled "Discussion: <short title>". The run directory defaults to `~/.claude/codex-runs`, written as `C:\Users\<username>\.claude\codex-runs` on Windows; go by the `config` output. The script generates this launcher so that `run_in_terminal`'s ASCII-only rule is met even when the plugin path has non-ASCII characters.
+- **If the `run_in_terminal` tool is available** (Claude desktop app), open it in the user's terminal panel: use `run_in_terminal` to run `node <run dir>/watch.mjs --run <run_id>`, titled "<model>: <short title>", for example "gpt-6-astra: <short title>". For a discussion with several participants in one group, open a single tab: `node <run dir>/watch.mjs --group <name>`, titled "Discussion: <short title>". The run directory defaults to `~/.claude/codex-runs`, written as `C:\Users\<username>\.claude\codex-runs` on Windows; go by the `config` output. The script generates this launcher so that `run_in_terminal`'s ASCII-only rule is met even when the plugin path has non-ASCII characters. If `watch_launcher_ascii` is `false` in the `config` output (the run directory path has non-ASCII characters), `run_in_terminal` will refuse the command: send the user the command in a code block instead, ask them to run it in their own terminal, and pass on the fix from `watch.fix` in the `check` output.
 - The run_id is in the first line of the background output ("run dir …/<run_id>"). Without `--run`, watch follows whichever run is in progress, but other sessions may be running tasks too, so pass it when you can.
-- Once it's open, send the user the tab link `[<title>](#terminal/<tab_id>)`.
+- Right after it opens, switch the terminal panel to that tab so the user sees it: call the tool that shows panes (in the Claude desktop app its name contains `show_pane`; you may need to load it with ToolSearch first) with `pane` set to `terminal` and `tab_id` set to the tab_id you just got. Opening a tab alone can leave the terminal panel hidden behind another panel. Skip this if there's no such tool.
+- Then send the user the tab link `[<title>](#terminal/<tab_id>)`.
+- When a discussion has API participants, also start the queue check `await-busy` in the background (once per group). The "Queue check" line the script prints at startup gives the full command; run it as is. What to do when it exits is in "When an API participant is busy" under the discussion mode.
 - **If `run_in_terminal` isn't available** (for example in the Claude Code CLI), send the user the full watch command in a bash code block and ask them to run it in another terminal.
 - When the run ends, watch exits on its own and the tab stays for the user to look back at. Don't close it.
+- A tab whose watch has exited won't show new runs. So for every resume (a discussion's next round, a rework), open a new tab as above; don't send the user back to the previous round's tab. A discussion's next round still uses `--group <name>`, titled "Discussion: <short title> (round N)", and the view shows only that round's participants.
 - The default view is concise. Add `--verbose` when the user wants every detail.
 - For `review`, open the live view only if the user asks.
 
 ## Task levels and reasoning effort
-`run`, `resume`, `discuss` and `review` must always be given `--level` explicitly. There is no default; the script refuses to start without it. Claude only decides which level a task is; the model and effort for each level are the user's choice in `levels`, and the first line the script prints shows the model and effort actually used.
+`run`, `resume`, `discuss` and `review` must always be given `--level` explicitly. There is no default; the script refuses to start without it. Claude only decides which level a task is; the model and effort for each level are the user's choice in `levels`, and the first line the script prints shows the model and effort actually used. When the user hasn't given a level or effort, whether Claude is handing work off on its own or the user started it with `/codex-bridge-en:rescue`, `/codex-bridge-en:review` or `/codex-bridge-en:discuss`, decide it by the criteria below; there is no default level.
 
-| Level | `--level` | What kind of task |
-|---|---|---|
-| Simple | `simple` | Goal and method are clear, almost no judgment needed: bulk renames or replacements from a list, filling in similar code from an existing pattern, format or folder migrations, running existing scripts to tidy data, a small single-file feature |
-| Normal | `normal` | Most hands-on tasks: implementing a feature to spec, writing scripts and tools, fixing a bug whose cause is known, routine refactoring, adding tests |
-| Complex | `complex` | Changes across several modules; bugs with an unknown cause that need investigating; code where numeric or logical correctness matters a lot, such as money and billing calculations, data migrations, permission checks; performance work; concurrency |
+**The level depends on how much judgment the task needs and how costly a mistake would be, not on how much it changes**: changing 20 files by mechanically renaming from a list is `simple`; changing the interfaces between modules is `complex`; a bug with an unknown cause is `complex` even if the fix is a few lines.
+
+Hands-on tasks (`run`, `resume`):
+
+| Level | `--level` | How to tell | Examples |
+|---|---|---|---|
+| Simple | `simple` | The method is already settled, almost no judgment is needed, and the result can be checked item by item | A small feature or script with a clear approach, a small fix whose change is already clear, filling in similar code from an existing pattern, bulk renames or replacements from a list, format or folder migrations, running existing scripts to tidy data |
+| Normal | `normal` | There's a spec or the cause is known, but the approach and local details need designing; mistakes show up easily in tests or when it runs | Implementing a feature to spec, writing scripts and tools, fixing a bug whose cause is known but whose fix needs designing, routine refactoring, adding tests |
+| Complex | `complex` | Any one of: the cause is unknown and needs investigating; a mistake wouldn't easily show up in tests and would be costly; the interfaces or contracts between modules change; performance or concurrency work that needs repeated trade-offs and checks | Bugs with an unknown cause, money and billing calculations, data migrations, permission checks, cross-module interface changes, performance work, concurrency |
+
+Reviews (`review`) are levelled by the risk of the change under review:
+- `simple`: large but mechanical changes, such as bulk renames and replacements or folder migrations.
+- `normal`: ordinary feature changes and bug fixes.
+- `complex`: high-risk code (money and billing, deleting or migrating data, concurrency, auth and security, irreversible operations), or a fix for a bug whose cause was unknown.
+
+Discussions (`discuss`) are levelled by the topic:
+- `simple`: a one-off question, checking a fact or an understanding of some code, with no options to compare.
+- `normal`: a few options to compare, but the impact is limited and a wrong choice is easy to change.
+- `complex`: meets all three conditions for starting a discussion on its own under "Discussion mode" (complex, uncertain, costly to get wrong); evidence reviews before a conclusion is used also take this level.
 
 - When unsure, go one level up.
-- Reviews (`review`) usually use `normal`; use `complex` for high-risk code.
 - When the user asks for a specific effort ("run it with ultra"), use `--effort <effort>` instead of a level; the model is then that agent's default model under `agents` (Codex when `--agent` isn't given). Give either `--level` or `--effort`, not both.
 - When the user asks for a specific model, add `--model <model>`. It overrides the configured model and works with either `--level` or `--effort`.
 - On resume, the model is worked out again from the level you give, so moving up a level for a rework may switch models. If no model is configured anywhere, the previous round's model is kept.
@@ -164,7 +182,8 @@ Split only when **all** of these hold; otherwise hand it off as one task:
 Good cases: several independent scripts or modules; once the interface is set, one part writes the implementation and another the tests; bulk changes split by folder.
 
 ### How to hand it off
-- Give the group a name (a short title plus the date, such as `factor-scripts-1013`) and hand off each part with `run --group <name> --scope <path it may change>`; `--scope` can be given more than once. Start the parts together in the background, in the same message.
+- Level each part by its own difficulty (see "Task levels and reasoning effort"). If a part's level is `"claude"` in the config, Claude does that part itself, also staying out of the other parts' files; hand off the rest as usual.
+- Give the group a name (a short title plus the date, such as `factor-scripts-1013`; use a different name for each group within a conversation; names repeated across conversations are fine, since the view only counts runs from the current conversation; only letters, digits and `. _ -`, because the live view puts it on a terminal command line, and the script rejects other characters) and hand off each part with `run --group <name> --scope <path it may change>`; `--scope` can be given more than once. Start the parts together in the background, in the same message.
 - The script refuses two cases: the agent already has as many runs in progress as its limit allows (counted across all groups and sessions), or the write scope overlaps with a run in progress in the same group. If refused, split the scope again as the error says, or wait for an earlier run to finish.
 - Besides the general structure, each brief says:
   - What the other parts of the group do and which files they change; those files are off-limits.
@@ -209,19 +228,20 @@ Before research conclusions go into long-term records, reports or docs, or are h
 4. Report to the user only once you've confirmed it.
 
 ## Rework and failures
-- If it isn't good enough, use `resume` for one rework, with a brief that says exactly what's wrong and how to fix it. If the cause was underestimating the task, move up one level for the rework (simple → normal → complex); otherwise keep the same level.
+- If it isn't good enough, use `resume` for one rework, with a brief that says exactly what's wrong and how to fix it. If the cause was underestimating the task, move up one level for the rework (simple → normal → complex); if that level is `"claude"` in the config, don't resume, and Claude takes over instead. Otherwise keep the same level.
 - If it still isn't good enough after the rework, or Codex times out or errors, Claude takes over and finishes it, and tells the user why.
-- A `stalled` result (stuck: no activity for over `dispatch.stall_min` minutes and no command running, so the script stopped it; 40 minutes by default) is usually a temporary network or service problem. `resume` once to continue from where it stopped; if it stalls again, Claude takes over. `--stall <minutes>` changes the threshold and `--stall 0` turns it off. The total time limit defaults to 480 minutes; change it with `--timeout`.
+- A `stalled` result (stuck: no activity for over `dispatch.stall_min` minutes and no command running, so the script stopped it; the minutes are in the `config` output) is usually a temporary network or service problem. `resume` once to continue from where it stopped; if it stalls again, Claude takes over. `--stall <minutes>` changes the threshold and `--stall 0` turns it off. The total time limit is `dispatch.timeout_min`; change it with `--timeout`.
 - If you suspect a run is stuck, run `status` and look at "last activity X min ago" and the current step instead of guessing. Long gaps between events are normal while a command is running (such as a big computation). `interrupted` means the dispatcher process is gone (for example the session or app was closed); Claude won't get a completion notice, so check `status --run <run_id>` by hand and decide whether to resume or start over.
 - When `report.status` is `blocked`, read `report.decision_requests` and go through each one: if it's within the user's existing permission and Claude can decide, write down the decision and continue with resume; if the user needs to decide, give them the question, the options and Claude's recommendation. A resume to answer questions doesn't count as a rework.
 - A `quota_exhausted` status means the quota is used up: the plan quota for Codex, or the account balance for an API agent. Don't retry, and don't switch to Claude redoing the work on your own. Tell the user the quota is used up and when it should reset (`quota_resets_at`), and let them decide whether to resume once it resets or have Claude take over.
+- When Claude takes over a run, or the user decides to drop it, and its status is `interrupted`, `stalled`, `timeout` or `quota_exhausted`, run `cancel --run <run_id>` to mark it handled: the session-start reminder only lists hands-on runs that haven't been handled.
 - If the reminder at the start of the session lists runs that didn't finish normally, mention it to the user at a suitable moment and handle them as the user wants.
 
 ## Discussion mode (/codex-bridge-en:discuss)
 For complex plans, designs or ideas, discuss them with other models first, without carrying anything out. The participants come from `levels.discuss.<level>` in the config: Codex alone, or Codex plus API agents (such as DeepSeek), all giving their views at the same time. **Claude stays in charge of the conclusions**: the participants' views are input only. Claude accepts or rejects them on the strength of the arguments, doesn't give in just because someone insists, and doesn't go by majority vote.
 
 ### When to start one on your own
-Start one directly when the user uses `/codex-bridge-en:discuss`. Starting one on your own requires **all three** of these; one or two isn't enough:
+Start one directly when the user uses `/codex-bridge-en:discuss` or explicitly asks to discuss something with Codex or other models. Starting one on your own requires **all three** of these; one or two isn't enough:
 1. **Complex**: involves the architecture or several modules and shapes the long-term structure; or it's the design of critical logic such as money calculations, data consistency, permissions and security.
 2. **Uncertain**: there's no obvious best answer and several workable options to weigh; or key assumptions haven't been checked.
 3. **Costly to get wrong**: a wrong choice means large-scale rework, or affects the correctness of results.
@@ -240,20 +260,30 @@ Don't start one for ordinary implementation details, tasks with a clear plan, or
 - When the same `--file` is passed to Codex, the script only lists the paths as "key files" without their contents; Codex reads them itself.
 
 ### Process (round limit set by `dispatch.discuss_max_rounds`, 2 by default)
-1. **Round 1, independent proposals**: the topic brief only gives the background, the problem to solve, constraints, known facts, relevant code locations, and the specific questions to answer. **Don't include Claude's own leaning**, so the participants don't just go along with it. Before reading any participant's result, Claude writes its own proposal to a file (scratchpad directory or system temp directory), so it isn't swayed the other way either. Then, going by `resolved_levels.discuss.<level>` in the `config` output, start one `discuss` per participant: the same brief, the same `--group` (a short title plus the date, such as `config-rework-1013`), and `--agent <name>` for each, all started in the background in the same message. When the level has only one participant, `--agent` and `--group` can be left out.
+1. **Round 1, independent proposals**: the topic brief only gives the background, the problem to solve, constraints, known facts, relevant code locations, and the specific questions to answer. **Don't include Claude's own leaning**, so the participants don't just go along with it. Before reading any participant's result, Claude writes its own proposal to a file (scratchpad directory or system temp directory), so it isn't swayed the other way either. Then, going by `resolved_levels.discuss.<level>` in the `config` output, start one `discuss` per participant: the same brief, the same `--group` (a short title plus the date, such as `config-rework-1013`; a different name for each discussion within a conversation, kept for its later rounds), and `--agent <name>` for each, all started in the background in the same message. When the level has only one participant, `--agent` and `--group` can be left out.
 2. **Round 2, critique each other**: only when the proposals (Claude's included) really disagree, or a participant's conclusions include something Claude hasn't checked that would change the outcome; if they broadly agree, go straight to deciding. Label the proposals anonymously as "Proposal A / Proposal B / …" and continue each participant with `resume --run <that participant's round 1 run_id>` (again in parallel, in the same message), asking it to find the weakest points of the other proposals and compare them with its own. Send only summaries and the points of disagreement, not the full reports. Claude also writes up its challenges to each proposal.
 3. **Round 3 and later (optional)**: only when a key disagreement is unresolved, another round could really change the conclusion, and `dispatch.discuss_max_rounds` isn't reached. If the script refuses the resume, rule on the results you have.
 4. **Claude decides**: accept or reject each participant's points with reasons, and settle the final plan. Judge by evidence, constraints and reversibility; a conclusion all participants share can still be wrong.
 
-- Discussions usually use `complex`; use `normal` when the topic isn't especially complex. Later rounds keep round 1's level.
+- **`simple` (a one-off question) keeps it short**: no need to write down your own proposal first, no round 2, and no decision record; check the participants' answers, then tell the user the conclusion and its basis plainly. Attachments, the live view and busy handling work as usual.
+- Pick the level by the discussion criteria in "Task levels and reasoning effort"; discussions started on their own meet all three conditions, so they use `complex`. Later rounds keep round 1's level.
 - Each participant has its own run_id, and the round limit applies to each participant separately. Each participant takes one of its own agent's parallel slots; if one is refused because its agent is at the limit, start it again once that agent's running tasks finish rather than skipping it.
-- If one participant fails (for example `quota_exhausted` from a low balance, an API error, or a missing key), the others carry on: tell the user which one failed and why, and continue with the other participants' results. Don't change the config just to get every participant in.
+- If one participant fails (for example `quota_exhausted` from a low balance, an API error, a missing key, or `cancelled` because the user stopped it), the others carry on: tell the user which one failed and why, and continue with the other participants' results. Don't change the config just to get every participant in.
 - Discussion is read-only: Codex can read code and run read-only commands to back up its points, but can't change files. If `warnings` says Codex changed files, check the diff and revert what Codex changed. Don't revert changes of unknown origin listed in `notes`; most likely someone else made them. API agents can't change files.
 - Discussions get the live view too.
+
+### When an API participant is busy, ask the user whether to stop it
+When an API agent's service is busy, the request waits in the server's queue without starting, and the server may eventually drop it. Don't leave the user waiting:
+- When a discussion you start (or resume) has an API participant and `effective.dispatch.busy_ask_min` in the `config` output is above 0, also start `await-busy --group <name>` in the background right away (use `--run <run_id>` when the level has a single participant and no group). It sends no requests; it exits when a participant has been queued longer than `busy_ask_min` minutes, or when they've all finished, and you're notified when it does.
+- When it exits, read its output. If `busy` is empty, there's nothing to do. Otherwise, use the question tool to ask the user, one question per queued participant, naming the model and how long it has been queued, with three options:
+  - **Stop it and go ahead with the other participants' results** (recommended): run `cancel --run <run_id>`. That participant's result is marked `cancelled`; say it's missing when you decide.
+  - **Wait 5 more minutes**: start `await-busy --run <run_id> --after <minutes queued so far + 5>` in the background.
+  - **Keep waiting**: don't start `await-busy` again.
+- The user can also press x in the live view to stop a queued model, which does the same as `cancel`. Carry on as usual when a result comes back `cancelled`.
 - Don't decide for the user on things that are theirs to decide, such as preferences, business trade-offs and risk tolerance. Give them the options with Claude's recommendation.
 
 ### Reporting to the user: the decision record
-Don't paste the raw exchange. Write it up plainly as:
+Don't paste the raw exchange. Write it up plainly as follows (not needed for `simple` questions):
 - **Topic**: one sentence
 - **Options**: Claude's and each participant's, each with its core idea and trade-offs
 - **Each participant's main points**: listed per participant, called by model name (such as gpt-6-astra, deepseek-v4-pro), each marked ✅ accepted / ❌ rejected / ⚠ partly accepted, with the reason
@@ -265,7 +295,7 @@ Don't paste the raw exchange. Write it up plainly as:
 Do it directly when the user asks. Otherwise judge by the task:
 
 **Worth reviewing**
-- Complex core features Claude wrote itself: an independent check by another model before delivering
+- Complex changes Claude made itself (`complex`-level work, including when the config gives that level to Claude): an independent check by another model before delivering
 - High-risk code: money and billing calculations, data deletion and migration, concurrency, authentication and security, irreversible operations
 - Large changes (roughly over 300 lines or 5+ files), or a fix for a bug whose root cause was unclear
 - Research conclusions before they're recorded or reported: an evidence review with `discuss`, see "Evidence review before conclusions are recorded"

@@ -1,6 +1,6 @@
 {
   "name": "codex-bridge-en",
-  "version": "0.10.4",
+  "version": "0.10.5",
   "description": "Hand off hands-on coding work to OpenAI Codex, check the results, and ask Codex for independent code reviews when it's worth it.",
   "author": { "name": "DaydayupV" }
 }
