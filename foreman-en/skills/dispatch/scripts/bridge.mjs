@@ -53,6 +53,8 @@ const LANGUAGE = process.env.FOREMAN_LANG || process.env.CODEX_BRIDGE_LANG || ((
 })();
 const M = MESSAGES[LANGUAGE] || MESSAGES.zh;
 const notice = (msg) => process.stderr.write(`foreman: ${msg}\n`);
+// 语言要在提示文字之前确定，所以旧变量名的提示放到这里补上。
+if (!process.env.FOREMAN_LANG && process.env.CODEX_BRIDGE_LANG) notice(M.legacyEnv('CODEX_BRIDGE_LANG', 'FOREMAN_LANG'));
 
 // ---------- 配置 ----------
 

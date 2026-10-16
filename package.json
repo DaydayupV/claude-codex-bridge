@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "scripts": {
+    "test": "node --test --test-concurrency=9 tests/*.test.mjs"
+  }
+}

@@ -1,0 +1,77 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { sandbox, output, write, seedRun } from './helpers.mjs';
+
+test('会话提醒首次使用并且不创建配置或迁移目录', async (t) => {
+  const h = sandbox(t, { config: false });
+  const r = output(await h.hook('session-reminder.mjs')).hookSpecificOutput;
+  assert.equal(r.hookEventName, 'SessionStart');
+  assert.ok(r.additionalContext.includes(`没有配置文件 ${h.userConfig}`));
+  assert.ok(r.additionalContext.includes('/foreman:setup'));
+  assert.ok(r.additionalContext.includes('foreman:dispatch'));
+  assert.equal(fs.existsSync(path.join(h.home, '.claude/foreman')), false);
+});
+
+for (const legacy of [false, true]) {
+  test(`会话提醒带上${legacy ? '旧位置' : '新位置'}用户和项目偏好`, async (t) => {
+    const h = sandbox(t, { config: false });
+    const configFile = legacy ? path.join(h.home, '.claude/codex-bridge.json') : h.userConfig;
+    write(configFile, legacy ? { auto_dispatch: false } : { dispatch: { auto: false } });
+    const user = write(path.join(h.home, legacy ? '.claude/codex-bridge.md' : '.claude/foreman/preferences.md'), '合成用户偏好');
+    const project = h.write(legacy ? '.claude/codex-bridge.md' : '.claude/foreman.md', '合成项目偏好');
+    const context = output(await h.hook('session-reminder.mjs')).hookSpecificOutput.additionalContext;
+    assert.ok(context.includes('dispatch.auto 已关闭'));
+    for (const [file, text] of [[user, '合成用户偏好'], [project, '合成项目偏好']]) {
+      assert.ok(context.includes(`用户偏好文件 ${file}`));
+      assert.ok(context.includes(text));
+    }
+    assert.ok(!context.includes('用户还没有用过本插件'));
+    if (legacy) assert.equal(fs.existsSync(h.userConfig), false);
+  });
+}
+
+test('会话提醒列出未正常结束的执行任务，取消后不再列出', async (t) => {
+  const h = sandbox(t);
+  for (const status of ['timeout', 'stalled', 'quota_exhausted', 'interrupted']) seedRun(h, `exec-${status}`, { status });
+  seedRun(h, 'ignored-discuss', { kind: 'discuss', mode: 'discuss', status: 'timeout' });
+  seedRun(h, 'ignored-cancelled', { status: 'cancelled' });
+  seedRun(h, 'ignored-other-project', { status: 'timeout', cwd: path.join(h.home, 'other-project') });
+  seedRun(h, 'ignored-old', { status: 'timeout', started_at: new Date(Date.now() - 8 * 86400000).toISOString() });
+  const context = () => h.hook('session-reminder.mjs').then((r) => output(r).hookSpecificOutput.additionalContext);
+  const before = await context();
+  for (const status of ['timeout', 'stalled', 'quota_exhausted', 'interrupted']) assert.ok(before.includes(`exec-${status}`));
+  assert.ok(!before.includes('ignored-'));
+  const result = output(await h.bridge(['cancel', '--run', 'exec-timeout']));
+  assert.equal(result.dismissed, true);
+  const after = await context();
+  assert.ok(!after.includes('exec-timeout'));
+  assert.ok(after.includes('exec-stalled'));
+});
+
+for (const [label, command] of [
+  ['codex exec', 'codex exec "synthetic"'], ['codex review', 'codex review --uncommitted'],
+  ['node codex.js exec', 'node "C:/synthetic/bin/codex.js" exec -'], ['npx Codex', 'npx @openai/codex exec -'],
+]) {
+  test(`直接调用守卫拦截 ${label}`, async (t) => {
+    const h = sandbox(t), r = await h.hook('guard-direct-calls.mjs', { tool_input: { command } });
+    assert.equal(r.code, 2);
+    assert.equal(r.stdout, '');
+    assert.ok(r.stderr.includes('已拦截：不要直接调用 codex exec / codex review'));
+    assert.ok(r.stderr.includes('foreman:dispatch'));
+    assert.ok(r.stderr.includes('bridge.mjs'));
+  });
+}
+
+for (const [label, command] of [
+  ['版本查询', 'codex --version'], ['登录状态', 'codex login status'],
+  ['普通文本提及', 'echo "codex exec"'], ['带分隔符的文字', 'node -e "console.log(\'codex exec; codex review\')"'],
+]) {
+  test(`直接调用守卫放行${label}`, async (t) => {
+    const h = sandbox(t), r = await h.hook('guard-direct-calls.mjs', { tool_input: { command } });
+    assert.equal(r.code, 0);
+    assert.equal(r.stdout, '');
+    assert.equal(r.stderr, '');
+  });
+}

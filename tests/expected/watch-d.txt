@@ -1,0 +1,11 @@
+
+<TIME> ┌ fake-codex（Codex CLI，effort high）
+      │ 执行 · 合成d · 等级 complex
+      │ 工作目录 <CWD>
+      │ 记录目录 <HOME>/r/d
+      │
+<TIME> ✗ 合成失败原因
+      │
+<TIME> └ ✗ 失败 · 用时 3 秒 · 改动 0 个文件
+        token：输入 120（缓存 25%），输出 40
+✗ 合成失败原因

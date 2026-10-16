@@ -1,0 +1,15 @@
+
+<TIME> ┌ fake/model（opencode CLI，effort high）
+      │ 讨论 · 合成c · 等级 complex
+      │ 工作目录 <CWD>
+      │ 记录目录 <HOME>/r/c
+      │
+      │   $ read source.txt
+      │
+<TIME> └ ✔ 完成 · 用时 3 秒
+        token：输入 120（缓存 25%），输出 40
+
+  先建立回归测试，再拆模块
+
+遗留问题
+  · 模块边界待确认
