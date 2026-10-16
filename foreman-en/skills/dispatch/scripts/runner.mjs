@@ -1,9 +1,78 @@
 // 三种执行路径共用的登记、事件、取消、报告修复和结果落盘；快照执行使用适配器回调。
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { CLAUDE_SESSION, checkAdmission, isCancelled } from './records.mjs';
 import { makeTracker } from './tracker.mjs';
-import { M, die, relativePath, pathKey, whoOf, modelOf, replaceFile } from './util.mjs';
+import { M, die, relativePath, pathKey, whoOf, modelOf, replaceFile, killTree, looksLikeQuestion, looksLikeInputPrompt, looksLikeFinalQuestion, needsDecision } from './util.mjs';
+
+const INPUT_WAIT_MIN = 3;
+
+function spawnCli(file, args, options, { onInput, busy = () => false, onStderrLine = () => {} }) {
+  const child = spawn(file, args, options);
+  const waitMin = Number(process.env.FOREMAN_TEST_INPUT_WAIT_MIN) || INPUT_WAIT_MIN;
+  let lastOutputAt = Date.now(), prompt = null;
+  const buffers = { stdout: '', stderr: '' };
+  const inspect = (line, stream) => {
+    if (stream === 'stdout') {
+      try { JSON.parse(line); return; } catch { /* 只检查非 JSON 输出 */ }
+    }
+    if (looksLikeInputPrompt(line)) prompt = { line: line.trim(), at: lastOutputAt };
+  };
+  for (const stream of ['stdout', 'stderr']) {
+    child[stream].setEncoding('utf8');
+    child[stream].on('data', (chunk) => {
+      lastOutputAt = Date.now();
+      buffers[stream] += chunk;
+      let i;
+      while ((i = buffers[stream].indexOf('\n')) >= 0) {
+        const line = buffers[stream].slice(0, i).replace(/\r$/, '');
+        buffers[stream] = buffers[stream].slice(i + 1);
+        inspect(line, stream);
+        if (stream === 'stderr') onStderrLine(line);
+      }
+    });
+  }
+  const timer = setInterval(() => {
+    // 终端提示常不带换行；未收完整的 JSON 仍属于协议输出，不能当作终端提问。
+    for (const stream of ['stdout', 'stderr']) {
+      if (buffers[stream] && (stream === 'stderr' || !/^\s*(?:\{|\[(?!y\/n\]))/i.test(buffers[stream]))) inspect(buffers[stream], stream);
+    }
+    if (!prompt || Date.now() - Math.max(prompt.at, lastOutputAt) < waitMin * 60000 || busy()
+      || !child.pid || child.exitCode !== null || child.signalCode !== null) return;
+    clearInterval(timer);
+    onInput(prompt.line, waitMin);
+    killTree(child.pid);
+  }, Math.min(1000, waitMin * 60000));
+  child.once('close', () => {
+    clearInterval(timer);
+    if (buffers.stderr) onStderrLine(buffers.stderr);
+  });
+  return child;
+}
+
+function collectQuestions({ mode, kind, report, last = '', messages = [], questions = [] }) {
+  const permissions = new Set();
+  const collected = questions.filter((q) => {
+    if (q.source !== 'permission_denied') return true;
+    const key = q.detail || q.question;
+    if (permissions.has(key)) return false;
+    permissions.add(key);
+    return true;
+  });
+  if (kind === 'discuss') {
+    for (const question of report?.open_questions || []) collected.push({ source: 'open_question', question });
+  } else if (mode === 'run' || mode === 'resume') {
+    for (const q of report?.decision_requests || []) collected.push({ source: 'decision_request', question: q.question,
+      options: q.options, recommendation: q.recommendation, detail: q.why_it_matters });
+  }
+  for (const text of messages.slice(0, -1)) {
+    if (looksLikeQuestion(text)) collected.push({ source: 'asked_mid_run', question: text.slice(0, 500) });
+  }
+  if (!report && looksLikeFinalQuestion(last)) collected.push({ source: 'final_question', question: last.slice(0, 2000) });
+  return collected.map((q) => ({ source: q.source, question: q.question ?? null, options: q.options ?? [],
+    recommendation: q.recommendation ?? null, detail: q.detail ?? null }));
+}
 
 function startRun(ctx, { started = Date.now(), track = [], modelShown = ctx.model, modelName = modelShown, sandbox = null, atomic = true } = {}) {
   const { id, dir, cwd, model, mode, kind, level, effort, agentName, agent, opts } = ctx;
@@ -31,7 +100,11 @@ function startRun(ctx, { started = Date.now(), track = [], modelShown = ctx.mode
   return { ctx, started, meta, writeMeta };
 }
 
-function finishRun(run, result, code = result.exit_code) {
+function finishRun(run, result, code = result.exit_code, observed = {}) {
+  result.questions = collectQuestions({ ...result, ...observed, last: observed.last ?? result.last_message ?? '' });
+  const decisions = result.questions.filter(needsDecision).length;
+  result.needs_decision = decisions > 0;
+  if (decisions) result.notes.push(M.needsDecisionNote(decisions));
   fs.writeFileSync(path.join(run.ctx.dir, 'result.json'), JSON.stringify(result, null, 2));
   run.writeMeta(); // 在 result.json 之后写，watch 看到状态变化时结果已经就绪
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
@@ -39,7 +112,7 @@ function finishRun(run, result, code = result.exit_code) {
   return result;
 }
 
-function finishDiscussion(run, { usage, cost, commands = 0, errors, notes, warnings, report, last, files, changesNote }) {
+function finishDiscussion(run, { usage, cost, commands = 0, errors, notes, warnings, report, last, files, changesNote, observed = {} }) {
   const { ctx, meta, started } = run;
   const { id, dir, mode, cwd, agentName, agent, model, level, effort } = ctx;
   meta.ended_at = new Date().toISOString();
@@ -51,7 +124,7 @@ function finishDiscussion(run, { usage, cost, commands = 0, errors, notes, warni
     last_request: null, rate_limit: null, quota_resets_at: null, commands_executed: commands, errors, notes, warnings, report,
     last_message: report ? undefined : last, changes: { available: false, note: changesNote },
     files: files.map(({ path, range, chars }) => ({ path, range, chars })), run_dir: dir,
-  });
+  }, undefined, { ...observed, last });
 }
 
 function eventWriter(dir, stream) {
@@ -76,6 +149,7 @@ async function reportWithRepair({ request, schema, validate, repair, onInvalid }
     if (!reply) return null;
     const parsed = parseReport(reply.last, schema, validate);
     if (!parsed.invalid.length) return parsed.report;
+    if (looksLikeFinalQuestion(reply.last)) return null;
     if (attempt === 1 || reply.canRepair === false) { onInvalid(); return null; }
     repair(parsed.invalid);
   }
@@ -94,7 +168,7 @@ function parseReport(last, schema, validateSchema) {
   } catch { return { report: null, invalid: [last.trim() ? 'Reply is not valid JSON' : 'Reply is empty'] }; }
 }
 
-async function execute(ctx, { run: runAgent, stats: sessionStats, describe }) {
+async function execute(ctx, { run: runAgent, stats: sessionStats, describe, schema, validate }) {
   const { agentName, agent, model, mode, kind, id, dir, cwd, level, effort, args, prompt, opts, expectReport } = ctx;
   const started = Date.now();
   const track = [...new Map(opts.track.map((file) => {
@@ -128,9 +202,11 @@ async function execute(ctx, { run: runAgent, stats: sessionStats, describe }) {
   const lastFile = path.join(dir, 'last-message.txt');
   const last = fs.existsSync(lastFile) ? fs.readFileSync(lastFile, 'utf8').trim() : '';
   let report = null;
-  if (expectReport && last) { try { report = JSON.parse(last); } catch { warnings.push(M.badReport); } }
+  if (expectReport && last) {
+    report = parseReport(last, schema, validate).report;
+    if (!report && !looksLikeFinalQuestion(last)) warnings.push(M.badReport);
+  }
   if (!report && last.length > 8000) notes.push(M.lastMessageTruncated(lastFile));
-  if (report?.status === 'blocked' && report.decision_requests?.length) notes.push(M.blockedNote(report.decision_requests.length));
 
   const reported = (report?.files_changed || []).map((f) => relativePath(cwd, f.path));
   const agentPaths = new Set([...r.fileChanges].map((f) => pathKey(relativePath(cwd, f))));
@@ -152,14 +228,14 @@ async function execute(ctx, { run: runAgent, stats: sessionStats, describe }) {
   if (untracked.length) notes.push(M.reportedNotTracked(untracked));
 
   // 重连之类的 error 事件不一定致命，成败以退出码为准，errors 照常汇报。
-  const ok = r.code === 0 && !r.timedOut && !r.stalled;
+  const ok = r.code === 0 && !r.timedOut && !r.stalled && !r.needsInput;
   if (!ok && !r.errors.length) {
     // 参数错误等情况 codex 不产生事件，只在 stderr 留信息，把末尾几行带出来。
     const tail = String(r.stderrTail || '').trim().split('\n').slice(-5).join('\n');
     if (tail) r.errors.push(M.exitCode(r.code, tail));
   }
   const quotaExhausted = !ok && (r.quotaExhausted || r.errors.some((e) => /usage limit|quota/i.test(e)));
-  meta.status = ok ? 'done' : r.cancelled ? 'cancelled' : quotaExhausted ? 'quota_exhausted' : r.stalled ? 'stalled' : r.timedOut ? 'timeout' : 'failed';
+  meta.status = ok ? 'done' : r.cancelled ? 'cancelled' : r.needsInput ? 'needs_input' : quotaExhausted ? 'quota_exhausted' : r.stalled ? 'stalled' : r.timedOut ? 'timeout' : 'failed';
   if (r.cancelled) r.errors = [M.runCancelled(modelOf(meta))];
   meta.session_id = r.sessionId || meta.session_id;
   meta.ended_at = new Date().toISOString();
@@ -216,7 +292,7 @@ async function execute(ctx, { run: runAgent, stats: sessionStats, describe }) {
     generated_images: r.images.length ? r.images : undefined, // 只列这一轮生成的
     run_dir: dir,
   };
-  return finishRun(run, result, ok ? 0 : 1);
+  return finishRun(run, result, ok ? 0 : 1, { messages: r.messages, questions: r.questions, last });
 }
 
-export { startRun, finishRun, finishDiscussion, eventWriter, runLimits, watchCancellation, parseReport, reportWithRepair, execute };
+export { startRun, finishRun, finishDiscussion, eventWriter, runLimits, watchCancellation, parseReport, reportWithRepair, execute, collectQuestions, spawnCli };

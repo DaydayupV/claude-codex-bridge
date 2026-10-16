@@ -81,6 +81,7 @@
 | 9 未完成任务与取消 | hooks.test.mjs | 会话提醒列出未正常结束的执行任务，取消后不再列出 |
 | 9 直接调用拦截 | hooks.test.mjs | 直接调用守卫拦截 codex exec；直接调用守卫拦截 codex review；直接调用守卫拦截 node codex.js exec；直接调用守卫拦截 npx Codex |
 | 9 查询与普通文字放行 | hooks.test.mjs | 直接调用守卫放行版本查询；直接调用守卫放行登录状态；直接调用守卫放行普通文本提及；直接调用守卫放行带分隔符的文字 |
+| 11 协作方要人回答 | questions.test.mjs | 六种来源各自收集进 questions，needs_decision 只算需要决定的四种；Codex 默认 approval_policy=never、配置了就用配置的；opencode 注入的权限里 question 被拒；最终回答是问题时不修复，像 JSON 或长篇分析时照常修复；终端提示加 3 分钟静默触发看门狗、结束进程树并记 needs_input，模型消息静默和执行中的命令不触发；watch、status 和组计数里问题的显示 |
 | 10 共用文件同步 | sync.test.mjs | 中英文插件的共用文件、schema 结构和版本号一致 |
 
 ## 说明

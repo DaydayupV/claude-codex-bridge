@@ -77,6 +77,7 @@ node "<脚本路径>" cancel --run <run_id>
   - `report`：Codex 的结构化报告。
   - `changes`：脚本追踪到的工作目录内改动。每个文件标有 `by`：`agent` 表示有证据是执行的协作方改的（改名前的记录里写作 `codex`），`unknown` 表示归属未知。
   - `notes`：提示信息，比如归属未知的改动、Codex 报告了但没追踪到的文件。
+  - `questions` 和 `needs_decision`：协作方要人回答的事，见"协作方要人回答时"一节。
   - `session_id`、`run_dir`：完整 diff 在 `run_dir/diff.patch`。
   - token 消耗：`usage` 是本次调用的输入、缓存、输出 token（`usage_scope` 为 `session_total` 时是整个会话的累计量）；`last_request` 是最近一次请求的用量和模型上下文窗口；`rate_limit` 是 Codex 额度的已用比例。
   - `agent`：这次交给了哪个协作方。API 和 opencode 协作方的结果没有改动追踪（`changes.available` 为 `false`）；API 协作方的 `files` 列出附带了哪些文件，opencode 协作方多一个 `cost_usd`。
@@ -239,10 +240,35 @@ Codex 任务的等待时间大部分花在模型思考上，跑命令只占一�
 - 返工后还不合格，或者 Codex 超时、报错，由 Claude 自己接手完成，并告诉用户原因。
 - 结果状态为 `stalled`（卡死：超过 `dispatch.stall_min` 分钟没有任何活动，且没有命令在执行，脚本已自动终止；分钟数以 `config` 输出为准）时，多半是网络或服务的临时问题。用 `resume` 让它从断点继续一次；再卡死就由 Claude 接手。可以用 `--stall <分钟>` 调整阈值，`--stall 0` 关闭检测。总超时是 `dispatch.timeout_min`，用 `--timeout` 调整。
 - 怀疑任务卡住时，先运行 `status` 看"最后活动 X 分钟前"和当前步骤，不要凭感觉判断。正在执行命令（比如跑大计算）时，长时间没有新事件是正常的。`interrupted` 表示调度进程已经不在了（比如会话或应用被关闭），这时 Claude 收不到完成通知，需要手动查看 `status --run <run_id>`，再决定是续接还是重来。
-- `report.status` 为 `blocked` 时，读 `report.decision_requests`，逐条判断：在用户已有授权内、Claude 能决定的，写明决定后用 resume 继续；需要用户决定的，把问题、选项和 Claude 的推荐交给用户。这种为了回答问题的续接不算返工次数。
+- `needs_decision` 为 `true`（包括 `report.status` 为 `blocked`、状态为 `needs_input`）时，按"协作方要人回答时"一节处理。
 - 结果状态为 `quota_exhausted` 时，是额度用完了：Codex 是订阅额度，API 协作方是账户余额不足。不要重试，也不要自动改由 Claude 重做；告诉用户额度用完和预计恢复时间（`quota_resets_at`），由用户决定是等额度恢复后用 resume 继续，还是改由 Claude 接手。
 - Claude 接手或用户决定放弃的任务，状态是 `interrupted`、`stalled`、`timeout` 或 `quota_exhausted` 时，运行 `cancel --run <run_id>` 标记为已处理：会话开始时的提醒只列还没处理的执行任务。
 - 会话开始时的提醒如果列出了执行没有正常结束的任务，在合适的时候告诉用户一句，按用户的意思处理。
+
+## 协作方要人回答时
+调度是无人值守的：协作方运行时没有人能回答它。脚本保证它们不会因为等人而卡住：
+- Codex 默认不需要审批；
+- opencode 不开放提问工具和需要确认的权限；
+- 以后接入的 CLI 如果在终端打出"(y/n)"之类的提示后没了动静，3 分钟后自动结束，状态为 `needs_input`。
+
+所有提问都收集在结果的 `questions` 里。`needs_decision` 为 `true` 时说明有事要决定；任务已经结束，不是卡住了。
+
+**由 Claude 直接决定，不问用户。** 决定后写进续接说明，用 resume 继续；小的收尾也可以 Claude 自己做掉。
+- 技术做法和取舍，只要在用户已有的授权和任务范围内；
+- 任务说明自相矛盾或没写清楚的地方：这通常是 Claude 自己写的说明的问题，按本意澄清；
+- 缺材料、缺信息：Claude 自己查清楚后补给它。
+
+**交给用户决定**，把问题、选项和 Claude 的推荐一起给用户：业务取舍和偏好、风险承受度、扩大范围或授权、要额外花钱、不可逆的操作。
+
+按 `source` 分别处理：
+- `decision_request`：执行报告里交回的问题。`recommendation` 里写了它已经按哪个做了。Claude 同意就不用改，不同意就在续接说明里写明要怎么改。
+- `permission_denied`：工具想做的操作被权限挡住了，比如 opencode 想读项目目录外的文件。权限是有意设的边界，不要为了放行去改配置；它需要的材料由 Claude 读出来，写进续接说明，或者用 `--file` 附上。
+- `final_question`：最终回答是一个问题，不是报告。Claude 回答它，用 resume 续接，并要求按格式交报告。
+- `input_prompt`（状态 `needs_input`）：工具在等终端输入。看提示内容：属于上面 Claude 能决定的，用 resume 续接，在说明里写明答复；否则交给用户。
+- `asked_mid_run`：运行中提过的问题，没人回答，它已按自己的判断继续了。验收时对照报告看它选的做法，不合适就按返工处理。这类不计入 `needs_decision`。
+- `open_question`：讨论报告里的待定问题，按讨论模式的流程处理。
+
+为了回答问题的续接不算返工次数。
 
 ## 讨论模式（/foreman:discuss）
 遇到复杂的计划、方案或想法时，先和其他模型讨论，不执行。参与方由配置 `levels.discuss.<等级>` 决定：可以只有 Codex，也可以加上 API 协作方（比如 DeepSeek）和 opencode 协作方，几方同时给意见。**观点始终由 Claude 主导**：各参与方的意见只作参考，接受还是拒绝由 Claude 根据论据决定，不因为谁坚持就让步，也不按多数票。
@@ -284,13 +310,13 @@ Codex 任务的等待时间大部分花在模型思考上，跑命令只占一�
 - 讨论是只读的：Codex 可以读代码、跑只读命令来支撑观点，但不能改文件。`warnings` 里报出 Codex 改了文件时，检查 diff，还原 Codex 改的部分。`notes` 里归属未知的改动不要还原，多半是别人改的。API 和 opencode 协作方改不了文件。
 - 讨论同样要处理实时查看。
 
-### API 参与方繁忙时问用户要不要终止
+### API 参与方繁忙时
 API 协作方的服务繁忙时，请求会在服务端排队，迟迟不开始处理，最后可能被服务端断开。别让用户干等：
 - 发起（或续接）的讨论里有 API 参与方，并且 `config` 输出的 `effective.dispatch.busy_ask_min` 大于 0 时，紧接着在后台再启动一次 `await-busy --group <组名>`（这一级只有一个参与方、没用组时用 `--run <run_id>`）。它不发请求，只在有参与方排队超过 `busy_ask_min` 分钟、或者全部结束时退出，退出时会通知你。
-- 它退出后读输出：`busy` 为空就不用管。不为空时，用提问工具问用户，每个排队的参与方一个问题，写明模型和已经排队多久，三个选项：
-  - **终止，用其他参与方的结果继续**（推荐）：运行 `cancel --run <run_id>`。这一方的结果标为 `cancelled`，裁决时说明少了它。
-  - **再等 5 分钟**：后台再启动 `await-busy --run <run_id> --after <已排队分钟数 + 5>`。
-  - **一直等**：不再启动 `await-busy`。
+- 它退出后读输出：`busy` 为空就不用管。不为空时由 Claude 直接决定，不问用户：
+  - 其他参与方已经有可用的结果，或者这一方已经排队超过 10 分钟：运行 `cancel --run <run_id>` 终止它，用其他参与方的结果继续。这一方的结果标为 `cancelled`，裁决时说明少了它。
+  - 否则再等 5 分钟：后台再启动 `await-busy --run <run_id> --after <已排队分钟数 + 5>`，到时还在排队就终止。
+  - 事后用一句话告诉用户终止了哪一方、为什么。
 - 用户也可以在实时查看里对排队中的模型按 x 终止，效果和 `cancel` 一样。收到 `cancelled` 的结果时照常继续。
 - 需要用户决定的问题，比如偏好、业务取舍、风险承受度，不要替用户拍板，把选项和 Claude 的推荐一起交给用户。
 

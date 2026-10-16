@@ -1,11 +1,10 @@
 // opencode CLI：只读代理与环境、事件翻译、会话导出和检查项。
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DISCUSS_SCHEMA } from '../config.mjs';
 import { newRunDir, isCancelled } from '../records.mjs';
-import { startRun, finishDiscussion, eventWriter, runLimits, reportWithRepair } from '../runner.mjs';
+import { startRun, finishDiscussion, eventWriter, runLimits, reportWithRepair, spawnCli } from '../runner.mjs';
 import { M, die, isObject, binCommand, pathCommand, npmEntry, killTree, readAttachments, focusFiles, relativePath, whoOf } from '../util.mjs';
 
 function opencodeCommand(agent) {
@@ -28,13 +27,49 @@ function opencodeEnv() {
 // 私有服务才会读取本次注入的代理配置，也能随 run 一起终止。
 const opencodeArgs = (model, effort) => ['run', '--standalone', '--format', 'json', '--agent', OPENCODE_AGENT, '-m', `${model}${effort != null ? `#${effort}` : ''}`];
 
+function permissionQuestions(actions, lines, cwd) {
+  // 路径按工作目录解析：项目里的显示相对路径，项目外的显示绝对路径（模型常给出一长串 ../）。
+  const relative = (value) => {
+    if (typeof value !== 'string' || !value) return value;
+    const abs = path.resolve(cwd, value), rel = relativePath(cwd, abs);
+    return rel === '..' || rel.startsWith('../') || path.isAbsolute(rel) ? abs : rel;
+  };
+  const pathKeys = new Set(['path', 'filePath', 'file', 'directory']);
+  const replacer = (key, value) => (pathKeys.has(key) ? relative(value) : value);
+  const details = (tool, input) => JSON.stringify({ tool, input }, replacer);
+  const questions = actions.map(({ tool, state }) => ({ source: 'permission_denied',
+    question: `${tool} ${JSON.stringify(state.input || {}, replacer)}`,
+    detail: details(tool, state.input || {}) }));
+  for (const line of lines) {
+    const operation = /permission requested:\s*(.+?);\s*auto-rejecting/i.exec(line)?.[1];
+    if (!operation) continue;
+    const match = /^(\S+)\s*\((.*)\)$/.exec(operation);
+    const tool = match?.[1] || operation, target = relative(match?.[2] || '');
+    // 同一次拒绝可能同时出现在 stderr 和工具结果里，优先保留带完整参数的工具结果。
+    if (questions.some((q) => q.detail === details(tool, target ? { path: target } : {})
+      || (target && (tool === 'external_directory' || JSON.parse(q.detail).tool === tool)
+        && q.detail.includes(JSON.stringify(target).slice(1, -1).replace(/\*.*$/, ''))))) continue;
+    questions.push({ source: 'permission_denied', question: target ? `${tool} (${target})` : tool,
+      detail: details(tool, target ? { path: target } : {}) });
+  }
+  return [...new Map(questions.map((q) => [q.detail, q])).values()];
+}
+
 function runOpencode({ agent, args, cwd, prompt = '', timeoutMs, stallMin = 0, runDir, onEvent }) {
   return new Promise((resolve) => {
     const { file, pre } = opencodeCommand(agent);
-    const out = { code: null, status: null, stdout: '', stderrTail: '', text: '', errors: [], events: 0 };
+    const out = { code: null, status: null, stdout: '', stderrTail: '', text: '', errors: [], events: 0, messages: [], questions: [] };
+    const denied = [], stderrLines = [];
     // opencode 按环境变量 PWD 认工作目录，不看进程真实的 cwd；PWD 是从调用方的 shell 继承来的，可能指向别的目录。
-    const child = spawn(file, [...pre, ...args], { cwd, env: { ...opencodeEnv(), PWD: cwd }, windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+    const child = spawnCli(file, [...pre, ...args], { cwd, env: { ...opencodeEnv(), PWD: cwd }, windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' }, {
+      onStderrLine: (line) => { if (/permission requested:/i.test(line)) stderrLines.push(line); },
+      onInput: (line, min) => {
+        out.status = 'needs_input';
+        out.questions.push({ source: 'input_prompt', question: line });
+        out.errors.push(M.inputWaitDetected(min, line));
+      },
+    });
     const stop = (status) => { if (out.status) return; out.status = status; if (child.pid) killTree(child.pid); };
     const onSignal = () => stop('cancelled');
     process.once('SIGINT', onSignal);
@@ -48,7 +83,9 @@ function runOpencode({ agent, args, cwd, prompt = '', timeoutMs, stallMin = 0, r
       if (!isObject(ev) || !ev.type) return;
       lastEventAt = Date.now();
       out.events++;
-      if (ev.type === 'text') out.text = ev.part?.text || '';
+      if (ev.type === 'text') { out.text = ev.part?.text || ''; out.messages.push(out.text); }
+      if (ev.type === 'tool_use' && ev.part?.state?.status === 'error'
+        && /permission|rejected|not allowed/i.test(JSON.stringify(ev.part.state.error || ev.part.state.output || ''))) denied.push(ev.part);
       if (ev.type === 'error') out.errors.push(ev.error?.message || ev.error?.type || JSON.stringify(ev));
       onEvent?.(ev);
     };
@@ -76,6 +113,7 @@ function runOpencode({ agent, args, cwd, prompt = '', timeoutMs, stallMin = 0, r
       process.removeListener('SIGINT', onSignal);
       process.removeListener('SIGTERM', onSignal);
       if (buf.trim()) record(buf);
+      out.questions.push(...permissionQuestions(denied, stderrLines, cwd));
       out.code = code;
       if (runDir && isCancelled(runDir)) out.status = 'cancelled';
       out.status ||= out.errors.some((e) => /usage limit|quota|insufficient balance/i.test(e)) ? 'quota_exhausted'
@@ -104,6 +142,8 @@ async function executeOpencode(ctx, validateSchema) {
   fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
   process.stderr.write(`foreman: ${M.started(mode, whoOf(meta), level, dir)}\n`);
   const errors = [], warnings = [], notes = [];
+  const observed = { messages: [], questions: [] };
+  let repairing = false;
   let commands = 0, seenSession = false, last = '', report = null;
   // 翻译成 Codex 的事件形状，让 watch 和 status 共用现有的时间线、命令和报告显示。
   const translate = (ev) => {
@@ -139,11 +179,13 @@ async function executeOpencode(ctx, validateSchema) {
       const out = await runOpencode({ agent, args, cwd, prompt: nextPrompt, runDir: dir, onEvent: translate,
         timeoutMs: deadline - Date.now(), stallMin });
       errors.push(...out.errors);
+      observed.questions.push(...out.questions);
+      if (!repairing) observed.messages = out.messages;
       meta.status = out.status;
       return meta.status === 'done' ? { last, canRepair: !!meta.session_id } : null;
     },
     onInvalid: () => warnings.push(M.reportInvalid(agentName, path.join(dir, 'last-message.txt'))),
-    repair: (invalid) => { nextPrompt = M.reportRepairPrompt(invalid.join('\n')); },
+    repair: (invalid) => { repairing = true; nextPrompt = M.reportRepairPrompt(invalid.join('\n')); },
   });
   if (meta.status === 'cancelled') errors.push(M.runCancelled(model));
   if (meta.status === 'stalled') errors.push(M.stalled(stallMin));
@@ -167,7 +209,7 @@ async function executeOpencode(ctx, validateSchema) {
     } catch (e) { usage = null; cost = null; notes.push(M.opencodeExportFailed(e.message)); }
   }
   fs.writeFileSync(path.join(dir, 'last-message.txt'), last);
-  return finishDiscussion(run, { usage, cost, commands, errors, notes, warnings, report, last, files, changesNote: M.opencodeNoChanges });
+  return finishDiscussion(run, { usage, cost, commands, errors, notes, warnings, report, last, files, changesNote: M.opencodeNoChanges, observed });
 }
 
 async function checkOpencodeAgent(name, agent) {

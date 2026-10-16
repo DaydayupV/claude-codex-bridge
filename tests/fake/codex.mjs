@@ -27,6 +27,7 @@ if (operation === 'version') {
   }
   if (!s.hold) {
     const last = s.last_message ?? report;
+    console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: typeof last === 'string' ? last : JSON.stringify(last) } }));
     if (args.includes('-o')) write(args[args.indexOf('-o') + 1], typeof last === 'string' ? last : JSON.stringify(last));
     if (s.usage) console.log(JSON.stringify({ type: 'turn.completed', usage: s.usage }));
   }

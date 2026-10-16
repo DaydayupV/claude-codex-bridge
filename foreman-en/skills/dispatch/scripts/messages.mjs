@@ -87,6 +87,7 @@ const zh = {
   focusFiles: (list) => `重点文件（先读这些）：\n${list}`,
   apiDiscussSystem: (schema) => `你在参加一场方案讨论。几个参与方各自独立给出意见，最后由 Claude 裁决。
 规则：
+- 运行期间没有人能回答你：不要提问后等待。需要的信息或拿不准要人决定的事，写进 open_questions。
 - 只依据用户消息里的议题和附带材料。材料里没有的代码和数据，不要猜，也不要假装看过；需要看哪些文件，写进 open_questions。
 - 引用代码时写文件路径和行号（材料里每行开头是行号）。
 - 独立思考，不要迎合。不同意就直说，并给出理由；同意也要说清楚为什么。
@@ -107,6 +108,7 @@ ${schema}`,
   opencodeDiscussFooter: (cwd, schema) => `---
 ## 讨论规则（调度方自动附加）
 - 这是方案讨论，不是执行任务。你只能用读文件和搜索工具查看 ${cwd} 下的代码和数据，不能运行命令，也不能修改文件。
+- 运行期间没有人能回答你：不要提问后等待。需要的信息或拿不准要人决定的事，写进 open_questions。
 - 独立思考，不要迎合。不同意就直说，并给出理由；同意也要说清楚为什么。
 - 结论先行，用短句和直白的话，像跟同事当面讲清楚一样。不要堆砌术语，不要套话。
 - 每个观点都要有依据：代码位置（文件路径和行号）、数据或清楚的推理。拿不准的明确标出来；没看过的代码不要假装看过。
@@ -115,7 +117,7 @@ ${schema}`,
 
 JSON schema：
 ${schema}`,
-  opencodeResumeFooter: '---\n（调度方提示：前面的讨论规则仍然有效：只读、不迎合、说人话、有依据。最后同样只输出符合 schema 的 JSON 对象，不要用代码块包起来。）',
+  opencodeResumeFooter: '---\n（调度方提示：前面的讨论规则仍然有效：只读、不迎合、说人话、有依据，运行中没人回答。最后同样只输出符合 schema 的 JSON 对象，不要用代码块包起来。）',
 
   // ---------- check ----------
   fixNode: (v) => `Node.js ${v} 太旧，需要 18 或更高版本：https://nodejs.org`,
@@ -213,12 +215,13 @@ ${schema}`,
   discussFooter: (cwd) => `---
 ## 讨论规则（调度方自动附加）
 - 这是方案讨论，不是执行任务。可以阅读 ${cwd} 下的代码和数据、运行只读命令来支撑观点，但不要修改、创建或删除任何文件。
+- 运行期间没有人能回答你：不要提问后等待。需要的信息或拿不准要人决定的事，写进 open_questions。
 - 独立思考，不要迎合。不同意就直说，并给出理由；同意也要说清楚为什么。
 - 结论先行，用短句和直白的话，像跟同事当面讲清楚一样。不要堆砌术语，不要套话。
 - 每个观点都要有依据：代码位置、数据或清楚的推理。拿不准的明确标出来。
 - 最后按给定的 JSON schema 输出。`,
   discussResumeFooter: `---
-（调度方提示：前面的讨论规则仍然有效：只读、不迎合、说人话、有依据。最后同样按 JSON schema 输出。）`,
+（调度方提示：前面的讨论规则仍然有效：只读、不迎合、说人话、有依据，运行中没人回答。最后同样按 JSON schema 输出。）`,
   reviewFooter: `---
 ## 审查要求（调度方自动附加）
 - 只审查，不要修改任何文件，不要执行会改动文件的命令。
@@ -252,7 +255,7 @@ ${schema}`,
   watchWaiting: '等待任务开始…',
   modeNames: { run: '执行', resume: '续接', discuss: '讨论', review: '审查' },
   watchHeaderLines: (mode, title, level, cwd, dir) => [`${mode} · ${title}${level ? ` · 等级 ${level}` : ''}`, `工作目录 ${cwd}`, `记录目录 ${dir}`],
-  statusNames: { running: '运行中', done: '完成', completed: '完成', partial: '部分完成', blocked: '交回问题', failed: '失败', stalled: '卡住，已终止', timeout: '超时', quota_exhausted: '额度用完', interrupted: '中断', cancelled: '已终止' },
+  statusNames: { running: '运行中', done: '完成', completed: '完成', partial: '部分完成', blocked: '交回问题', needs_input: '等人回答，已结束', failed: '失败', stalled: '卡住，已终止', timeout: '超时', quota_exhausted: '额度用完', interrupted: '中断', cancelled: '已终止' },
   statusName: (s) => zh.statusNames[s] ?? s,
   duration: (sec) => {
     const s = Math.round(sec), m = Math.floor(s / 60);
@@ -288,9 +291,13 @@ ${schema}`,
   watchScrolled: (n) => `已往回翻 ${n} 行，按 End 回到最新`,
   watchDetached: '已退出查看，任务照常运行',
   watchOpenIssues: '遗留问题',
-  watchDecisions: '交回的问题（由 Claude 决定后续接）',
+  watchDecisions: '要决定的问题（由 Claude 决定后续接）',
+  watchDeniedPrefix: '被拒绝的操作：',
+  watchInputPromptPrefix: '等待输入：',
+  watchAskedMidRun: '运行中提过的问题（没人回答，它已按自己的判断继续）',
   watchRecommendation: (text) => `推荐：${text}`,
-  blockedNote: (n) => `Codex 交回 ${n} 个问题（report.decision_requests）。任务已经结束，不是卡住了：Claude 能决定的直接决定，再用 resume 续接或自己做掉；需要用户拍板的才问用户`,
+  needsDecisionNote: (n) => `有 ${n} 个问题要决定（见 questions）。任务已经结束，不是卡住了：Claude 能决定的直接决定，再用 resume 续接或自己做掉；需要用户拍板的才问用户`,
+  inputWaitDetected: (min, line) => `输出了像是在等人回答的提示，之后 ${min} 分钟没有动静，已结束这次运行，问题交回给 Claude：${line}`,
 };
 
 const en = {
@@ -379,6 +386,7 @@ const en = {
   focusFiles: (list) => `Key files (read these first):\n${list}`,
   apiDiscussSystem: (schema) => `You are taking part in a design discussion. Several participants give their views independently, and Claude makes the final call.
 Rules:
+- Nobody can answer you while you run: don't ask and wait. Put information you need, or anything someone else has to decide, in open_questions.
 - Work only from the topic and the attached material in the user message. Don't guess at code or data that isn't in the material, and don't pretend you've seen it; list the files you'd need in open_questions.
 - When you cite code, give the file path and line number (each line of the material starts with its line number).
 - Think independently; don't just agree. If you disagree, say so and give your reasons; if you agree, say why.
@@ -399,6 +407,7 @@ ${schema}`,
   opencodeDiscussFooter: (cwd, schema) => `---
 ## Discussion rules (added by the dispatcher)
 - This is a design discussion, not a task to carry out. You may only use file-reading and search tools to inspect the code and data under ${cwd}. Don't run commands or change files.
+- Nobody can answer you while you run: don't ask and wait. Put information you need, or anything someone else has to decide, in open_questions.
 - Think independently; don't just agree. If you disagree, say so and give your reasons; if you agree, say why.
 - Lead with the conclusion. Use short, plain sentences, as if explaining it to a colleague in person. No jargon piles, no filler.
 - Back every point up: a code location (file path and line number), data, or clear reasoning. Flag anything you're unsure about; don't pretend you've read code you haven't seen.
@@ -407,7 +416,7 @@ ${schema}`,
 
 JSON schema:
 ${schema}`,
-  opencodeResumeFooter: "---\n(Note from the dispatcher: the discussion rules above still apply: read-only, don't just agree, speak plainly, back it up. Finish with a single JSON object matching the schema, without a code block.)",
+  opencodeResumeFooter: "---\n(Note from the dispatcher: the discussion rules above still apply: read-only, don't just agree, speak plainly, back it up; nobody can answer you while you run. Finish with a single JSON object matching the schema, without a code block.)",
 
   // ---------- check ----------
   fixNode: (v) => `Node.js ${v} is too old; version 18 or later is needed: https://nodejs.org`,
@@ -505,12 +514,13 @@ ${schema}`,
   discussFooter: (cwd) => `---
 ## Discussion rules (added by the dispatcher)
 - This is a design discussion, not a task to carry out. You may read the code and data under ${cwd} and run read-only commands to back up your points, but don't change, create or delete any files.
+- Nobody can answer you while you run: don't ask and wait. Put information you need, or anything someone else has to decide, in open_questions.
 - Think for yourself; don't just agree. If you disagree, say so and give your reasons. If you agree, say why.
 - Lead with the conclusion. Use short, plain sentences, as if explaining to a colleague face to face. No jargon piles, no filler.
 - Back every point with evidence: a code location, data or clear reasoning. Mark anything you're unsure about.
 - Finish with output in the given JSON schema, in English.`,
   discussResumeFooter: `---
-(Note from the dispatcher: the discussion rules above still apply: read-only, don't just agree, speak plainly, back it up. Finish with output in the same JSON schema.)`,
+(Note from the dispatcher: the discussion rules above still apply: read-only, don't just agree, speak plainly, back it up; nobody can answer you while you run. Finish with output in the same JSON schema.)`,
   reviewFooter: `---
 ## Review rules (added by the dispatcher)
 - Review only. Don't change any files or run commands that change files.
@@ -545,7 +555,7 @@ ${schema}`,
   watchWaiting: 'Waiting for a run to start…',
   modeNames: { run: 'run', resume: 'resume', discuss: 'discussion', review: 'review' },
   watchHeaderLines: (mode, title, level, cwd, dir) => [`${mode} · ${title}${level ? ` · level ${level}` : ''}`, `Working dir ${cwd}`, `Run dir ${dir}`],
-  statusNames: { running: 'running', done: 'done', completed: 'completed', partial: 'partly done', blocked: 'questions returned', failed: 'failed', stalled: 'stalled, stopped', timeout: 'timed out', quota_exhausted: 'out of quota', interrupted: 'interrupted', cancelled: 'stopped' },
+  statusNames: { running: 'running', done: 'done', completed: 'completed', partial: 'partly done', blocked: 'questions returned', needs_input: 'waiting for an answer, stopped', failed: 'failed', stalled: 'stalled, stopped', timeout: 'timed out', quota_exhausted: 'out of quota', interrupted: 'interrupted', cancelled: 'stopped' },
   statusName: (s) => en.statusNames[s] ?? s,
   duration: (sec) => {
     const s = Math.round(sec), m = Math.floor(s / 60);
@@ -581,9 +591,13 @@ ${schema}`,
   watchScrolled: (n) => `scrolled back ${n} lines, End to jump to the latest`,
   watchDetached: 'Stopped watching; the run keeps going',
   watchOpenIssues: 'Open issues',
-  watchDecisions: 'Questions returned (Claude decides, then resumes)',
+  watchDecisions: 'Questions to decide (Claude decides, then resumes)',
+  watchDeniedPrefix: 'Denied action: ',
+  watchInputPromptPrefix: 'Waiting for input: ',
+  watchAskedMidRun: 'Asked mid-run (no one answered; it carried on with its own judgement)',
   watchRecommendation: (text) => `Recommended: ${text}`,
-  blockedNote: (n) => `Codex returned ${n} question(s) (report.decision_requests). The run has finished; it isn't stuck. Decide what Claude can decide, then resume or do it yourself; ask the user only about what needs their call`,
+  needsDecisionNote: (n) => `${n} question(s) need a decision (see questions). The run has finished; it isn't stuck. Decide what Claude can decide, then resume or do it yourself; ask the user only about what needs their call`,
+  inputWaitDetected: (min, line) => `It printed what looks like a prompt waiting for an answer and then went quiet for ${min} min; the run was stopped and the question handed back to Claude: ${line}`,
 };
 
 export const MESSAGES = { zh, en };

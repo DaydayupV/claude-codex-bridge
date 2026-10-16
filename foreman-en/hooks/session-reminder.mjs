@@ -32,7 +32,7 @@ const REMINDERS = {
     truncated: '（内容过长，后面已截断，完整内容请读原文件）',
     unfinishedHeading: '当前项目里有执行没有正常结束的 Codex 任务，可能需要处理：',
     unfinishedRun: (m, status) => `- ${m.id}｜${m.mode}｜${m.title || '-'}｜${status}`,
-    unfinishedStatuses: { interrupted: '调度进程已退出，没有结果', quota_exhausted: '额度用完', stalled: '卡死已终止', timeout: '超时已终止' },
+    unfinishedStatuses: { interrupted: '调度进程已退出，没有结果', quota_exhausted: '额度用完', stalled: '卡死已终止', timeout: '超时已终止', needs_input: '等人回答，已结束' },
     unfinishedFooter: '用 status --run <run_id> 查看详情，再决定续接、重来还是放弃。用户决定放弃、或者已经另外处理了的，运行 cancel --run <run_id> 标记为已处理，以后不再提醒。用户没提起时，在合适的时候简短告诉用户一句。',
     firstUse: (file) => `用户还没有用过本插件（没有配置文件 ${file}）。在合适的时候用一句话建议用户运行 /foreman:setup：它会检查 Codex 是否装好并登录，说明默认配置，还可以按需让其他模型参加讨论。`,
   },
@@ -45,7 +45,7 @@ Keep using the project's own domain skills as usual; they don't conflict: domain
     truncated: '(Truncated because it is long; read the file for the rest)',
     unfinishedHeading: 'Some Codex runs in this project did not finish normally and may need attention:',
     unfinishedRun: (m, status) => `- ${m.id} | ${m.mode} | ${m.title || '-'} | ${status}`,
-    unfinishedStatuses: { interrupted: 'the dispatcher exited, no result', quota_exhausted: 'quota used up', stalled: 'stuck and stopped', timeout: 'timed out and stopped' },
+    unfinishedStatuses: { interrupted: 'the dispatcher exited, no result', quota_exhausted: 'quota used up', stalled: 'stuck and stopped', timeout: 'timed out and stopped', needs_input: 'waiting for an answer, stopped' },
     unfinishedFooter: "Use status --run <run_id> for details, then decide whether to resume, start over or drop it. Once the user drops one, or it has been handled another way, run cancel --run <run_id> to mark it handled so it isn't listed again. If the user hasn't brought it up, mention it to them briefly at a suitable moment.",
     firstUse: (file) => `The user hasn't used this plugin yet (there's no config file ${file}). At a suitable moment, suggest in one sentence that they run /foreman-en:setup: it checks that Codex is installed and signed in, explains the default settings, and can add other models to discussions if they want.`,
   },
@@ -62,14 +62,14 @@ function unfinishedRuns(root, cwd) {
   const now = Date.now();
   return runs.filter((m) => {
     if (!m.cwd || directoryKey(m.cwd) !== directoryKey(cwd) || resumed.has(m.id) || m.dismissed_at) return false;
-    // 只提醒执行任务：讨论和审查的结果过时了，没有续接的必要
-    if ((m.kind || (m.mode === 'review' ? 'review' : 'exec')) !== 'exec') return false;
+    // 等输入的任务也要交回问题；其他异常仍只提醒执行任务。
+    if (m.status !== 'needs_input' && (m.kind || (m.mode === 'review' ? 'review' : 'exec')) !== 'exec') return false;
     const age = now - new Date(m.started_at).getTime();
     if (!(age >= 0 && age <= 7 * 86400000)) return false;
     if (m.status === 'running') {
       try { process.kill(m.pid, 0); } catch { m.status = 'interrupted'; }
     }
-    return ['interrupted', 'quota_exhausted', 'stalled', 'timeout'].includes(m.status);
+    return ['interrupted', 'quota_exhausted', 'stalled', 'timeout', 'needs_input'].includes(m.status);
   }).sort((a, b) => new Date(b.started_at) - new Date(a.started_at)).slice(0, 5);
 }
 

@@ -21,7 +21,7 @@ How to reach an agent goes only under `agents`; who gets what goes only under `l
 | `discuss_max_rounds` | How many rounds one discussion may have (round 1 plus later resumes), counted per participant; the script refuses resumes beyond it | `2` |
 | `timeout_min` | Total time limit for one run, in minutes | `480` |
 | `stall_min` | How long without activity counts as stuck, in minutes (0 turns it off). Codex: no events and no command running; API agents: no data at all in the stream; opencode agents: no events at all | `40` |
-| `busy_ask_min` | Ask the user whether to stop an API agent once it has been queued this many minutes because its service is busy (0 means never ask) | `2` |
+| `busy_ask_min` | Once an API agent has been queued this many minutes because its service is busy, Claude decides whether to stop it (0 turns this off) | `2` |
 | `runs_dir` | Run record directory (or the `FOREMAN_RUNS_DIR` environment variable) | `~/.claude/foreman/runs` |
 
 ## agents
@@ -36,7 +36,7 @@ Each key is an agent's name, which `levels` uses to refer to it. `claude` is res
 | `model` | Default model | `null`, use `~/.codex/config.toml` |
 | `max_parallel` | How many Codex runs may go at once, counted across all groups and sessions (see "Splitting work to run in parallel" in the skill) | `4` |
 | `sandbox` | Sandbox for `run` / `review` / `discuss`: `read-only` / `workspace-write` / `danger-full-access` | All `null` (use Codex config) |
-| `approval` | Approval policy, e.g. `never` | `null` (use Codex config) |
+| `approval` | Approval policy | `never` when not set (runs are unattended, so nobody can approve) |
 
 **`type: "openai-compatible"`** (models with an OpenAI-compatible API; there can be several; for now they can only take part in discussions)
 

@@ -79,6 +79,7 @@ node "<script path>" cancel --run <run_id>
   - `report`: Codex's structured report.
   - `changes`: changes inside the working directory, as tracked by the script. Each file has `by`: `agent` means there is evidence the agent doing the work changed it (records from before the rename say `codex`), `unknown` means it isn't known who did.
   - `notes`: informational messages, such as changes of unknown origin, or files Codex reported but tracking didn't see.
+  - `questions` and `needs_decision`: things the agent needs answered; see "When an agent needs an answer".
   - `session_id`, `run_dir`: the full diff is in `run_dir/diff.patch`.
   - Token use: `usage` is this call's input, cached and output tokens (when `usage_scope` is `session_total`, it's the whole session's total); `last_request` is the size of the latest request and the model's context window; `rate_limit` is how much of the Codex quota is used.
   - `agent`: which agent this call went to. Results from API and opencode agents have no change tracking (`changes.available` is `false`); for API agents `files` lists the files that were attached, and opencode agents add `cost_usd`.
@@ -241,10 +242,35 @@ Before research conclusions go into long-term records, reports or docs, or are h
 - If it still isn't good enough after the rework, or Codex times out or errors, Claude takes over and finishes it, and tells the user why.
 - A `stalled` result (stuck: no activity for over `dispatch.stall_min` minutes and no command running, so the script stopped it; the minutes are in the `config` output) is usually a temporary network or service problem. `resume` once to continue from where it stopped; if it stalls again, Claude takes over. `--stall <minutes>` changes the threshold and `--stall 0` turns it off. The total time limit is `dispatch.timeout_min`; change it with `--timeout`.
 - If you suspect a run is stuck, run `status` and look at "last activity X min ago" and the current step instead of guessing. Long gaps between events are normal while a command is running (such as a big computation). `interrupted` means the dispatcher process is gone (for example the session or app was closed); Claude won't get a completion notice, so check `status --run <run_id>` by hand and decide whether to resume or start over.
-- When `report.status` is `blocked`, read `report.decision_requests` and go through each one: if it's within the user's existing permission and Claude can decide, write down the decision and continue with resume; if the user needs to decide, give them the question, the options and Claude's recommendation. A resume to answer questions doesn't count as a rework.
+- When `needs_decision` is `true` (including `report.status` set to `blocked`, and the status `needs_input`), follow "When an agent needs an answer".
 - A `quota_exhausted` status means the quota is used up: the plan quota for Codex, or the account balance for an API agent. Don't retry, and don't switch to Claude redoing the work on your own. Tell the user the quota is used up and when it should reset (`quota_resets_at`), and let them decide whether to resume once it resets or have Claude take over.
 - When Claude takes over a run, or the user decides to drop it, and its status is `interrupted`, `stalled`, `timeout` or `quota_exhausted`, run `cancel --run <run_id>` to mark it handled: the session-start reminder only lists hands-on runs that haven't been handled.
 - If the reminder at the start of the session lists runs that didn't finish normally, mention it to the user at a suitable moment and handle them as the user wants.
+
+## When an agent needs an answer
+Runs are unattended: nobody can answer an agent while it runs. The script makes sure no agent gets stuck waiting:
+- Codex needs no approvals by default;
+- opencode gets no question tool and no permissions that need confirming;
+- a CLI added later that prints a "(y/n)"-style prompt and then goes quiet is stopped after 3 minutes with the status `needs_input`.
+
+Every question is collected in the result's `questions`. When `needs_decision` is `true`, something needs deciding; the run has finished, it isn't stuck.
+
+**Claude decides these directly, without asking the user.** Write the decision into the resume brief and continue with resume; Claude can also do a small finishing step itself.
+- Technical approaches and trade-offs within the user's existing authority and the task's scope;
+- Contradictions or gaps in the brief: these are usually Claude's own brief, so clarify what was meant;
+- Missing material or information: Claude looks it up and passes it on.
+
+**Leave these to the user,** with the question, the options and Claude's recommendation: business trade-offs and preferences, risk tolerance, widening scope or authority, extra spending, irreversible steps.
+
+By `source`:
+- `decision_request`: a question returned in a hands-on report. `recommendation` says which option it already went with. If Claude agrees, nothing changes; if not, say what to change in the resume brief.
+- `permission_denied`: an action the tool tried was blocked by permissions, for example opencode reading a file outside the project. The permissions are a deliberate boundary, so don't change the config to let it through; read the material it needs yourself and put it in the resume brief, or attach it with `--file`.
+- `final_question`: the final answer is a question, not a report. Claude answers it and resumes, asking for the report in the required format.
+- `input_prompt` (status `needs_input`): the tool is waiting for terminal input. Look at the prompt: if Claude can decide it under the rules above, resume and write the answer in the brief; otherwise leave it to the user.
+- `asked_mid_run`: a question asked mid-run that nobody answered; it carried on with its own judgement. When checking the work, compare the approach it chose against the report, and treat it as a rework if it's wrong. These don't count toward `needs_decision`.
+- `open_question`: an open question in a discussion report; handle it as part of the discussion flow.
+
+A resume to answer questions doesn't count as a rework.
 
 ## Discussion mode (/foreman-en:discuss)
 For complex plans, designs or ideas, discuss them with other models first, without carrying anything out. The participants come from `levels.discuss.<level>` in the config: Codex alone, or Codex plus API agents (such as DeepSeek) and opencode agents, all giving their views at the same time. **Claude stays in charge of the conclusions**: the participants' views are input only. Claude accepts or rejects them on the strength of the arguments, doesn't give in just because someone insists, and doesn't go by majority vote.
@@ -286,13 +312,13 @@ Don't start one for ordinary implementation details, tasks with a clear plan, or
 - Discussion is read-only: Codex can read code and run read-only commands to back up its points, but can't change files. If `warnings` says Codex changed files, check the diff and revert what Codex changed. Don't revert changes of unknown origin listed in `notes`; most likely someone else made them. API and opencode agents can't change files.
 - Discussions get the live view too.
 
-### When an API participant is busy, ask the user whether to stop it
+### When an API participant is busy
 When an API agent's service is busy, the request waits in the server's queue without starting, and the server may eventually drop it. Don't leave the user waiting:
 - When a discussion you start (or resume) has an API participant and `effective.dispatch.busy_ask_min` in the `config` output is above 0, also start `await-busy --group <name>` in the background right away (use `--run <run_id>` when the level has a single participant and no group). It sends no requests; it exits when a participant has been queued longer than `busy_ask_min` minutes, or when they've all finished, and you're notified when it does.
-- When it exits, read its output. If `busy` is empty, there's nothing to do. Otherwise, use the question tool to ask the user, one question per queued participant, naming the model and how long it has been queued, with three options:
-  - **Stop it and go ahead with the other participants' results** (recommended): run `cancel --run <run_id>`. That participant's result is marked `cancelled`; say it's missing when you decide.
-  - **Wait 5 more minutes**: start `await-busy --run <run_id> --after <minutes queued so far + 5>` in the background.
-  - **Keep waiting**: don't start `await-busy` again.
+- When it exits, read its output. If `busy` is empty, there's nothing to do. Otherwise Claude decides directly, without asking the user:
+  - If the other participants already have usable results, or this one has been queued for over 10 minutes: run `cancel --run <run_id>` to stop it and go ahead with the other results. Its result is marked `cancelled`; say it's missing when you decide.
+  - Otherwise wait 5 more minutes: start `await-busy --run <run_id> --after <minutes queued so far + 5>` in the background, and stop it if it's still queued then.
+  - Afterwards, tell the user in one sentence which participant was stopped and why.
 - The user can also press x in the live view to stop a queued model, which does the same as `cancel`. Carry on as usual when a result comes back `cancelled`.
 - Don't decide for the user on things that are theirs to decide, such as preferences, business trade-offs and risk tolerance. Give them the options with Claude's recommendation.
 

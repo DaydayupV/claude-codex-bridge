@@ -7,13 +7,13 @@
 //   适配器准备请求并借助运行器完成登记、执行、结果落盘和打印，返回 Promise<result>。
 // validateResume(parent)：需要工具会话的适配器提供，resume 在读说明前调用，无返回值，缺会话时原样报错。
 // locate(agent) / stats(sessionId, startedAt)：仅 Codex 提供；config 取得 { file, pre }，status 只读会话统计（对象或 null）。
-// validateAgent 是传给配置模块的字段校验函数；opencode 的 schema 校验在此注入，避免适配器互相依赖。
+// validateAgent 是传给配置模块的字段校验函数；CLI 的 schema 校验在此注入，避免适配器互相依赖。
 import codex from './codex-cli.mjs';
 import opencode from './opencode-cli.mjs';
 import api, { validateSchema } from './api.mjs';
 
 export const adapters = {
-  [codex.type]: codex,
+  [codex.type]: { ...codex, execute: (task) => codex.execute(task, validateSchema) },
   [api.type]: api,
   [opencode.type]: { ...opencode, execute: (task) => opencode.execute(task, validateSchema) },
 };

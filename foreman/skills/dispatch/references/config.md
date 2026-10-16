@@ -21,7 +21,7 @@
 | `discuss_max_rounds` | 一场讨论最多几轮（第 1 轮加上之后的续接），每个参与方各自计数；超出后脚本拒绝续接 | `2` |
 | `timeout_min` | 单次任务的总超时（分钟） | `480` |
 | `stall_min` | 多久没有动静判定为卡死（分钟，0 为关闭）。Codex：没有任何事件，也没有命令在执行；API 协作方：流式输出里没有任何数据；opencode 协作方：没有输出任何事件 | `40` |
-| `busy_ask_min` | API 协作方因为服务繁忙排队超过多少分钟，就问用户要不要终止它（0 为不问） | `2` |
+| `busy_ask_min` | API 协作方因为服务繁忙排队超过多少分钟，就由 Claude 决定要不要终止它（0 为不处理） | `2` |
 | `runs_dir` | 运行记录目录（也可用环境变量 `FOREMAN_RUNS_DIR`） | `~/.claude/foreman/runs` |
 
 ## agents
@@ -36,7 +36,7 @@
 | `model` | 默认模型 | `null`，沿用 `~/.codex/config.toml` |
 | `max_parallel` | 同时最多运行几个 Codex 任务，所有任务组和会话加起来算（见 skill 的"并发拆分"一节） | `4` |
 | `sandbox` | `run` / `review` / `discuss` 各自的沙箱：`read-only` / `workspace-write` / `danger-full-access` | 全部 `null`，沿用 Codex 配置 |
-| `approval` | 审批策略，如 `never` | `null`，沿用 Codex 配置 |
+| `approval` | 审批策略 | 不写时用 `never`（无人值守，没人能审批） |
 
 **`type: "openai-compatible"`**（兼容 OpenAI 接口的模型，可以有多个；目前只能参加讨论）
 

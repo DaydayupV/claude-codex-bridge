@@ -224,13 +224,13 @@ API 模型自己翻不了代码，Claude 会把相关文件随议题一起发过
 | `dispatch.discuss_max_rounds` | 一场讨论最多几轮（第 1 轮加上之后的续接），每个参与方各自计数。达到上限后脚本拒绝再续接，Claude 按已有结果裁决 | `2` |
 | `dispatch.timeout_min` | 单次任务的总超时（分钟） | `480` |
 | `dispatch.stall_min` | 连续多少分钟没有动静就判定为卡死并结束：Codex 是没有任何活动、也没有命令在执行；API 模型是流式输出里没有任何数据。`0` 表示关闭 | `40` |
-| `dispatch.busy_ask_min` | API 模型因为服务繁忙排队超过多少分钟，Claude 就问你要不要终止它、先用其他参与方的结果继续。`0` 表示不问 | `2` |
+| `dispatch.busy_ask_min` | API 模型因为服务繁忙排队超过多少分钟，Claude 就决定要不要终止它、先用其他参与方的结果继续，事后告诉你。`0` 表示不处理 | `2` |
 | `dispatch.runs_dir` | 运行记录目录（也可以用环境变量 `FOREMAN_RUNS_DIR`） | `~/.claude/foreman/runs` |
 | `agents.codex.bin` | codex 可执行文件或 `codex.js` 的路径（也可以用环境变量 `CODEX_BIN`） | 自动查找 |
 | `agents.codex.model` | Codex 的默认模型 | `null`，沿用 Codex 配置 |
 | `agents.<名字>.max_parallel` | 这个协作方同时最多运行几个任务，所有任务组和会话加起来算（服务商的限流和额度都是按账号的）。达到上限时新任务会被拒绝。对 Codex 来说，拆开并发的份数越多等得越短，但总 token 更多；设成 `1` 就不并发 | `4` |
 | `agents.codex.sandbox` | `run` / `review` / `discuss` 各自的沙箱：`read-only`、`workspace-write`、`danger-full-access` | 都是 `null`，沿用 Codex 配置 |
-| `agents.codex.approval` | Codex 的审批策略，比如 `never` | `null`，沿用 Codex 配置 |
+| `agents.codex.approval` | Codex 的审批策略 | 不写时用 `never`：运行是无人值守的，没人能审批 |
 | `agents.<名字>`（API 模型） | `type` 为 `openai-compatible`；`base_url`、`model` 必填；`api_key`（key 本身，还没填就留空）和 `api_key_env`（存放 key 的环境变量名）任选，都填时用 `api_key`，都没有的不能参加讨论；`extra_body` 可选 | 无 |
 | `agents.<名字>`（opencode 模型） | `type` 为 `opencode`；`model` 必填，写成 `厂商/模型`；`bin`（opencode 可执行文件路径）可选，默认自动查找 | 无 |
 | `levels` | 见上文 | run 的 simple、normal 为 `"claude"`，complex 为 Codex max；review 为 Codex medium / high / max；discuss 三级都只有 Codex，medium / high / max |
@@ -258,7 +258,7 @@ API 模型自己翻不了代码，Claude 会把相关文件随议题一起发过
 
 - **沙箱以 Codex 的配置为准。** 如果你的 Codex 配置是 `danger-full-access`，Codex 能读写电脑上的任何目录。任务说明会限定它的改动范围，Claude 事后也会审查 diff，但这些都不是技术上的隔离。想要技术隔离，就在配置里把 `agents.codex.sandbox` 设成 `workspace-write` 或 `read-only`。注意 Codex 在 Windows 上的沙箱支持可能不完整，改了之后要实际测试。
 - **Claude 只能通过插件调用 Codex。** 插件带有一个钩子：Claude 直接运行 `codex exec` 或 `codex review` 的命令会被拦下，这样每次调用都有记录、改动追踪和明确的模型和推理强度。你自己在终端里运行 codex 不受影响。
-- **后台运行时审批策略要设成 `never`**，否则 Codex 会卡在等待确认上。
+- **协作方不会因为等人回答而卡住。** Codex 默认不需要审批，opencode 不开放提问和需要确认的权限；协作方要人回答的事（交回的问题、被权限挡住的操作、等终端输入的提示）都收集在结果里，由 Claude 判断：在你已有的授权内的直接决定后续接，业务取舍、扩大范围、花钱和不可逆的操作才问你。
 - **你的代码和任务说明会发给 OpenAI。** 加了 API 模型参与讨论后，议题和附带的代码也会发给对应厂商。涉及敏感代码的项目，先确认这样做没问题，必要时用项目配置只留 Codex。
 - **API key 可以写在用户配置里，也可以放在环境变量里。** 写在配置里是明文，`~/.claude/foreman/config.json` 不要提交或分享；项目配置里写的 key 不会生效。`config` 命令不显示 key，脚本也不会把 key 写进运行记录。
 - **按量计费的都会产生费用。** Codex 用 API key 计费时每次派活都花钱；API 模型每场讨论都会扣账户余额。不想让 Claude 自动派活，就把 `dispatch.auto` 设成 `false`。

@@ -155,7 +155,7 @@ test('交回问题的执行任务提示 Claude 决定，watch 用问号列出问
   const s = h.scenario({ last_message: { ...report, status: 'blocked', decision_requests: [ask] } });
   const r = output(await h.bridge(taskArgs(h), { env: s.env }));
   assert.equal(r.status, 'done');
-  assert.ok(r.notes.includes(M.blockedNote(1)));
+  assert.ok(r.notes.includes(M.needsDecisionNote(1)));
   const w = await h.bridge(['watch', '--run', r.run_id]);
   assert.equal(w.code, 0, w.stderr);
   assert.ok(w.stdout.includes(`? ${M.watchFinished(M.statusName('blocked'), M.duration(r.duration_s), null).split(' · ')[0]}`));

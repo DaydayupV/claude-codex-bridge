@@ -138,6 +138,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n)}…` : s);
 const oneLine = (s) => String(s ?? '').replace(/\r/g, '').split('\n').map((x) => x.trim()).filter(Boolean).join(' ⏎ ');
 
+function looksLikeQuestion(text) {
+  // 只认末尾问号或明确请人决定的说法，普通进度说明不算提问。
+  return /[?？]$/.test(text.trimEnd()) || /请确定|请确认|请选择|请决定|要不要|是否需要我|你希望|您希望|please confirm|please choose|should I|do you want|would you like|which option/i.test(text);
+}
+
+function looksLikeInputPrompt(line) {
+  // 只认原始终端输出中明确的确认、按键和输入提示，不用于模型消息。
+  return /\(y\/n\)|\[y\/n\]|\(yes\/no\)|press enter|press any key|\b(?:continue|proceed|overwrite|approve|allow)\?|select an option|enter a number|是否继续|请输入|按回车/i.test(line);
+}
+
+// 最终回答是不是一个问题，而不是格式不对的报告：看起来像 JSON 的一律当格式问题，照常修复；
+// 否则最后一行以问号结尾，或者整段不长、又有明确请人决定的说法，才算问题。
+function looksLikeFinalQuestion(text) {
+  const t = String(text ?? '').trim();
+  if (!t || /^(```|\{)/.test(t)) return false;
+  const lastLine = t.split('\n').map((x) => x.trim()).filter(Boolean).pop() || '';
+  return /[?？]$/.test(lastLine) || (t.length <= 800 && looksLikeQuestion(t));
+}
+
+const needsDecision = (q) => ['decision_request', 'permission_denied', 'final_question', 'input_prompt'].includes(q.source);
+
 // 按 POSIX shell 规则拆分命令行；引号不配对时返回 null。
 function shellSplit(s) {
   const args = [];
@@ -194,4 +215,4 @@ function replaceFile(from, to) {
   }
 }
 
-export { replaceFile, HERE, LANGUAGE, M, notice, isObject, readJson, die, need, resolveDir, readBrief, MAX_MATERIAL_CHARS, readAttachments, focusFiles, binCommand, pathCommand, npmEntry, isGitRepo, pidAlive, killTree, relativePath, pathKey, RECONNECT, isReconnect, sleep, clip, oneLine, plainCommand, isAscii, modelOf, whoOf };
+export { replaceFile, HERE, LANGUAGE, M, notice, isObject, readJson, die, need, resolveDir, readBrief, MAX_MATERIAL_CHARS, readAttachments, focusFiles, binCommand, pathCommand, npmEntry, isGitRepo, pidAlive, killTree, relativePath, pathKey, RECONNECT, isReconnect, sleep, clip, oneLine, plainCommand, isAscii, modelOf, whoOf, looksLikeQuestion, looksLikeInputPrompt, looksLikeFinalQuestion, needsDecision };

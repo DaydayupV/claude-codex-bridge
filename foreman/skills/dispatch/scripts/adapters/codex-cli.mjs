@@ -1,11 +1,11 @@
 // Codex CLI：参数、进程事件、会话用量、生成图片和环境检查。
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { SCHEMA, DISCUSS_SCHEMA } from '../config.mjs';
 import { newRunDir } from '../records.mjs';
-import { execute, eventWriter, watchCancellation } from '../runner.mjs';
+import { execute, eventWriter, watchCancellation, spawnCli } from '../runner.mjs';
 import { M, die, isObject, binCommand, pathCommand, npmEntry, killTree, isReconnect, readAttachments, focusFiles } from '../util.mjs';
 
 // 模型、推理强度、沙箱、审批这几项 exec / resume / review 都接受 -m 和 -c。
@@ -14,7 +14,7 @@ function codexOptions(agent, { model, effort, mode }) {
   if (model) args.push('-m', model);
   args.push('-c', `model_reasoning_effort="${effort}"`);
   if (agent.sandbox?.[mode]) args.push('-c', `sandbox_mode="${agent.sandbox[mode]}"`);
-  if (agent.approval) args.push('-c', `approval_policy="${agent.approval}"`);
+  args.push('-c', `approval_policy="${agent.approval ?? 'never'}"`);
   return args;
 }
 
@@ -50,11 +50,18 @@ function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, sess
     const events = fs.createWriteStream(path.join(runDir, 'events.jsonl'));
     const errLog = fs.createWriteStream(path.join(runDir, 'stderr.log'));
     const event = eventWriter(runDir, events);
-    const out = { code: null, sessionId: null, usage: null, errors: [], warnings: [], fileChanges: new Set(), images: [], quotaExhausted: false, timedOut: false, stalled: false, cancelled: false, commands: 0 };
+    const out = { code: null, sessionId: null, usage: null, errors: [], warnings: [], fileChanges: new Set(), images: [], quotaExhausted: false, timedOut: false, stalled: false, cancelled: false, commands: 0, messages: [], questions: [] };
     const runningCommands = new Set();
     let lastEventAt = Date.now();
-    const child = spawn(file, [...pre, ...args], {
+    const child = spawnCli(file, [...pre, ...args], {
       cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32',
+    }, {
+      busy: () => runningCommands.size > 0,
+      onInput: (line, min) => {
+        out.needsInput = true;
+        out.questions.push({ source: 'input_prompt', question: line });
+        out.errors.push(M.inputWaitDetected(min, line));
+      },
     });
 
     const onSignal = () => { killTree(child.pid); process.exit(130); };
@@ -79,6 +86,7 @@ function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, sess
       else if (ev.type === 'error') (isReconnect(ev.message) ? out.warnings : out.errors).push(ev.message || JSON.stringify(ev));
       else if (ev.type === 'item.completed' && ev.item?.type === 'error') out.warnings.push(ev.item.message);
       else if (ev.type === 'item.completed' && ev.item?.type === 'command_execution') out.commands++;
+      else if (ev.type === 'item.completed' && ev.item?.type === 'agent_message') out.messages.push(ev.item.text || '');
       return ev;
     };
     // 每个事件记下收到的时间，watch 回放时也能显示时间线
@@ -206,7 +214,7 @@ function checkCodex(name, agent) {
   };
 }
 
-async function executeCodex(ctx) {
+async function executeCodex(ctx, validateSchema) {
   const { agent, model, effort, cwd, mode, kind, brief, opts: o, addDirs = [], git } = ctx;
   const files = mode === 'discuss' || mode === 'resume' ? readAttachments(o.file, cwd, false) : [];
   const { id, dir, release } = await newRunDir();
@@ -250,6 +258,7 @@ async function executeCodex(ctx) {
   }
   return execute({ ...ctx, id, dir, release, args, prompt, expectReport: mode !== 'review' }, {
     run: runCodex, stats: codexSessionStats,
+    schema: JSON.parse(fs.readFileSync(kind === 'discuss' ? DISCUSS_SCHEMA : SCHEMA, 'utf8')), validate: validateSchema,
     describe: () => {
       const sandbox = agent.sandbox?.[kind === 'exec' ? 'run' : kind] || null;
       // model 为 null 时实际模型由 Codex 配置决定，model_shown 是给人看的实际模型名。

@@ -7,7 +7,7 @@ import { M, die, pidAlive, sleep, pathKey, clip, oneLine, plainCommand } from '.
 // 终止标记：cancel 命令和实时查看里按 x 时写进任务的记录目录，运行中的任务看到就停下。
 const CANCEL_FILE = 'cancel';
 // 没有正常结束的几种状态：会话开始的提醒会列出这样的执行任务，对它们运行 cancel 表示已经处理，不再提醒
-const UNFINISHED_STATUSES = ['interrupted', 'quota_exhausted', 'stalled', 'timeout'];
+const UNFINISHED_STATUSES = ['interrupted', 'quota_exhausted', 'stalled', 'timeout', 'needs_input'];
 
 // 派活的 Claude 会话：Claude Code 运行命令时会带上会话 ID，记进任务元数据。
 // 不同会话可能起了同一个组名（比如同一天讨论同一个话题），按组查看时只算同一会话派出的那一批。
@@ -185,9 +185,9 @@ function runOutcome(run) {
   const status = m.status === 'running' && !running ? 'interrupted' : m.status;
   const file = path.join(run.dir, 'result.json');
   const result = !running && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
-  const ok = status === 'done' && (!result?.report?.status || result.report.status === 'completed');
   // 交回问题的任务已经正常结束，只是有事要 Claude 决定，不算失败
-  const blocked = status === 'done' && result?.report?.status === 'blocked';
+  const blocked = status === 'needs_input' || status === 'done' && (result?.needs_decision || result?.report?.status === 'blocked');
+  const ok = !blocked && status === 'done' && (!result?.report?.status || result.report.status === 'completed');
   return { running, status, result, ok, blocked };
 }
 

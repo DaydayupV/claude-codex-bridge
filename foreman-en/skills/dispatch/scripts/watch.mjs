@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { RUNS_ROOT, CANCEL_FILE, listRuns, findRun, readMeta, isRunning, runEnd, runOutcome, groupRuns } from './records.mjs';
-import { M, die, sleep, clip, oneLine, plainCommand, RECONNECT, isReconnect, modelOf, whoOf } from './util.mjs';
+import { M, die, sleep, clip, oneLine, plainCommand, RECONNECT, isReconnect, modelOf, whoOf, needsDecision } from './util.mjs';
 
 // 终端里中日韩字符和全角符号占两格，按显示宽度截断和换行，避免折行错位。
 const charWidth = (ch) => (/[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(ch) ? 2 : 1);
@@ -81,7 +81,7 @@ const clock = (ms) => {
 };
 const hhmm = (t) => (t ? new Date(t).toTimeString().slice(0, 5) : '     ');
 // 执行顺利结束时以报告里的状态为准（完成、部分完成、等待决定……）
-const shownStatus = (status, r) => (status === 'done' ? r?.report?.status || status : status);
+const shownStatus = (status, r) => (status === 'done' ? r?.needs_decision ? 'blocked' : r?.report?.status || status : status);
 // 成功的任务不再列出临时的重连提示；旧记录把它记成了错误
 const realErrors = (r, ok) => (r?.errors || []).filter((e) => !(ok && isReconnect(e)));
 const SPIN = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
@@ -156,7 +156,11 @@ function verboseRenderer(meta, rel) {
     }
   };
   const finish = (r, m) => {
-    if (r) out('■', M.watchFinished(M.statusName(shownStatus(r.status, r)), M.duration(r.duration_s), changedFor(r, m)), m?.ended_at);
+    if (r) {
+      const blocked = r.status === 'needs_input' || shownStatus(r.status, r) === 'blocked';
+      const text = M.watchFinished(M.statusName(shownStatus(r.status, r)), M.duration(r.duration_s), changedFor(r, m));
+      out(blocked ? C.yellow('?') : '■', blocked ? C.yellow(text) : text, m?.ended_at);
+    }
     else out('■', m?.status === 'running' ? M.watchInterrupted : M.watchEnded(m?.status), m?.ended_at);
     if (r?.usage) out('Σ', M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total'), m?.ended_at);
   };
@@ -489,8 +493,8 @@ function timelineRenderer(meta, rel, { screen: useScreen = false, dir = null } =
       write(node(m?.ended_at, C.red('└')) + (m?.status === 'running' ? C.red(M.watchInterrupted) : M.watchEnded(m?.status)));
       return;
     }
-    const ok = r.status === 'done' && (!r.report?.status || r.report.status === 'completed');
-    const blocked = r.status === 'done' && r.report?.status === 'blocked';
+    const blocked = r.status === 'needs_input' || r.status === 'done' && (r.needs_decision || r.report?.status === 'blocked');
+    const ok = !blocked && r.status === 'done' && (!r.report?.status || r.report.status === 'completed');
     const color = ok ? C.green : blocked ? C.yellow : C.red;
     write(node(m?.ended_at, color('└')) + color(C.bold(`${ok ? '✔' : blocked ? '?' : '✗'} ${M.watchFinished(M.statusName(shownStatus(r.status, r)), M.duration(r.duration_s), changedFor(r, m))}`)));
     if (r.usage) write(' '.repeat(TIME_W + 2) + C.dim(M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total')));
@@ -502,17 +506,25 @@ function timelineRenderer(meta, rel, { screen: useScreen = false, dir = null } =
       write(C.yellow(M.watchOpenIssues));
       for (const x of issues) paragraph(`· ${x}`, '  ', 4);
     }
-    const asks = r.report?.decision_requests || [];
+    const asks = r.questions?.filter(needsDecision) ?? r.report?.decision_requests ?? [];
     if (asks.length) {
       write();
       write(C.yellow(M.watchDecisions));
       for (const d of asks) {
-        paragraph(`· ${d.question}`, '  ', 6);
+        const prefix = d.source === 'permission_denied' ? M.watchDeniedPrefix : d.source === 'input_prompt' ? M.watchInputPromptPrefix : '';
+        paragraph(`· ${prefix}${d.question}`, '  ', 6);
         for (const o of d.options || []) paragraph(`- ${o}`, '    ', 3);
         if (d.recommendation) paragraph(M.watchRecommendation(d.recommendation), '    ', 4);
       }
     }
-    for (const e of realErrors(r, ok)) write(C.red(`✗ ${fitWidth(oneLine(e), W - 3)}`));
+    const midRun = (r.questions || []).filter((q) => q.source === 'asked_mid_run');
+    if (midRun.length) {
+      write();
+      write(C.yellow(M.watchAskedMidRun));
+      for (const q of midRun) write(`  · ${fitWidth(oneLine(q.question), W - 5)}`);
+    }
+    for (const e of realErrors(r, ok)) write(r.status === 'needs_input'
+      ? C.yellow(`? ${fitWidth(oneLine(e), W - 3)}`) : C.red(`✗ ${fitWidth(oneLine(e), W - 3)}`));
   };
 
   const goLive = () => {
@@ -637,7 +649,7 @@ function panelLines(run, feed, rows, width, withTitle) {
   const errors = realErrors(r, ok);
   if (!running && (final || errors.length)) {
     if (final) body = wrapWidth(M.watchOpinion(final.trim()), inner).map((l) => ({ l }));
-    for (const e of errors) body.push({ l: fitWidth(`✗ ${oneLine(e)}`, inner), style: 'red' });
+    for (const e of errors) body.push({ l: fitWidth(`${r.status === 'needs_input' ? '?' : '✗'} ${oneLine(e)}`, inner), style: r.status === 'needs_input' ? 'yellow' : 'red' });
     body = body.slice(0, rows);
   } else {
     for (const item of feed.items) {
@@ -791,7 +803,9 @@ async function watchGroup(group) {
     if (r?.usage) out.push(`  ${C.dim(fitWidth(M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (run.meta.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total'), inner))}`);
     const final = r?.report?.position || r?.report?.summary;
     if (final) for (const l of wrapWidth(M.watchOpinion(final.trim()), inner)) out.push(`  ${l}`);
-    for (const e of realErrors(r, ok)) for (const l of wrapWidth(`✗ ${oneLine(e)}`, inner)) out.push(`  ${C.red(l)}`);
+    for (const e of realErrors(r, ok)) for (const l of wrapWidth(`${r.status === 'needs_input' ? '?' : '✗'} ${oneLine(e)}`, inner)) {
+      out.push(`  ${(r.status === 'needs_input' ? C.yellow : C.red)(l)}`);
+    }
   }
   process.stdout.write(`${out.join('\n')}\n`);
 }

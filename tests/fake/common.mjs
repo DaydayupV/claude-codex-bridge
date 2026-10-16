@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { setTimeout as pause } from 'node:timers/promises';
+import { spawn } from 'node:child_process';
 
 export function write(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -30,7 +31,12 @@ export async function replay(steps = [], cwd = process.cwd()) {
       }
     }
     for (const [name, content] of Object.entries(step.files || {})) write(path.resolve(cwd, name), content);
+    if (step.child_pid_file) {
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { windowsHide: true, stdio: 'ignore' });
+      write(step.child_pid_file, String(child.pid));
+    }
     if (step.stderr) process.stderr.write(step.stderr);
+    if (step.stdout) process.stdout.write(step.stdout);
     if (step.event) process.stdout.write(JSON.stringify(step.event) + '\n');
   }
 }

@@ -1,7 +1,7 @@
 // 状态列表、终止任务和排队检查；会话统计由入口提供只读函数。
 import fs from 'node:fs';
 import path from 'node:path';
-import { RUNS_ROOT, CANCEL_FILE, UNFINISHED_STATUSES, listRuns, findRun, readMeta, isRunning, runEnd, groupRuns, groupSummary, describeActivity } from './records.mjs';
+import { RUNS_ROOT, CANCEL_FILE, UNFINISHED_STATUSES, listRuns, findRun, readMeta, isRunning, runEnd, runOutcome, groupRuns, groupSummary, describeActivity } from './records.mjs';
 import { M, die, need, pidAlive, killTree, sleep, modelOf, whoOf } from './util.mjs';
 
 function cmdStatus(o, codexSessionStats) {
@@ -22,14 +22,15 @@ function cmdStatus(o, codexSessionStats) {
     const m = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
     if (m.status === 'running' && !pidAlive(m.pid)) m.status = 'interrupted';
     const mins = ((runEnd(dir, m) - Date.parse(m.started_at)) / 60000).toFixed(1);
-    let row = `${rid}  ${m.mode.padEnd(6)}  ${m.status.padEnd(11)}  ${(m.level || '-').padEnd(7)}  ${whoOf(m)}  ${mins.padStart(6)}min  ${m.group != null ? M.statusGroup(m.group) : ''}${m.round ? M.statusRound(m.round) : ''}${m.title || ''}  @ ${m.cwd}`;
+    const { result: r, blocked } = runOutcome({ dir, meta: m });
+    const label = blocked ? `? ${M.statusName(m.status === 'needs_input' ? 'needs_input' : 'blocked')}` : m.status;
+    const status = blocked && process.stdout.isTTY && !process.env.NO_COLOR ? `\x1b[33m${label}\x1b[0m` : label;
+    let row = `${rid}  ${m.mode.padEnd(6)}  ${status.padEnd(11)}  ${(m.level || '-').padEnd(7)}  ${whoOf(m)}  ${mins.padStart(6)}min  ${m.group != null ? M.statusGroup(m.group) : ''}${m.round ? M.statusRound(m.round) : ''}${m.title || ''}  @ ${m.cwd}`;
     if (m.status === 'running') {
       const a = describeActivity(dir);
       const last = codexSessionStats(m.session_id, m.started_at)?.last_request;
       row += `\n    └ ${M.statusActivity(a.idle_min ?? '-', a.step)}${last ? M.lastRequestNow(last, M.tokenCount) : ''}`;
     } else {
-      let r = null;
-      try { r = JSON.parse(fs.readFileSync(path.join(dir, 'result.json'), 'utf8')); } catch { /* 没有结果 */ }
       if (r?.usage) row += `\n    └ ${M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total')}`;
     }
     return row;
