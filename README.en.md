@@ -2,9 +2,9 @@
 
 [中文](README.md)
 
-A Claude Code plugin that lets Claude hand off hands-on coding work to OpenAI Codex and then check the result. Claude can also ask Codex for an independent code review, or have Codex and other models (such as DeepSeek, or any model you can reach through opencode) weigh in on a complex design before Claude decides.
+A Claude Code plugin where Claude plans, decides and checks the results, handing off hands-on coding work to CLI agents such as OpenAI Codex according to your config. Claude can also ask them for independent code reviews, or have Codex, models reached through opencode, and API models (such as DeepSeek) weigh in on a complex design before Claude decides.
 
-The idea is a split of roles: Claude does the planning, key decisions, design and writing; Codex does the rest of the hands-on work. Codex runs on your own OpenAI plan or API key, so it doesn't use your Claude quota.
+The idea is a split of roles: Claude does the planning, key decisions, design and writing; the rest of the hands-on work goes to the agents you configure, level by level. They run on your own plans or balances (a Codex plan, an opencode subscription, API credit), so they don't use your Claude quota.
 
 ## What it does
 
@@ -25,9 +25,9 @@ Every time Claude hands something off, it tells you in the chat who got it and w
 ## Requirements
 
 - [Claude Code](https://claude.com/claude-code)
-- [Codex CLI](https://github.com/openai/codex), installed and signed in (required). If `codex exec "hello"` gets a reply in your terminal, you're set
+- Recommended: the [Codex CLI](https://github.com/openai/codex), installed and signed in. Hands-on work, reviews and image generation currently rely on it; without it, Claude does that work itself
 - Node.js 18 or later. If you run Claude Code inside WSL, Node.js must be installed inside WSL too, or the plugin's hooks will error before every command
-- Git 2.25 or later (used to track which files Codex changed)
+- Git 2.25 or later (used to track which files the agents changed)
 - Optional: to have other models join discussions, an API key from that provider (for example DeepSeek), or [opencode](https://opencode.ai) 2.x installed
 
 ## Install
@@ -39,7 +39,7 @@ In Claude Code, run:
 /plugin install foreman-en@claude-foreman
 ```
 
-Then run `/foreman-en:setup`. It checks that Node.js, Git and Codex work, explains who gets each kind of task by default, and asks whether you want other models to join discussions. Later, use `/foreman-en:config` to see or change the settings.
+Then run `/foreman-en:setup`. It detects which tools this machine has (Codex, opencode, API keys), explains who gets each kind of task now, and suggests models to add for your situation. Later, use `/foreman-en:config` to see or change the settings.
 
 ### Upgrading from codex-bridge
 
@@ -54,188 +54,124 @@ Your settings move over automatically the first time the new plugin runs:
 - the preferences `~/.claude/codex-bridge.md` are copied to `~/.claude/foreman/preferences.md`;
 - the run directory `~/.claude/codex-runs` is moved to `~/.claude/foreman/runs`. If runs are still in progress there, it waits and moves on a later run.
 
-The old config and preferences files are kept; delete them yourself once everything works. A project's `.claude/codex-bridge.json` and `.claude/codex-bridge.md` are still read, with a suggestion to rename them to `.claude/foreman.json` and `.claude/foreman.md`. The environment variables `CODEX_BRIDGE_CONFIG`, `CODEX_RUNS_DIR` and `CODEX_BRIDGE_LANG` are now `FOREMAN_CONFIG`, `FOREMAN_RUNS_DIR` and `FOREMAN_LANG`; the old names still work for now. `/codex-bridge-en:rescue` is now `/foreman-en:run`.
+The config is also rewritten in the new format: `type` becomes `codex cli` / `opencode cli` / `api`, `"claude"` becomes `"claude code"`, and agent IDs are renamed after their models (for example `codex` becomes `gpt-6-astra`). The model and effort each level actually uses stay the same, and the original is backed up as `config.json.bak`. The old config and preferences files are kept; delete them yourself once everything works. A project's `.claude/codex-bridge.json` and `.claude/codex-bridge.md` are still read, with a suggestion to rename them to `.claude/foreman.json` and `.claude/foreman.md`. The environment variables `CODEX_BRIDGE_CONFIG`, `CODEX_RUNS_DIR` and `CODEX_BRIDGE_LANG` are now `FOREMAN_CONFIG`, `FOREMAN_RUNS_DIR` and `FOREMAN_LANG`; the old names still work for now. `/codex-bridge-en:rescue` is now `/foreman-en:run`.
 
 ## Configuration
 
-On first use, the plugin creates a user config at `~/.claude/foreman/config.json`: Claude does simple and normal hands-on tasks itself, complex ones go to Codex with `gpt-6.1-sol`, and complex reviews and discussions use `gpt-6-astra`. It doesn't set the sandbox or approval policy; those still come from Codex's own `~/.codex/config.toml`.
+The user config is `~/.claude/foreman/config.json`, and a project config is `<project dir>/.claude/foreman.json`. To change things, edit the file directly, or tell Claude something like "use `/foreman-en:config` to switch complex tasks to ultra". Every setting is described in [references/config.md](foreman-en/skills/dispatch/references/config.md).
 
-To change things, edit that file, or tell Claude something like "use `/foreman-en:config` to switch complex tasks to ultra".
+### First run
 
-Config files are JSON. Later ones override earlier ones:
+On first run, the plugin checks what this machine has, then generates a config:
 
-1. The plugin's built-in defaults
-2. User config: `~/.claude/foreman/config.json` (change the path with the `FOREMAN_CONFIG` environment variable)
-3. Project config: `<project>/.claude/foreman.json`
+| Found | Resulting setup |
+|---|---|
+| A usable Codex (installed and signed in) | Claude does simple and normal hands-on tasks itself; complex ones go to Codex's `gpt-6.1-sol`. Reviews and discussions go to Codex, with `gpt-6-astra` for complex ones |
+| No Codex | Claude does every task itself for now |
+| API key environment variables (DeepSeek, Kimi, MiMo) | Added to the config, but not to any discussion yet |
+| opencode | Not added automatically; you pick the model |
 
-When you upgrade from a version before 0.10, a user config in the old layout is rewritten into the layout below on first run, and the original is saved as `config.json.bak`.
+Choices that cost money or affect safety are never made automatically. Run `/foreman-en:setup` and Claude suggests a setup for your machine, then changes the config once you confirm. Running setup again later picks up newly installed tools.
 
 ### How the config is laid out
 
-The config has three parts:
+It has three parts:
 
 | Part | What it covers |
 |---|---|
-| `dispatch` | How the plugin hands off work: whether to do it on its own, the live view, parallel runs, discussion rounds, time limits, the run directory |
-| `agents` | Which agents there are and how to reach them: Codex's executable, default model and sandbox; an API model's address, its API key (written in the config, or the environment variable holding it), and its default model; the model name for models called through opencode |
-| `levels` | Who each level of each task type goes to, with which model and reasoning effort |
+| `dispatch` | How the plugin hands off work: whether to do it on its own, the live view, discussion rounds, time limits, the run directory |
+| `agents` | Which agents there are and how to reach them |
+| `levels` | Who each level of each task type goes to, and with what effort |
 
-How to reach an agent goes only under `agents`; who gets what goes only under `levels`. Here's the config generated on first use:
+An example with Codex, opencode and DeepSeek:
 
 ```json
 {
-  "dispatch": {
-    "auto": true,
-    "watch": "auto",
-    "discuss_max_rounds": 2,
-    "timeout_min": 480,
-    "stall_min": 40,
-    "busy_ask_min": 2,
-    "runs_dir": null
-  },
   "agents": {
-    "codex": {
-      "type": "codex",
-      "bin": null,
-      "model": "gpt-6.1-sol",
-      "max_parallel": 4,
-      "sandbox": { "run": null, "review": null, "discuss": null },
-      "approval": null
-    },
-    "deepseek": {
-      "type": "openai-compatible",
-      "base_url": "https://api.deepseek.com",
-      "api_key": "",
-      "model": "deepseek-v4-pro"
-    },
-    "mimo": {
-      "type": "openai-compatible",
-      "base_url": "https://api.xiaomimimo.com/v1",
-      "api_key": "",
-      "model": "mimo-v2.6-pro"
-    }
+    "gpt-6.1-sol":     { "type": "codex cli", "model": "gpt-6.1-sol" },
+    "gpt-6-astra":     { "type": "codex cli", "model": "gpt-6-astra" },
+    "glm-5.3":         { "type": "opencode cli", "model": "opencode-go/glm-5.3" },
+    "deepseek-v4-pro": { "type": "api", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-v4-pro" }
   },
   "levels": {
     "run": {
-      "simple":  "claude",
-      "normal":  "claude",
-      "complex": { "agent": "codex", "effort": "max" }
+      "simple":  "claude code",
+      "normal":  "claude code",
+      "complex": { "agent": "gpt-6.1-sol", "effort": "max" }
     },
     "review": {
-      "simple":  { "agent": "codex", "effort": "medium" },
-      "normal":  { "agent": "codex", "effort": "high" },
-      "complex": { "agent": "codex", "model": "gpt-6-astra", "effort": "max" }
+      "simple":  { "agent": "gpt-6.1-sol", "effort": "medium" },
+      "normal":  { "agent": "gpt-6.1-sol", "effort": "high" },
+      "complex": { "agent": "gpt-6-astra", "effort": "max" }
     },
     "discuss": {
-      "simple":  [{ "agent": "codex", "effort": "medium" }],
-      "normal":  [{ "agent": "codex", "effort": "high" }],
-      "complex": [{ "agent": "codex", "model": "gpt-6-astra", "effort": "max" }]
+      "simple":  "claude code",
+      "normal":  [{ "agent": "gpt-6.1-sol", "effort": "high" }],
+      "complex": [
+        { "agent": "gpt-6-astra", "effort": "max" },
+        { "agent": "glm-5.3" },
+        { "agent": "deepseek-v4-pro", "effort": "max" }
+      ]
     }
   }
 }
 ```
 
-`deepseek` and `mimo` are examples: their `api_key` is empty and they aren't in any discussion level, so discussions have only Codex by default. To have them join, see "Adding other models to discussions" below.
+**agents**
+- Each key is the agent's ID; naming it after its model works best. IDs may use letters, digits, `.`, `-` and `_`.
+- There are three `type`s:
 
-### Task levels, models and reasoning effort
+  | type | What it is | Tasks it can do |
+  |---|---|---|
+  | `codex cli` | The Codex CLI on this machine | hands-on work, reviews, discussions, images |
+  | `opencode cli` | The opencode CLI on this machine, with any model it can reach | discussions (reviews and hands-on work come in a later version) |
+  | `api` | A model with an OpenAI-compatible API, such as DeepSeek, Kimi or MiMo | discussions |
 
-Claude only decides which level a task is: `simple`, `normal` or `complex`. The level depends on how much judgment a task needs and how costly a mistake would be, not on how much it changes: mechanically changing 20 files from a list is simple; changing the interfaces between modules is complex. You decide in `levels` who gets each level (Claude itself included) and which model and reasoning effort it uses. There are no hidden defaults: Claude must give a level every time, and the script refuses to start without one instead of quietly picking an effort.
+- You can have several agents of one type, each with a different model. Codex isn't required.
 
-- Each level names an `agent` (which entry under `agents` gets it) and an `effort`; add `model` when you want to override that agent's default model. Without `model`, the agent's default model under `agents` is used; if Codex's default model is `null` too, Codex's own configured model is used. This is just one possible setup; pick models your account has and that suit your tasks.
-- Codex's `effort` can be `low`, `medium`, `high`, `xhigh`, `max` or `ultra`. If a model doesn't support an effort, Codex rejects it and the error shows up in the result.
-- To override for one task, tell Claude "run it with ultra" or "use model X"; Claude will pass `--effort` or `--model` instead.
-- To have Claude do a `run` level itself instead of handing it to Codex, write the whole level as `"claude"`, for example `"simple": "claude"`. That level then has no model or effort to set: Claude does its tasks itself, and the script refuses to hand them off. If you explicitly want a task handed to Codex, Claude adds `--agent codex`, which uses Codex's default model, and the effort uses the built-in default. Reviews and discussions need a second model, so this isn't supported there.
-- Small tasks follow the levels too: a small change with a clear approach is `simple`. In the default config Claude does `simple` itself; if you give `simple` to Codex, even very small changes get handed off.
+**levels**
+- Each of the three task types (`run` for hands-on work, `review`, `discuss`) has `simple`, `normal` and `complex` levels.
+- Each level says who gets it: one agent for hands-on work and reviews, a set of participants for discussions.
+- `"claude code"` means Claude does it itself; for reviews and discussions, that level uses no outside model.
+- `effort` is the reasoning effort; leave it out for the default:
+  - Codex: `low` to `ultra`;
+  - API: sent as `reasoning_effort` as is (DeepSeek takes `low` / `high` / `max`);
+  - opencode: the model's variant.
 
-### Adding other models to discussions
+### Task levels
 
-Each `discuss` level is a list of participants: Codex alone, or Codex plus models with an OpenAI-compatible API. They give their views independently and at the same time, and Claude rules on each point. Taking the DeepSeek example from the config above:
+Claude only decides which level a task is: `simple`, `normal` or `complex`. The level depends on how much judgement it takes and how costly a mistake would be, not on how much changes: renaming across 20 files from a list is simple, while changing an interface between modules is complex. Who gets each level, and with what effort, is up to you in `levels`. Claude must give a level every time; if it's missing, the script errors out rather than quietly picking one.
 
-1. **Provide the API key**, either way:
-   - **In the config file**: fill in the example's `"api_key": ""`. It takes effect immediately, no restart needed:
+- To choose on the spot, tell Claude "run it with ultra" or "use such-and-such model"; Claude switches to `--effort` or `--model`.
+- When a level is `"claude code"`, you can still explicitly ask for a task to be handed off, and Claude names an agent with `--agent`.
+- Small tasks follow the levels too: a small change with a clear approach is `simple`. By default Claude does `simple` itself; give `simple` to Codex and even tiny changes get handed off.
 
-     ```json
-     "deepseek": {
-       "type": "openai-compatible",
-       "base_url": "https://api.deepseek.com",
-       "api_key": "sk-your-key",
-       "model": "deepseek-v4-pro"
-     }
-     ```
+### Adding API models
 
-     The key is stored in plain text, so don't commit or share this file.
-   - **In an environment variable**: leave `api_key` empty, add a line `"api_key_env": "DEEPSEEK_API_KEY"`, then set that variable. On Windows, add a user variable under "System Properties → Environment Variables"; on macOS and Linux, put it in your shell's startup file. Restart Claude Code afterwards so it can see it.
+1. **Set up the agent**: the generated config already has one for each provider whose key was found. Any other provider with an OpenAI-compatible API (GLM, Qwen, OpenRouter and so on) gets an entry `{ "type": "api", "base_url": "...", "model": "..." }` under `agents`; provider-specific parameters go in `extra_body` and are merged into the request as is.
+2. **Fill in the API key**, either way:
+   - In the config file: add `"api_key": "sk-..."` to that agent; it takes effect immediately. The key is stored in plain text, so don't commit or share this file.
+   - In an environment variable: write `"api_key_env": "DEEPSEEK_API_KEY"`, then set that variable. On Windows, add a user variable under "System Properties → Environment Variables"; on macOS and Linux, put it in your shell's startup file. Restart Claude Code so it can see it.
+3. **Add it to discussion levels**: list it at the levels you want under `levels.discuss`.
 
-   If both are set, `api_key` is used.
-2. **Add it to discussion levels**: add it to the levels you want under `levels.discuss`. For example, to add a participant to complex discussions only:
+You can also leave this to `/foreman-en:setup`, for example `/foreman-en:setup add DeepSeek`. You fill in the key yourself; there's no need to paste it into the chat. API models can't look through your code themselves, so Claude sends the relevant files along with the topic (up to about 300,000 characters each time) and checks what they say about the code against the source.
 
-   ```json
-   "discuss": {
-     "simple":  [{ "agent": "codex", "effort": "medium" }],
-     "normal":  [{ "agent": "codex", "effort": "high" }],
-     "complex": [
-       { "agent": "codex", "model": "gpt-6-astra", "effort": "max" },
-       { "agent": "deepseek", "effort": "max" }
-     ]
-   }
-   ```
-
-   DeepSeek's `effort` can be `low`, `high` or `max`. Xiaomi MiMo has no adjustable effort, only a thinking on/off switch (on by default), so write `{ "agent": "mimo", "effort": null }`.
-3. Run `/foreman-en:setup` to check that the model connects and that each level has the right participants.
-
-For providers without an example in the config (Kimi, GLM, Qwen, OpenRouter and so on), as long as they have an OpenAI-compatible API, add an agent under `agents` in the same format as the examples, with a name of your choice, then follow the steps above; provider-specific parameters go in `extra_body` and are merged into the request as is. You can also leave these steps to `/foreman-en:setup`, for example `/foreman-en:setup add DeepSeek`: it updates the config for you and tells you where the key goes. You fill in the key yourself; there's no need to paste it into the chat.
-
-API models can't look through your code themselves, so Claude sends the relevant files along with the topic (up to about 300,000 characters each time) and checks what they say about the code against the source. For now, API models can only take part in discussions, not do hands-on work or reviews.
-
-### More models through opencode
+### Adding opencode
 
 If you have [opencode](https://opencode.ai) (2.x) installed, any model it can use can join discussions, for example GLM, Kimi, Qwen, MiniMax or DeepSeek from an [OpenCode Go](https://opencode.ai/docs/go/) subscription. Unlike API models, they read your project's code and search files themselves, so Claude doesn't have to pick files to send; the trade-off is that every file they read is another request, which uses more quota.
 
 1. **Sign in inside opencode**: run `opencode` in a terminal and sign in with `/connect` (choose OpenCode Go for a Go subscription), then run `opencode models` to see which models you can use. Free models (names ending in `-free`) need no sign-in.
-2. **Add them to the config**: add one entry per model under `agents`, with a name of your choice, then add it to the discussion levels you want:
-
-   ```json
-   "agents": {
-     "glm":  { "type": "opencode", "model": "opencode-go/glm-5.3" },
-     "kimi": { "type": "opencode", "model": "opencode-go/kimi-k3" }
-   },
-   "levels": {
-     "discuss": {
-       "complex": [
-         { "agent": "codex", "model": "gpt-6-astra", "effort": "max" },
-         { "agent": "glm",  "effort": null },
-         { "agent": "kimi", "effort": null }
-       ]
-     }
-   }
-   ```
-
-   `effort` is opencode's variant (for example `high`); `null` means the model's default. Each model has its own variants.
-3. Run `/foreman-en:setup` to confirm each model works.
+2. **Add them to the config**: one entry per model, `{ "type": "opencode cli", "model": "opencode-go/glm-5.3" }`, with the model name as its ID, then add it to the discussion levels you want. `/foreman-en:setup` can do this for you.
 
 For discussions the plugin gives opencode a read-only agent with only the read, search and list tools: it can't run commands or change files. Keys and sign-in stay in opencode; the plugin's config file holds none. Results include this round's cost (`cost_usd`), which is what OpenCode Go quota is charged by. Go's limits are per model, so several models in one discussion spread the load; premium models have small limits, so keep them for complex discussions.
 
-### All settings
+### Project config
 
-| Setting | What it does | Default |
-|---|---|---|
-| `dispatch.auto` | `true`: Claude hands suitable tasks to Codex on its own. `false`: Claude suggests it first and waits for your OK | `true` |
-| `dispatch.watch` | `auto`: open the live view after each handoff. `off`: don't open it | `auto` |
-| `dispatch.discuss_max_rounds` | How many rounds one discussion may have (round 1 plus later resumes), counted per participant. Once reached, the script refuses further resumes and Claude rules on what it has | `2` |
-| `dispatch.timeout_min` | Total time limit per run, in minutes | `480` |
-| `dispatch.stall_min` | Stop a run after this many minutes without activity: for Codex, no activity and no command running; for API models, no data at all in the stream. `0` turns it off | `40` |
-| `dispatch.busy_ask_min` | Once an API model has been queued this many minutes because its service is busy, Claude decides whether to stop it and go ahead with the other participants' results, and tells you afterwards. `0` turns this off | `2` |
-| `dispatch.runs_dir` | Where run records go (or set `FOREMAN_RUNS_DIR`) | `~/.claude/foreman/runs` |
-| `agents.codex.bin` | Path to the codex executable or `codex.js` (or set `CODEX_BIN`) | Found automatically |
-| `agents.codex.model` | Codex's default model | `null` (use Codex config) |
-| `agents.<name>.max_parallel` | How many runs this agent may have going at once, counted across all groups and sessions (providers rate-limit and bill per account). New runs beyond it are refused. For Codex, splitting a task into more parts means a shorter wait but more tokens in total; `1` turns parallel runs off | `4` |
-| `agents.codex.sandbox` | Sandbox for each of `run` / `review` / `discuss`: `read-only`, `workspace-write` or `danger-full-access` | All `null` (use Codex config) |
-| `agents.codex.approval` | Codex approval policy | `never` when not set: runs are unattended, so nobody can approve anything |
-| `agents.<name>` (API model) | `type` is `openai-compatible`; `base_url` and `model` are required; `api_key` (the key itself, left empty until filled in) and/or `api_key_env` (the environment variable holding it), with `api_key` used if both are set; an agent with neither can't take part in discussions; `extra_body` is optional | None |
-| `agents.<name>` (opencode model) | `type` is `opencode`; `model` is required, written as `provider/model`; `bin` (path to the opencode executable) is optional and found automatically by default | None |
-| `levels` | See above | run: `"claude"` for simple and normal, Codex max for complex; review: Codex medium / high / max; discuss: only Codex at all three levels, medium / high / max |
+A project config can only tighten, never loosen:
+- it only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `dispatch.busy_ask_min` and `levels`;
+- each level can only become `"claude code"`, or pick from the agents the user config already has at that level (with a different effort if wanted).
 
-Project config only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `dispatch.busy_ask_min`, `agents.codex.model` and `levels`, and it can't add participants other than Codex (API or opencode models), only remove them. Everything else must go in your user config, so that a repository you cloned can't loosen the sandbox, swap the executable, send your code to another address, or spend your quota on its own. For a sensitive project, keep only Codex under `levels.discuss` in its project config to turn the other models off.
+This way a repository you cloned can't use its project config to swap the agent doing the work, send your code to a new provider, or spend your quota on its own. For a sensitive project, keep only Codex in discussions, or set them to `"claude code"`.
 
 ### Preference files
 

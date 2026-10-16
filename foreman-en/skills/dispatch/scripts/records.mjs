@@ -1,7 +1,7 @@
 // 记录目录、启动登记锁、准入、活动状态和 watch 启动器。
 import fs from 'node:fs';
 import path from 'node:path';
-import { ENTRY, defaultRunsRoot, runsMovedNow, codexAgentName, DEFAULT_AGENT_PARALLEL } from './config.mjs';
+import { ENTRY, defaultRunsRoot, runsMovedNow, resolveAgentAlias, DEFAULT_AGENT_PARALLEL } from './config.mjs';
 import { M, die, pidAlive, sleep, pathKey, clip, oneLine, plainCommand } from './util.mjs';
 
 // 终止标记：cancel 命令和实时查看里按 x 时写进任务的记录目录，运行中的任务看到就停下。
@@ -146,12 +146,11 @@ function groupRuns(group, since = 0) {
 // 准入检查（在登记锁内）：同一协作方正在运行的任务不超过它的 max_parallel，所有组和会话都算，
 // 因为服务商的限流和额度是按账号的；同组的执行任务写入范围不能重叠。
 function checkAdmission(meta, cfg) {
-  const codexName = codexAgentName(cfg);
   const running = listRuns().filter((id) => id !== meta.id)
     .map((id) => { const dir = path.join(RUNS_ROOT, id); return { id, dir, meta: readMeta(dir) }; })
     .filter((r) => isRunning(r.meta));
   const limit = cfg.agents[meta.agent].max_parallel ?? DEFAULT_AGENT_PARALLEL;
-  const same = running.filter((r) => (r.meta.agent || codexName) === meta.agent); // 旧记录没有 agent 字段，都是 Codex
+  const same = running.filter((r) => resolveAgentAlias(r.meta.agent || 'codex', cfg) === meta.agent); // 旧记录没有 agent 字段，都是 Codex
   if (same.length >= limit) return M.agentFull(meta.agent, same.length, limit, M.list(same.map((r) => r.id)));
   if (meta.group == null || meta.kind === 'discuss') return null;
   const absolute = (cwd, file) => pathKey(path.resolve(cwd, file.replace(/\\/g, '/')).replace(/\\/g, '/')).replace(/\/$/, '');

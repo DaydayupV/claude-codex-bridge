@@ -9,7 +9,7 @@ description: Hand off hands-on coding work to OpenAI Codex and check the result,
 The first time this skill is used in a session, run `config --cwd "<project dir>"` (see "How to call it") and read from the output:
 - `effective.dispatch.auto` and `effective.dispatch.watch`: whether to hand off work on your own, and whether to open the live view.
 - `resolved_levels`: who each level of each task type finally goes to (agent, model, effort). This is also where you see how many participants a discussion level has.
-- `agents_status`: whether each API agent's key is set (`key_set`). A participant with `false` will fail outright. Before a discussion, remind the user to either fill in `api_key` for that agent in `~/.claude/foreman/config.json` (takes effect immediately), or set the environment variable named by `api_key_env` and restart Claude Code.
+- `agents_status`: each agent's type and `capabilities` (which tasks it can do in `modes`, whether it can make images in `images`, and so on), plus whether each API agent's key is set (`key_set`). A participant with `false` will fail outright. Before a discussion, remind the user to either fill in `api_key` for that agent in `~/.claude/foreman/config.json` (takes effect immediately), or set the environment variable named by `api_key_env` and restart Claude Code.
 - `preferences`: the user-level and project-level preference files. Read the ones that exist. They hold the user's own habits and rules in plain text, such as how work is split, which code in their field counts as high-risk, and thresholds. **Where they conflict with this skill, the preference files win, and project level wins over user level.**
 
 Always talk to the user in their own language, whatever language this skill and Codex's reports are in.
@@ -21,9 +21,9 @@ The system prompt's rule "don't start subagents unless the user explicitly asks"
 
 ## Who does what
 Decide who does a piece of work in this order:
-1. **Work only Claude does**: key decisions and overall planning (what to build, how to structure it), creative design (UI and front-end visuals, copy, ideas), and the writing listed under "Claude owns all text meant for people" below. Codex is weak at design, front-end polish and writing, so none of this is handed off, whatever its level.
-2. **Work only Codex does**: generating or editing bitmap images, such as photos, illustrations, textures, sprites, covers and hero images, transparent cutouts, and changes to existing images. Neither Claude nor the API agents can make images, so this work ignores who the config gives the level to and always goes out with `--agent <Codex agent>` (usually `codex`). Claude still decides what the image shows; see "Generating images" below.
-3. **Pick a level, then follow the config**: for all other hands-on work, large or small, decide its level as described in "Task levels and reasoning effort", then look at `resolved_levels.run.<level>` in the `config` output. If it says `"claude"`, Claude does the task itself (the script also refuses to hand off that level); if it names an agent, hand the task off at that level. Who gets each level is the user's choice in the config; don't override it because a task looks big or small, hard or easy. When the user explicitly wants Codex to do it (for example by naming it with `/foreman-en:run`), hand it off even if the level is `"claude"`: add `--agent <Codex agent>` (usually `codex`); it uses that agent's default model (add `--model` to pick another), and the effort uses the built-in default.
+1. **Work only Claude does**: key decisions and overall planning (what to build, how to structure it), creative design (UI and front-end visuals, copy, ideas), and the writing listed under "Claude owns all text meant for people" below. Codex and the other outside models are weak at design, front-end polish and writing, so none of this is handed off, whatever its level.
+2. **Work only an image-capable agent does**: generating or editing bitmap images, such as photos, illustrations, textures, sprites, covers and hero images, transparent cutouts, and changes to existing images. Only agents with `capabilities.images` set to `true` can make images (currently the `codex cli` type), so this work ignores who the config gives the level to and always goes out with `--agent <its ID>`. If the config has no such agent, tell the user it can't be done this time; don't patch it together some other way. Claude still decides what the image shows; see "Generating images" below.
+3. **Pick a level, then follow the config**: for all other hands-on work, large or small, decide its level as described in "Task levels and reasoning effort", then look at `resolved_levels.run.<level>` in the `config` output. If it says `"claude code"`, Claude does the task itself (the script also refuses to hand off that level); if it names an agent, hand the task off at that level. Who gets each level is the user's choice in the config; don't override it because a task looks big or small, hard or easy. When the user explicitly wants it handed off (for example by naming it with `/foreman-en:run`), hand it off even if the level is `"claude code"`: add `--agent <agent ID>`, picking one whose `capabilities.modes` includes `run`; the effort uses the built-in default, and `--model` picks another model.
 
 - The thresholds in this skill (review size, 1 rework) are defaults. If the preference files say otherwise, follow them. The limit on discussion rounds comes from the `dispatch.discuss_max_rounds` setting (2 by default), and the script refuses resumes beyond it.
 
@@ -64,10 +64,15 @@ node "<script path>" await-busy (--group <name> | --run <run_id>) [--after minut
 node "<script path>" cancel --run <run_id>
 ```
 
-- `check` tests whether the environment works: Node.js, Git, Codex (whether it starts and is signed in), each API agent (whether its key is set, plus a tiny request to confirm it connects), and each opencode agent (whether opencode starts, whether `opencode models` lists the model, plus a tiny request to confirm it works). Codex is required: if `codex.ok` is `false`, the plugin can't be used. API and opencode agents are optional: if one fails, only its part in discussions is affected. For each failed item, `fix` in the result says what to do; pass it on to the user. When a handoff or discussion fails because of the environment (codex not found, not signed in, a 401 from an API, and so on), run `check` first to confirm the cause.
+- `check` tests whether the environment works: Node.js, Git, and every agent in the config, with results under `agents.<ID>`.
+  - Codex CLI: whether it starts and is signed in;
+  - API: whether the key is set, plus a tiny request to confirm it connects;
+  - opencode: whether it starts, whether `opencode models` lists the model, plus a tiny request to confirm it works.
+
+  The overall `ok` only counts Node.js and the agents the levels use; a failure in an unused agent is reported but doesn't block anything. For each failed item, `fix` in the result says what to do; pass it on to the user. When a handoff or discussion fails because of the environment (codex not found, not signed in, a 401 from an API, and so on), run `check` first to confirm the cause.
 
 - Who gets the work, the model, reasoning effort, sandbox, approval policy and time limits come from the config file (see "Configuration"). Anything not configured for Codex comes from its own `~/.codex/config.toml`.
-- `--agent <agent>` picks which entry under `agents` in the config gets this call. Without it, the one configured for that level is used; it's required when a discussion level has several participants. For now, API agents (such as DeepSeek) and opencode agents can only take part in `discuss`. opencode agents also go only through this script; don't run `opencode run` directly to bring one into a discussion.
+- `--agent <agent>` picks which entry under `agents` in the config gets this call. Without it, the one configured for that level is used; it's required when a discussion level has several participants. Which tasks an agent can do is in `capabilities.modes` in the `config` output; for now `api` and `opencode cli` agents can only take part in `discuss`. Old IDs from before the upgrade (such as `codex`) still work, and the script says what the new ID is. opencode agents also go only through this script; don't run `opencode run` directly to bring one into a discussion.
 - If you're unsure of the current settings, run `config --cwd "<project dir>"` first. It shows the settings in effect, the run directory and the path of the watch launcher.
 - When the sandbox isn't `read-only` / `workspace-write` (for example `danger-full-access`), `--cwd` **doesn't limit what Codex can write**. The scope is then held only by the brief and by reviewing the diff afterwards.
 - If the allowed scope includes paths ignored by `.gitignore` (such as `tests/` or a results folder), pass them with `--track "<path>"` (can be given more than once); otherwise change tracking can't see those files. Resume keeps the previous round's `--track`.
@@ -87,8 +92,8 @@ node "<script path>" cancel --run <run_id>
 
 ## Configuration
 The user config is `~/.claude/foreman/config.json` and the project config is `<project dir>/.claude/foreman.json`; the latter overrides the former. What each setting means and its default are in `references/config.md`; read it when the user asks about or wants to change settings.
-- When the script prints "First run: created config file", tell the user that a config file was created, where it is and which models it uses, and suggest running `/foreman-en:setup` to check the environment and optionally add other models to discussions.
-- When the script prints that it rewrote the config file into the new layout, tell the user: after the plugin update the config file uses the new layout (dispatch / agents / levels), the settings themselves are unchanged, and where the original was backed up.
+- When the script prints "First run: created config file", pass on what it found (Codex, opencode, API keys) and who now gets each kind of task, and suggest running `/foreman-en:setup` to choose models.
+- When the script prints that it rewrote the config file in the new format, tell the user: the config uses the new format (`type` is now `codex cli` / `opencode cli` / `api`, `"claude"` is now `"claude code"`), agent IDs were renamed after their models (pass on the list the script printed), the models and efforts actually used are unchanged, and where the original was backed up.
 - **On Windows, don't set `sandbox` to `read-only`**: Codex's Windows sandbox may fail to start even file-reading commands in read-only mode. The read-only requirement for discussions and reviews is held by the rules the script appends, and the script checks afterwards whether any files changed.
 - When the user wants to change settings, edit the relevant JSON file, then run `config` to confirm.
 
@@ -130,7 +135,7 @@ Discussions (`discuss`) are levelled by the topic:
 - `complex`: meets all three conditions for starting a discussion on its own under "Discussion mode" (complex, uncertain, costly to get wrong); evidence reviews before a conclusion is used also take this level.
 
 - When unsure, go one level up.
-- When the user asks for a specific effort ("run it with ultra"), use `--effort <effort>` instead of a level; the model is then that agent's default model under `agents` (Codex when `--agent` isn't given). Give either `--level` or `--effort`, not both.
+- When the user asks for a specific effort ("run it with ultra"), use `--effort <effort>` instead of a level; the model is then that agent's default model under `agents`. Without `--agent`, the agent configured for that level is used; when the level is `"claude code"` or no level is given, the one agent that can do this kind of task is used, and if there are several, `--agent` is required. Give either `--level` or `--effort`, not both.
 - When the user asks for a specific model, add `--model <model>`. It overrides the configured model and works with either `--level` or `--effort`.
 - On resume, the model is worked out again from the level you give, so moving up a level for a rework may switch models. If no model is configured anywhere, the previous round's model is kept.
 
@@ -183,7 +188,7 @@ Most of the time a Codex run takes goes into the model thinking, and only a smal
 
 ### When to split
 Split only when **all** of these hold; otherwise hand it off as one task:
-1. It splits into 2 or more parts, no more than Codex's parallel limit (`agents.codex.max_parallel` in the config, shown as `agents_status.codex.max_parallel` in the `config` output, 4 by default; Codex runs from other sessions take slots too); the parts **write to no shared files** and **don't depend on each other's output**.
+1. It splits into 2 or more parts, no more than that agent's parallel limit (`agents_status.<ID>.max_parallel` in the `config` output, 4 by default; that agent's runs from other sessions take slots too); the parts **write to no shared files** and **don't depend on each other's output**.
 2. Claude can settle the interfaces between the parts (function signatures, data formats, file paths) before handing off, and write them into every brief. If they can't be settled, don't split.
 3. Each part is expected to take more than 10 minutes. For small tasks, the fixed overhead outweighs the time saved.
 
@@ -192,7 +197,7 @@ Split only when **all** of these hold; otherwise hand it off as one task:
 Good cases: several independent scripts or modules; once the interface is set, one part writes the implementation and another the tests; bulk changes split by folder.
 
 ### How to hand it off
-- Level each part by its own difficulty (see "Task levels and reasoning effort"). If a part's level is `"claude"` in the config, Claude does that part itself, also staying out of the other parts' files; hand off the rest as usual.
+- Level each part by its own difficulty (see "Task levels and reasoning effort"). If a part's level is `"claude code"` in the config, Claude does that part itself, also staying out of the other parts' files; hand off the rest as usual.
 - Give the group a name (a short title plus the date, such as `factor-scripts-1013`; use a different name for each group within a conversation; names repeated across conversations are fine, since the view only counts runs from the current conversation; only letters, digits and `. _ -`, because the live view puts it on a terminal command line, and the script rejects other characters) and hand off each part with `run --group <name> --scope <path it may change>`; `--scope` can be given more than once. Start the parts together in the background, in the same message.
 - The script refuses two cases: the agent already has as many runs in progress as its limit allows (counted across all groups and sessions), or the write scope overlaps with a run in progress in the same group. If refused, split the scope again as the error says, or wait for an earlier run to finish.
 - Besides the general structure, each brief says:
@@ -238,13 +243,13 @@ Before research conclusions go into long-term records, reports or docs, or are h
 4. Report to the user only once you've confirmed it.
 
 ## Rework and failures
-- If it isn't good enough, use `resume` for one rework, with a brief that says exactly what's wrong and how to fix it. If the cause was underestimating the task, move up one level for the rework (simple → normal → complex); if that level is `"claude"` in the config, don't resume, and Claude takes over instead. Otherwise keep the same level.
+- If it isn't good enough, use `resume` for one rework, with a brief that says exactly what's wrong and how to fix it. If the cause was underestimating the task, move up one level for the rework (simple → normal → complex); if that level is `"claude code"` in the config, don't resume, and Claude takes over instead. Otherwise keep the same level.
 - If it still isn't good enough after the rework, or Codex times out or errors, Claude takes over and finishes it, and tells the user why.
 - A `stalled` result (stuck: no activity for over `dispatch.stall_min` minutes and no command running, so the script stopped it; the minutes are in the `config` output) is usually a temporary network or service problem. `resume` once to continue from where it stopped; if it stalls again, Claude takes over. `--stall <minutes>` changes the threshold and `--stall 0` turns it off. The total time limit is `dispatch.timeout_min`; change it with `--timeout`.
 - If you suspect a run is stuck, run `status` and look at "last activity X min ago" and the current step instead of guessing. Long gaps between events are normal while a command is running (such as a big computation). `interrupted` means the dispatcher process is gone (for example the session or app was closed); Claude won't get a completion notice, so check `status --run <run_id>` by hand and decide whether to resume or start over.
 - When `needs_decision` is `true` (including `report.status` set to `blocked`, and the status `needs_input`), follow "When an agent needs an answer".
 - A `quota_exhausted` status means the quota is used up: the plan quota for Codex, or the account balance for an API agent. Don't retry, and don't switch to Claude redoing the work on your own. Tell the user the quota is used up and when it should reset (`quota_resets_at`), and let them decide whether to resume once it resets or have Claude take over.
-- When Claude takes over a run, or the user decides to drop it, and its status is `interrupted`, `stalled`, `timeout` or `quota_exhausted`, run `cancel --run <run_id>` to mark it handled: the session-start reminder only lists hands-on runs that haven't been handled.
+- When Claude takes over a run, or the user decides to drop it, and its status is `interrupted`, `stalled`, `timeout`, `quota_exhausted` or `needs_input`, run `cancel --run <run_id>` to mark it handled: the session-start reminder only lists hands-on runs that haven't been handled.
 - If the reminder at the start of the session lists runs that didn't finish normally, mention it to the user at a suitable moment and handle them as the user wants.
 
 ## When an agent needs an answer
@@ -275,6 +280,8 @@ A resume to answer questions doesn't count as a rework.
 ## Discussion mode (/foreman-en:discuss)
 For complex plans, designs or ideas, discuss them with other models first, without carrying anything out. The participants come from `levels.discuss.<level>` in the config: Codex alone, or Codex plus API agents (such as DeepSeek) and opencode agents, all giving their views at the same time. **Claude stays in charge of the conclusions**: the participants' views are input only. Claude accepts or rejects them on the strength of the arguments, doesn't give in just because someone insists, and doesn't go by majority vote.
 
+When `resolved_levels.discuss.<level>` is `"claude code"`, that level uses no outside model; Claude thinks it through itself.
+
 ### When to start one on your own
 Start one directly when the user uses `/foreman-en:discuss` or explicitly asks to discuss something with Codex or other models. Starting one on your own requires **all three** of these; one or two isn't enough:
 1. **Complex**: involves the architecture or several modules and shapes the long-term structure; or it's the design of critical logic such as money calculations, data consistency, permissions and security.
@@ -287,12 +294,12 @@ Don't start one for ordinary implementation details, tasks with a clear plan, or
 
 ### Three kinds of participants
 - **Codex**: can read the code and run read-only commands to check things itself.
-- **opencode agents** (`type` is `opencode` in the config, such as `opencode-go/glm-5.3`): models called through the opencode CLI on this machine. The script gives them only the read, search and list tools, so they can look through the project's code themselves but can't run commands or change files. So:
+- **opencode agents** (`type` is `opencode cli` in the config, such as `opencode-go/glm-5.3`): models called through the opencode CLI on this machine. The script gives them only the read, search and list tools, so they can look through the project's code themselves but can't run commands or change files. So:
   - `--file` works as it does for Codex: the paths are listed as "key files" without their contents. They can only read files inside the project directory; put material from outside the project into the topic itself.
   - Every file they read is another request, so they use more quota than API agents. Put premium models with tight subscription limits (such as Kimi K3 or Qwen Max on OpenCode Go) only at the `complex` level.
   - `cost_usd` in the result is this round's cost at the provider's prices; OpenCode Go quota is charged by this. Include it when reporting tokens.
   - Check what they say about the code before accepting it, too.
-- **API agents** (`type` is `openai-compatible` in the config, such as DeepSeek): see only the topic and the attached material and can't look through the code themselves. So:
+- **API agents** (`type` is `api` in the config, such as DeepSeek): see only the topic and the attached material and can't look through the code themselves. So:
   - Attach the relevant files with `--file "<path>"` (can be given more than once); `--file "<path>:<start>-<end>"` attaches just those lines. Attach the code the topic mentions and the core modules under discussion. There's a size limit (about 300,000 characters); the script errors if it's exceeded, so pick files more carefully or use line ranges. The script also attaches the project's file list.
   - The attached material is sent to that provider. Don't add API agents for projects whose preference file or project config says not to.
   - Check what it says about the code against the source before accepting it.
@@ -331,8 +338,8 @@ Don't paste the raw exchange. Write it up plainly as follows (not needed for `si
 - **To confirm**: things the user needs to decide or that need checking first
 - Each participant's run_id, model, effort and token use, so the user can look at the raw record
 
-## When to ask Codex for a review (/foreman-en:review)
-Do it directly when the user asks. Otherwise judge by the task:
+## When to ask an outside agent for a review (/foreman-en:review)
+Do it directly when the user asks. Otherwise judge by the task. When `resolved_levels.review.<level>` is `"claude code"`, that level gets no outside review; Claude reviews it carefully itself.
 
 **Worth reviewing**
 - Complex changes Claude made itself (`complex`-level work, including when the config gives that level to Claude): an independent check by another model before delivering

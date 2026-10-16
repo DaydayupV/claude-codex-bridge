@@ -11,18 +11,18 @@ export function watchRecords(h) {
   const at = (seconds) => new Date(start + seconds * 1000).toISOString();
   const event = (e, seconds = 1) => ({ ...e, ts: at(seconds) });
   const specs = [
-    { id: 'a', name: 'codex', type: 'codex', kind: 'exec', model: 'fake-codex', report,
+    { id: 'a', name: 'codex', type: 'codex cli', kind: 'exec', model: 'fake-codex', report,
       events: [event({ type: 'thread.started', thread_id: 'synthetic' }), event(command()),
         event({ type: 'item.completed', item: { type: 'file_change', changes: [{ kind: 'update', path: path.join(h.cwd, 'source.txt') }] } }),
         event({ type: 'item.completed', item: { type: 'agent_message', text: '完成合成修改' } })] },
-    { id: 'b', name: 'api', type: 'openai-compatible', kind: 'discuss', model: 'fake-api', report: discussion,
+    { id: 'b', name: 'api', type: 'api', kind: 'discuss', model: 'fake-api', report: discussion,
       events: [event({ type: 'api.request', attempt: 1, model: 'fake-api', effort: 'high' }, 0),
         event({ type: 'api.queued', waited_s: 0 }, 0), event({ type: 'api.reasoning', text: '合成推理', total_chars: 4 }),
         event({ type: 'api.content', text: JSON.stringify(discussion), total_chars: 100 }, 2)] },
-    { id: 'c', name: 'oc', type: 'opencode', kind: 'discuss', model: 'fake/model', report: discussion,
+    { id: 'c', name: 'oc', type: 'opencode cli', kind: 'discuss', model: 'fake/model', report: discussion,
       events: [event({ type: 'thread.started', thread_id: 'synthetic-opencode' }),
         event({ type: 'item.completed', item: { id: 'opencode-1', type: 'command_execution', command: 'read source.txt', exit_code: 0 } })] },
-    { id: 'd', name: 'codex', type: 'codex', kind: 'exec', model: 'fake-codex', report: null,
+    { id: 'd', name: 'codex', type: 'codex cli', kind: 'exec', model: 'fake-codex', report: null,
       events: [event({ type: 'error', message: '合成失败原因' })], status: 'failed' },
   ];
   for (const spec of specs) {

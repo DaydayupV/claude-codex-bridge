@@ -2,9 +2,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { RUNS_ROOT, CANCEL_FILE, UNFINISHED_STATUSES, listRuns, findRun, readMeta, isRunning, runEnd, runOutcome, groupRuns, groupSummary, describeActivity } from './records.mjs';
-import { M, die, need, pidAlive, killTree, sleep, modelOf, whoOf } from './util.mjs';
+import { M, die, need, pidAlive, killTree, sleep, modelOf, whoOf, agentTypeOf } from './util.mjs';
 
-function cmdStatus(o, codexSessionStats) {
+function cmdStatus(o, sessionStats) {
   if (o.run && o.group == null) {
     const run = findRun(o.run);
     const file = path.join(run.dir, 'result.json');
@@ -28,7 +28,7 @@ function cmdStatus(o, codexSessionStats) {
     let row = `${rid}  ${m.mode.padEnd(6)}  ${status.padEnd(11)}  ${(m.level || '-').padEnd(7)}  ${whoOf(m)}  ${mins.padStart(6)}min  ${m.group != null ? M.statusGroup(m.group) : ''}${m.round ? M.statusRound(m.round) : ''}${m.title || ''}  @ ${m.cwd}`;
     if (m.status === 'running') {
       const a = describeActivity(dir);
-      const last = codexSessionStats(m.session_id, m.started_at)?.last_request;
+      const last = sessionStats(m)?.last_request;
       row += `\n    └ ${M.statusActivity(a.idle_min ?? '-', a.step)}${last ? M.lastRequestNow(last, M.tokenCount) : ''}`;
     } else {
       if (r?.usage) row += `\n    └ ${M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total')}`;
@@ -39,7 +39,7 @@ function cmdStatus(o, codexSessionStats) {
   let quota = null;
   for (const rid of runs) {
     const m = readMeta(path.join(RUNS_ROOT, rid));
-    quota = codexSessionStats(m?.session_id, m?.started_at)?.rate_limit;
+    quota = m && sessionStats(m)?.rate_limit;
     if (quota) break;
   }
   process.stdout.write(rows.length ? rows.join('\n') + '\n' + (quota ? `\n${M.rateLimit(quota)}\n` : '') : `${M.noRuns}\n`);
@@ -112,7 +112,7 @@ async function cmdAwaitBusy(o, config) {
     await sleep(1000);
   }
   for (;;) {
-    const running = pick().filter((run) => isRunning(run.meta) && run.meta.agent_type !== 'opencode');
+    const running = pick().filter((run) => isRunning(run.meta) && agentTypeOf(run.meta) !== 'opencode cli');
     const busy = running.map((run) => ({ run, s: queuedSeconds(run.dir) })).filter((x) => x.s != null && x.s >= after * 60);
     if (busy.length || !running.length) {
       print({

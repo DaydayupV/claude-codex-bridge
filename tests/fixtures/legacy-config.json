@@ -1,0 +1,128 @@
+{
+  "dispatch": {
+    "auto": true,
+    "watch": "auto",
+    "discuss_max_rounds": 2,
+    "timeout_min": 240,
+    "stall_min": 20,
+    "runs_dir": null
+  },
+  "agents": {
+    "codex": {
+      "type": "codex",
+      "bin": null,
+      "model": "gpt-6-astra",
+      "max_parallel": 4,
+      "sandbox": {
+        "run": null,
+        "discuss": null,
+        "review": null
+      },
+      "approval": null
+    },
+    "deepseek": {
+      "type": "openai-compatible",
+      "base_url": "https://api.deepseek.com",
+      "api_key": "sk-REDACTED",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "model": "deepseek-flash",
+      "max_parallel": 4
+    },
+    "kimi": {
+      "type": "openai-compatible",
+      "base_url": "https://api.moonshot.cn/v1",
+      "api_key": "sk-REDACTED",
+      "api_key_env": "KIMI_API_KEY",
+      "model": "kimi-k2.6",
+      "max_parallel": 4
+    },
+    "mimo": {
+      "type": "openai-compatible",
+      "base_url": "https://api.xiaomimimo.com/v1",
+      "api_key": "sk-REDACTED",
+      "api_key_env": "MIMO_API_KEY",
+      "model": "mimo-v2.6-pro",
+      "max_parallel": 4
+    }
+  },
+  "levels": {
+    "run": {
+      "simple": "claude",
+      "normal": "claude",
+      "complex": {
+        "agent": "codex",
+        "effort": "max"
+      }
+    },
+    "review": {
+      "simple": {
+        "agent": "codex",
+        "effort": "medium"
+      },
+      "normal": {
+        "agent": "codex",
+        "effort": "high"
+      },
+      "complex": {
+        "agent": "codex",
+        "effort": "max"
+      }
+    },
+    "discuss": {
+      "simple": [
+        {
+          "agent": "codex",
+          "effort": "medium"
+        },
+        {
+          "agent": "deepseek",
+          "effort": "high"
+        },
+        {
+          "agent": "kimi",
+          "effort": "high"
+        },
+        {
+          "agent": "mimo",
+          "effort": null
+        }
+      ],
+      "normal": [
+        {
+          "agent": "codex",
+          "effort": "high"
+        },
+        {
+          "agent": "deepseek",
+          "effort": "high"
+        },
+        {
+          "agent": "kimi",
+          "effort": "high"
+        },
+        {
+          "agent": "mimo",
+          "effort": null
+        }
+      ],
+      "complex": [
+        {
+          "agent": "codex",
+          "effort": "max"
+        },
+        {
+          "agent": "deepseek",
+          "effort": "max"
+        },
+        {
+          "agent": "kimi",
+          "effort": "max"
+        },
+        {
+          "agent": "mimo",
+          "effort": null
+        }
+      ]
+    }
+  }
+}

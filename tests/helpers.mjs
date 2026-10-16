@@ -38,13 +38,18 @@ assert.ok(git, '测试需要已有的 Git');
 
 export const baseConfig = () => ({
   dispatch: { watch: 'off', timeout_min: 1, stall_min: 0, busy_ask_min: 0 },
-  agents: { codex: { type: 'codex', bin: CODEX, model: 'fake-codex', max_parallel: 4 } },
+  agents: { codex: { type: 'codex cli', bin: CODEX, model: 'fake-codex', max_parallel: 4 } },
+  levels: {
+    run: { simple: 'claude code', normal: 'claude code', complex: { agent: 'codex', effort: 'max' } },
+    review: { simple: { agent: 'codex', effort: 'medium' }, normal: { agent: 'codex', effort: 'high' }, complex: { agent: 'codex', effort: 'max' } },
+    discuss: { simple: [{ agent: 'codex', effort: 'medium' }], normal: [{ agent: 'codex', effort: 'high' }], complex: [{ agent: 'codex', effort: 'max' }] },
+  },
 });
 
 export const apiAgent = (url) => ({
-  type: 'openai-compatible', base_url: url, api_key: 'synthetic-test-key', model: 'fake-api',
+  type: 'api', base_url: url, api_key: 'synthetic-test-key', model: 'fake-api',
 });
-export const opencodeAgent = () => ({ type: 'opencode', bin: OPENCODE, model: 'fake/model' });
+export const opencodeAgent = () => ({ type: 'opencode cli', bin: OPENCODE, model: 'fake/model' });
 
 export function sandbox(t, { config = true } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'foreman-test-'));
@@ -180,7 +185,7 @@ export function seedRun(h, id, meta = {}, result = null, events = []) {
   const dir = path.join(h.runs, id);
   const start = new Date(Date.now() - 60000).toISOString();
   write(path.join(dir, 'meta.json'), {
-    id, mode: 'run', kind: 'exec', cwd: h.cwd, title: '合成任务', agent: 'codex', agent_type: 'codex',
+    id, mode: 'run', kind: 'exec', cwd: h.cwd, title: '合成任务', agent: 'codex', agent_type: 'codex cli',
     model: 'fake-codex', level: 'complex', effort: 'high', status: 'done', pid: 0,
     group: null, track: [], scope: [], parent: null, session_id: 'synthetic-session',
     started_at: start, ended_at: start, claude_session: 'test-session', ...meta,

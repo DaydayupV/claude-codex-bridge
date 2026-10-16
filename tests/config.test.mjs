@@ -10,13 +10,11 @@ test('没有用户配置时生成初始配置并提示首次使用', async (t) =
   const r = await h.bridge(['config']);
   const c = output(r);
   assert.equal(c.user_config, h.userConfig);
-  assert.equal(c.effective.levels.run.simple, 'claude');
-  assert.equal(c.effective.levels.run.normal, 'claude');
-  assert.equal(c.effective.agents.codex.model, 'gpt-6.1-sol');
-  assert.equal(c.effective.agents.deepseek.api_key, '');
-  assert.equal(c.effective.agents.mimo.api_key, '');
+  assert.equal(c.effective.levels.run.simple, 'claude code');
+  assert.equal(c.effective.levels.run.normal, 'claude code');
+  assert.deepEqual(c.effective.agents, {});
   assert.deepEqual(json(h.userConfig), c.effective);
-  assert.equal(r.stderr.split('\n')[0], `foreman: ${M.starterCreated(h.userConfig, 'gpt-6.1-sol', 'gpt-6-astra')}`);
+  assert.equal(r.stderr.split('\n')[0], `foreman: ${M.starterCreated(h.userConfig, M.starterNoCodex + M.starterNext)}`);
   assert.ok(!(await h.bridge(['config'])).stderr.includes('foreman:'));
   assert.equal(h.calls().length, 0);
 });
@@ -31,11 +29,11 @@ test('零点十以前的配置自动改写并保留原文备份', async (t) => {
   const c = output(r), migrated = json(h.userConfig);
   assert.equal(read(`${h.userConfig}.bak`), original);
   assert.equal(migrated.auto_dispatch, undefined);
-  assert.equal(migrated.agents.codex.bin, CODEX);
+  assert.equal(migrated.agents['legacy-model'].bin, CODEX);
   assert.equal(c.effective.dispatch.auto, false);
-  assert.deepEqual(c.resolved_levels.run.normal, { agent: 'codex', model: 'legacy-model', effort: 'high' });
-  assert.deepEqual(c.resolved_levels.discuss.simple, [{ agent: 'codex', model: 'legacy-model', effort: 'low' }]);
-  assert.ok(r.stderr.includes(M.configMigrated(h.userConfig, `${h.userConfig}.bak`)));
+  assert.deepEqual(c.resolved_levels.run.normal, { agent: 'legacy-model', model: 'legacy-model', effort: 'high' });
+  assert.deepEqual(c.resolved_levels.discuss.simple, [{ agent: 'legacy-model', model: 'legacy-model', effort: 'low' }]);
+  assert.ok(r.stderr.includes(M.configStructureMigrated(h.userConfig, `${h.userConfig}.bak`, 'codex → legacy-model')));
   await h.bridge(['config']);
   assert.equal(read(`${h.userConfig}.bak`), original);
 });
@@ -45,7 +43,7 @@ for (const [name, change, key, reason] of [
   ['执行等级不能使用 API 协作方', (c) => {
     c.agents.api = apiAgent('http://127.0.0.1:1');
     c.levels = { run: { complex: { agent: 'api', effort: 'high' } } };
-  }, 'levels.run.complex.agent', M.discussOnly('api')],
+  }, 'levels.run.complex.agent', M.modeNotSupported('api', 'api', 'run', 'discuss')],
   ['opencode 模型必须带厂商斜杠', (c) => { c.agents.oc = { ...opencodeAgent(), model: 'bad-model' }; }, 'agents.oc.model', M.invalid.opencodeModel],
   ['讨论等级不能为空', (c) => { c.levels = { discuss: { normal: [] } }; }, 'levels.discuss.normal', M.invalid.participants],
   ['同一讨论等级不能重复参与方', (c) => {
@@ -72,9 +70,9 @@ test('项目配置忽略不允许的字段并保留允许的覆盖', async (t) =
   assert.equal(c.effective.dispatch.timeout_min, 2);
   assert.equal(c.runs_dir, h.runs);
   assert.equal(c.effective.agents.codex.bin, CODEX);
-  assert.equal(c.effective.agents.codex.model, 'project-model');
+  assert.equal(c.effective.agents.codex.model, 'fake-codex');
   assert.equal(c.effective.agents.extra, undefined);
-  assert.ok(r.stderr.includes(M.projectIgnored(M.list(['unexpected', 'dispatch.auto', 'dispatch.runs_dir', 'agents.codex.bin', 'agents.extra']))));
+  assert.ok(r.stderr.includes(M.projectIgnored(M.list(['unexpected', 'dispatch.auto', 'dispatch.runs_dir', 'agents']))));
   assert.equal(read(file), original);
 });
 
@@ -88,7 +86,7 @@ test('项目配置不能把额外的 API 或 opencode 加入讨论等级', async
   ] } } });
   const r = await h.bridge(['config', '--cwd', h.cwd]);
   assert.deepEqual(output(r).resolved_levels.discuss.normal, [{ agent: 'codex', model: 'fake-codex', effort: 'high' }]);
-  for (const name of ['api', 'oc']) assert.ok(r.stderr.includes(M.projectApiDropped(name, 'levels.discuss.normal')));
+  for (const name of ['api', 'oc']) assert.ok(r.stderr.includes(M.projectAgentDropped(name, 'levels.discuss.normal')));
 });
 
 test('config 输出解析后的等级、协作方状态、偏好及记录目录', async (t) => {
@@ -100,7 +98,7 @@ test('config 输出解析后的等级、协作方状态、偏好及记录目录'
   const r = output(await h.bridge(['config', '--cwd', h.cwd]));
   assert.deepEqual(r.loaded_from, [h.userConfig]);
   assert.deepEqual(r.resolved_levels.discuss.complex, [{ agent: 'codex', model: 'fake-codex', effort: 'max' }]);
-  assert.deepEqual(r.agents_status.api, { type: 'openai-compatible', model: 'fake-api', max_parallel: 4, api_key_env: null, key_set: true, key_source: 'config' });
+  assert.deepEqual(r.agents_status.api, { type: 'api', capabilities: { modes: ['discuss'], isolation: 'none', reads_code: false, native_schema: false, native_review: false, images: false, resume: true, command_start_events: false }, model: 'fake-api', max_parallel: 4, api_key_env: null, key_set: true, key_source: 'config' });
   assert.equal(r.agents_status.oc.bin, opencodeAgent().bin);
   assert.equal(r.effective.agents.api.api_key, M.keyHidden);
   assert.deepEqual(r.preferences, [{ file: preference, exists: true }, { file: path.join(h.cwd, '.claude/foreman.md'), exists: false }]);
@@ -112,6 +110,6 @@ test('英文覆盖变量使用英文首次提示', async (t) => {
   const h = sandbox(t, { config: false });
   const r = await h.bridge(['config'], { env: { FOREMAN_LANG: 'en' } });
   output(r);
-  assert.equal(r.stderr.split('\n')[0], `foreman: ${MESSAGES.en.starterCreated(h.userConfig, 'gpt-6.1-sol', 'gpt-6-astra')}`);
+  assert.equal(r.stderr.split('\n')[0], `foreman: ${MESSAGES.en.starterCreated(h.userConfig, MESSAGES.en.starterNoCodex + MESSAGES.en.starterNext)}`);
   assert.ok(fs.existsSync(h.userConfig));
 });

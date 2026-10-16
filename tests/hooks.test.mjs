@@ -18,7 +18,7 @@ for (const legacy of [false, true]) {
   test(`会话提醒带上${legacy ? '旧位置' : '新位置'}用户和项目偏好`, async (t) => {
     const h = sandbox(t, { config: false });
     const configFile = legacy ? path.join(h.home, '.claude/codex-bridge.json') : h.userConfig;
-    write(configFile, legacy ? { auto_dispatch: false } : { dispatch: { auto: false } });
+    write(configFile, legacy ? { auto_dispatch: false } : { dispatch: { auto: false }, agents: { model: { type: 'codex cli' } } });
     const user = write(path.join(h.home, legacy ? '.claude/codex-bridge.md' : '.claude/foreman/preferences.md'), '合成用户偏好');
     const project = h.write(legacy ? '.claude/codex-bridge.md' : '.claude/foreman.md', '合成项目偏好');
     const context = output(await h.hook('session-reminder.mjs')).hookSpecificOutput.additionalContext;

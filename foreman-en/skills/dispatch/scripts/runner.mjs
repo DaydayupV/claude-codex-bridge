@@ -296,3 +296,25 @@ async function execute(ctx, { run: runAgent, stats: sessionStats, describe, sche
 }
 
 export { startRun, finishRun, finishDiscussion, eventWriter, runLimits, watchCancellation, parseReport, reportWithRepair, execute, collectQuestions, spawnCli };
+
+export function validateSchema(schema, value) {
+  const errors = [];
+  const check = (rule, item, at) => {
+    const label = at || '$';
+    const type = Array.isArray(item) ? 'array' : item === null ? 'null' : typeof item;
+    if (rule.type && type !== rule.type) { errors.push(`${label} must be ${rule.type}`); return; }
+    if (rule.enum && !rule.enum.includes(item)) errors.push(`${label} must be one of ${rule.enum.join(', ')}`);
+    if (type === 'object') {
+      for (const key of rule.required || []) {
+        if (!Object.hasOwn(item, key)) errors.push(`${at ? `${at}.` : ''}${key} is required`);
+      }
+      for (const [key, val] of Object.entries(item)) {
+        const next = at ? `${at}.${key}` : key;
+        if (Object.hasOwn(rule.properties || {}, key)) check(rule.properties[key], val, next);
+        else if (rule.additionalProperties === false) errors.push(`${next} is not allowed`);
+      }
+    } else if (type === 'array' && rule.items) item.forEach((val, i) => check(rule.items, val, `${at}[${i}]`));
+  };
+  check(schema, value, '');
+  return errors;
+}

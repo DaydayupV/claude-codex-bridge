@@ -82,6 +82,8 @@
 | 9 直接调用拦截 | hooks.test.mjs | 直接调用守卫拦截 codex exec；直接调用守卫拦截 codex review；直接调用守卫拦截 node codex.js exec；直接调用守卫拦截 npx Codex |
 | 9 查询与普通文字放行 | hooks.test.mjs | 直接调用守卫放行版本查询；直接调用守卫放行登录状态；直接调用守卫放行普通文本提及；直接调用守卫放行带分隔符的文字 |
 | 11 协作方要人回答 | questions.test.mjs | 六种来源各自收集进 questions，needs_decision 只算需要决定的四种；Codex 默认 approval_policy=never、配置了就用配置的；opencode 注入的权限里 question 被拒；最终回答是问题时不修复，像 JSON 或长篇分析时照常修复；终端提示加 3 分钟静默触发看门狗、结束进程树并记 needs_input，模型消息静默和执行中的命令不触发；watch、status 和组计数里问题的显示 |
+| 12 新配置写法和迁移 | structure-migration.test.mjs | 真实结构配置迁移后按模型改名、每格模型和强度不变、有备份和别名；部分字段的旧等级先补全；模型覆盖拆成新协作方；同名合并或加后缀；Codex 没写模型时取 config.toml；项目配置的旧代号；并发迁移只备份一次、校验失败不改文件；旧记录在 status、watch、resume 和并发准入里照常可用 |
+| 13 通用化 | generalization.test.mjs | 多个 Codex、没有 Codex、能力表校验；代号规则；三种任务的 "claude code" 和点名派出；--effort 选协作方；check 的新结构和总体结果；项目配置只能收紧；按环境生成初始配置和 environment 字段；没有协作方时的会话提醒 |
 | 10 共用文件同步 | sync.test.mjs | 中英文插件的共用文件、schema 结构和版本号一致 |
 
 ## 说明

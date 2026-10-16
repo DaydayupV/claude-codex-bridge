@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ENTRY, DISCUSS_SCHEMA } from '../config.mjs';
 import { newRunDir } from '../records.mjs';
-import { startRun, finishDiscussion, eventWriter, runLimits, watchCancellation, reportWithRepair } from '../runner.mjs';
+import { startRun, finishDiscussion, eventWriter, runLimits, watchCancellation, reportWithRepair, validateSchema } from '../runner.mjs';
 import { M, die, isObject, readAttachments, MAX_MATERIAL_CHARS, whoOf, modelOf } from '../util.mjs';
 
 // 回答和报错里出现 key 时打码。key 太短时不替换，否则会把正文里的普通字母也换掉，弄坏 JSON 报告。
@@ -320,39 +320,18 @@ export async function chatStream({ url, apiKey, body, timeoutMs, stallMs, signal
   }
 }
 
-export function validateSchema(schema, value) {
-  const errors = [];
-  const check = (rule, item, at) => {
-    const label = at || '$';
-    const type = Array.isArray(item) ? 'array' : item === null ? 'null' : typeof item;
-    if (rule.type && type !== rule.type) { errors.push(`${label} must be ${rule.type}`); return; }
-    if (rule.enum && !rule.enum.includes(item)) errors.push(`${label} must be one of ${rule.enum.join(', ')}`);
-    if (type === 'object') {
-      for (const key of rule.required || []) {
-        if (!Object.hasOwn(item, key)) errors.push(`${at ? `${at}.` : ''}${key} is required`);
-      }
-      for (const [key, val] of Object.entries(item)) {
-        const next = at ? `${at}.${key}` : key;
-        if (Object.hasOwn(rule.properties || {}, key)) check(rule.properties[key], val, next);
-        else if (rule.additionalProperties === false) errors.push(`${next} is not allowed`);
-      }
-    } else if (type === 'array' && rule.items) item.forEach((val, i) => check(rule.items, val, `${at}[${i}]`));
-  };
-  check(schema, value, '');
-  return errors;
-}
 
 function validate(agent, key, check, text) {
   const why = M.invalid;
   for (const field of ['base_url', 'model']) check(text(agent[field]), `${key}.${field}`, why.nonEmpty);
-  // api_key 写成空字符串表示还没填（首次生成的配置里的示例就是这样）；没有 key 的协作方被选去讨论时才报错。
+  // api_key 写成空字符串表示还没填；没有 key 的协作方被选去讨论时才报错。
   check(agent.api_key === undefined || typeof agent.api_key === 'string', `${key}.api_key`, why.apiKeyText);
   check(agent.api_key_env === undefined || text(agent.api_key_env), `${key}.api_key_env`, why.nonEmpty);
   check(agent.extra_body === undefined || isObject(agent.extra_body), `${key}.extra_body`, why.object);
 }
 
 export default {
-  type: 'openai-compatible', modes: ['discuss'], channel: M.channel.api,
+  type: 'api', capabilities: { modes: ['discuss'], isolation: 'none', reads_code: false, native_schema: false, native_review: false, images: false, resume: true, command_start_events: false }, channel: M.channel.api,
   validate,
   status: (agent) => ({ api_key_env: agent.api_key_env ?? null, key_set: !!apiKeyOf(agent).key, key_source: apiKeyOf(agent).source }),
   check: checkApiAgent,

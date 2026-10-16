@@ -5,7 +5,10 @@ const args = process.argv.slice(2);
 const operation = args[0] === '--version' ? 'version' : args[0] === 'session' ? 'export' : args[0];
 const { scenario: s } = await setup('opencode', operation, args);
 if (operation === 'version') console.log(s.version || 'synthetic-opencode-1.0');
-else if (operation === 'models') console.log((s.models || ['fake/model']).join('\n'));
+else if (operation === 'models') {
+  if (s.models_delay_ms) await replay([{ delay_ms: s.models_delay_ms }]);
+  console.log((s.models || ['fake/model']).join('\n'));
+}
 else if (operation === 'export') {
   if (s.export_error) { process.stderr.write(s.export_error); process.exitCode = 1; }
   else console.log(JSON.stringify({ messages: (s.export_messages || []).map((m) => ({

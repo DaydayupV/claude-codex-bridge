@@ -5,21 +5,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { SCHEMA, DISCUSS_SCHEMA } from '../config.mjs';
 import { newRunDir } from '../records.mjs';
-import { execute, eventWriter, watchCancellation, spawnCli } from '../runner.mjs';
+import { execute, eventWriter, watchCancellation, spawnCli, validateSchema } from '../runner.mjs';
 import { M, die, isObject, binCommand, pathCommand, npmEntry, killTree, isReconnect, readAttachments, focusFiles } from '../util.mjs';
 
 // 模型、推理强度、沙箱、审批这几项 exec / resume / review 都接受 -m 和 -c。
 function codexOptions(agent, { model, effort, mode }) {
   const args = [];
   if (model) args.push('-m', model);
-  args.push('-c', `model_reasoning_effort="${effort}"`);
+  if (effort != null) args.push('-c', `model_reasoning_effort="${effort}"`);
   if (agent.sandbox?.[mode]) args.push('-c', `sandbox_mode="${agent.sandbox[mode]}"`);
   args.push('-c', `approval_policy="${agent.approval ?? 'never'}"`);
   return args;
 }
 
 function codexCommand(agent) {
-  if (agent?.bin) return binCommand(agent.bin);
+  if (process.env.CODEX_BIN || agent?.bin) return binCommand(process.env.CODEX_BIN || agent.bin);
   if (process.platform !== 'win32') return pathCommand('codex');
   // Windows 的 npm 包装不能直接 spawn，改用包内入口，避开 shell 引号问题。
   return binCommand(npmEntry('@openai', 'codex', 'bin', 'codex.js') || 'codex.exe');
@@ -214,7 +214,7 @@ function checkCodex(name, agent) {
   };
 }
 
-async function executeCodex(ctx, validateSchema) {
+async function executeCodex(ctx) {
   const { agent, model, effort, cwd, mode, kind, brief, opts: o, addDirs = [], git } = ctx;
   const files = mode === 'discuss' || mode === 'resume' ? readAttachments(o.file, cwd, false) : [];
   const { id, dir, release } = await newRunDir();
@@ -269,9 +269,11 @@ async function executeCodex(ctx, validateSchema) {
 }
 
 export default {
-  type: 'codex', modes: ['run', 'review', 'discuss'], channel: M.channel.codex,
+  type: 'codex cli', capabilities: { modes: ['run', 'review', 'discuss'], isolation: 'os', reads_code: true, native_schema: true, native_review: true, images: true, resume: true, command_start_events: true },
+  efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  defaultEffort: (level) => ({ simple: 'medium', normal: 'high', complex: 'max' })[level], channel: M.channel.codex,
   validate,
-  status: (agent) => ({ model: agent.model || codexConfigModel() }),
+  status: (agent) => ({ model: agent.model || codexConfigModel(), bin: codexCommand(agent).file }),
   check: checkCodex,
   execute: executeCodex,
   validateResume: (parent) => { if (!parent.meta.session_id) die(M.noSession(parent.id)); },

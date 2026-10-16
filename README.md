@@ -2,9 +2,9 @@
 
 [English](README.en.md)
 
-一个 Claude Code 插件：让 Claude 把执行类编码工作派给 OpenAI Codex，再由 Claude 验收；也可以让 Codex 独立审查代码，或者在复杂方案上让 Codex 和其他模型（比如 DeepSeek，或者通过 opencode 接入的各家模型）一起给意见，由 Claude 裁决。
+一个 Claude Code 插件：Claude 负责规划、决策和验收，把执行类编码工作按配置派给 OpenAI Codex 等 CLI 工具；也可以请它们独立审查代码，或者在复杂方案上让 Codex、opencode 接入的各家模型和 API 模型（比如 DeepSeek）一起给意见，由 Claude 裁决。
 
-分工的思路是：Claude 负责规划、核心决策、设计和文字，Codex 负责其余的执行工作。Codex 用的是你自己的 OpenAI 额度，不占 Claude 的额度。
+分工的思路是：Claude 负责规划、核心决策、设计和文字，其余的执行工作按等级交给你配置的协作方。它们用的是你自己的额度（Codex 订阅、opencode 订阅或 API 余额），不占 Claude 的额度。
 
 ## 能做什么
 
@@ -25,9 +25,9 @@
 ## 前提
 
 - [Claude Code](https://claude.com/claude-code)
-- [Codex CLI](https://github.com/openai/codex)，已安装并登录（必需）。在终端里运行 `codex exec "hello"` 能正常回复就行
+- 推荐：[Codex CLI](https://github.com/openai/codex)，已安装并登录。执行、审查和生成图片目前都靠它；没有它时，这些工作由 Claude 自己做
 - Node.js 18 或更高版本。在 WSL 里运行 Claude Code 时，WSL 里也要装 Node.js，否则插件的钩子会在每条命令前报错
-- Git 2.25 或更高版本，用来追踪 Codex 改了哪些文件
+- Git 2.25 或更高版本，用来追踪协作方改了哪些文件
 - 可选：想让其他模型参加讨论时，需要对应厂商的 API key（比如 DeepSeek），或者装好 [opencode](https://opencode.ai) 2.x
 
 ## 安装
@@ -39,7 +39,7 @@
 /plugin install foreman@claude-foreman
 ```
 
-装好后运行 `/foreman:setup`。它会检查 Node.js、Git 和 Codex 能不能用，说明各类任务默认交给谁，并问你要不要让其他模型参加讨论。之后想查看或修改配置，用 `/foreman:config`。
+装好后运行 `/foreman:setup`。它会检测本机有哪些工具（Codex、opencode、API key），说明各类任务现在交给谁，再按你的情况建议加哪些模型。之后想查看或修改配置，用 `/foreman:config`。
 
 ### 从 codex-bridge 升级
 
@@ -54,21 +54,24 @@
 - 偏好 `~/.claude/codex-bridge.md` 复制到 `~/.claude/foreman/preferences.md`；
 - 运行记录 `~/.claude/codex-runs` 整个搬到 `~/.claude/foreman/runs`。旧目录里还有任务在跑时，这次先不搬，下次再搬。
 
-旧配置和旧偏好文件保留，确认没问题后可以自己删掉。项目里的 `.claude/codex-bridge.json` 和 `.claude/codex-bridge.md` 照常能读，会提示你改名为 `.claude/foreman.json` 和 `.claude/foreman.md`。环境变量 `CODEX_BRIDGE_CONFIG`、`CODEX_RUNS_DIR`、`CODEX_BRIDGE_LANG` 改名为 `FOREMAN_CONFIG`、`FOREMAN_RUNS_DIR`、`FOREMAN_LANG`，旧名字暂时还认。`/codex-bridge:rescue` 改名为 `/foreman:run`。
+配置还会改成新写法：`type` 改为 `codex cli` / `opencode cli` / `api`，`"claude"` 改为 `"claude code"`，协作方代号改成模型名（比如 `codex` 改为 `gpt-6-astra`）。每一级实际用的模型和推理强度不变，原文件备份为 `config.json.bak`。旧配置和旧偏好文件保留，确认没问题后可以自己删掉。项目里的 `.claude/codex-bridge.json` 和 `.claude/codex-bridge.md` 照常能读，会提示你改名为 `.claude/foreman.json` 和 `.claude/foreman.md`。环境变量 `CODEX_BRIDGE_CONFIG`、`CODEX_RUNS_DIR`、`CODEX_BRIDGE_LANG` 改名为 `FOREMAN_CONFIG`、`FOREMAN_RUNS_DIR`、`FOREMAN_LANG`，旧名字暂时还认。`/codex-bridge:rescue` 改名为 `/foreman:run`。
 
 ## 配置
 
-第一次使用时，插件会自动生成用户配置 `~/.claude/foreman/config.json`：simple 和 normal 的执行任务由 Claude 自己做，复杂的执行任务派给 Codex 用 `gpt-6.1-sol`，复杂的审查和讨论用 `gpt-6-astra`。沙箱和审批不在里面设置，沿用 Codex 自己的 `~/.codex/config.toml`。
+用户配置在 `~/.claude/foreman/config.json`，项目配置在 `<项目目录>/.claude/foreman.json`。想调整时直接编辑文件，或者在 Claude 里说"用 `/foreman:config` 把复杂任务改成 ultra"。字段的完整说明见 [references/config.md](foreman/skills/dispatch/references/config.md)。
 
-想调整时，直接编辑这个文件，或者在 Claude 里说"用 `/foreman:config` 把复杂任务改成 ultra"。
+### 第一次使用
 
-配置文件是 JSON，后面的覆盖前面的：
+第一次运行时，插件先检测本机有什么，再生成配置：
 
-1. 插件内置默认值
-2. 用户配置 `~/.claude/foreman/config.json`（可以用环境变量 `FOREMAN_CONFIG` 换路径）
-3. 项目配置 `<项目目录>/.claude/foreman.json`
+| 检测到 | 生成的安排 |
+|---|---|
+| 能用的 Codex（已安装、已登录） | simple 和 normal 的执行任务由 Claude 自己做，复杂的执行任务交给 Codex 的 `gpt-6.1-sol`；审查和讨论交给 Codex，复杂的用 `gpt-6-astra` |
+| 没有 Codex | 所有任务暂时由 Claude 自己做 |
+| API key 环境变量（DeepSeek、Kimi、MiMo） | 写进配置，但先不加入讨论 |
+| opencode | 不自动加，用哪个模型由你选 |
 
-从 0.10 以前的版本升级时，旧写法的用户配置会在第一次运行时自动改成下面的新结构，原文件备份为 `config.json.bak`。
+花钱或有安全影响的选择不会自动做。运行 `/foreman:setup`，Claude 会按你本机的情况给出建议，你确认后再改配置。以后装了新工具，重跑 setup 就能补进来。
 
 ### 配置的结构
 
@@ -76,166 +79,99 @@
 
 | 块 | 管什么 |
 |---|---|
-| `dispatch` | 插件怎么派活：是否主动派、实时查看、并发、讨论轮数、超时、记录目录 |
-| `agents` | 有哪些协作方、怎么连接：Codex 的可执行文件、默认模型、沙箱；API 模型的接口地址、API key（直接写在配置里，或者指定存放它的环境变量）、默认模型；通过 opencode 调用的模型名 |
-| `levels` | 每类任务的每个等级交给谁，用什么模型和推理强度 |
+| `dispatch` | 插件怎么派活：是否主动派、实时查看、讨论轮数、超时、记录目录 |
+| `agents` | 有哪些协作方、怎么连接 |
+| `levels` | 每类任务的每个等级交给谁，用什么推理强度 |
 
-连接方式只写在 `agents`，分派只写在 `levels`。下面是第一次使用时自动生成的配置：
+一个有 Codex、opencode 和 DeepSeek 的例子：
 
 ```json
 {
-  "dispatch": {
-    "auto": true,
-    "watch": "auto",
-    "discuss_max_rounds": 2,
-    "timeout_min": 480,
-    "stall_min": 40,
-    "busy_ask_min": 2,
-    "runs_dir": null
-  },
   "agents": {
-    "codex": {
-      "type": "codex",
-      "bin": null,
-      "model": "gpt-6.1-sol",
-      "max_parallel": 4,
-      "sandbox": { "run": null, "review": null, "discuss": null },
-      "approval": null
-    },
-    "deepseek": {
-      "type": "openai-compatible",
-      "base_url": "https://api.deepseek.com",
-      "api_key": "",
-      "model": "deepseek-v4-pro"
-    },
-    "mimo": {
-      "type": "openai-compatible",
-      "base_url": "https://api.xiaomimimo.com/v1",
-      "api_key": "",
-      "model": "mimo-v2.6-pro"
-    }
+    "gpt-6.1-sol":     { "type": "codex cli", "model": "gpt-6.1-sol" },
+    "gpt-6-astra":     { "type": "codex cli", "model": "gpt-6-astra" },
+    "glm-5.3":         { "type": "opencode cli", "model": "opencode-go/glm-5.3" },
+    "deepseek-v4-pro": { "type": "api", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-v4-pro" }
   },
   "levels": {
     "run": {
-      "simple":  "claude",
-      "normal":  "claude",
-      "complex": { "agent": "codex", "effort": "max" }
+      "simple":  "claude code",
+      "normal":  "claude code",
+      "complex": { "agent": "gpt-6.1-sol", "effort": "max" }
     },
     "review": {
-      "simple":  { "agent": "codex", "effort": "medium" },
-      "normal":  { "agent": "codex", "effort": "high" },
-      "complex": { "agent": "codex", "model": "gpt-6-astra", "effort": "max" }
+      "simple":  { "agent": "gpt-6.1-sol", "effort": "medium" },
+      "normal":  { "agent": "gpt-6.1-sol", "effort": "high" },
+      "complex": { "agent": "gpt-6-astra", "effort": "max" }
     },
     "discuss": {
-      "simple":  [{ "agent": "codex", "effort": "medium" }],
-      "normal":  [{ "agent": "codex", "effort": "high" }],
-      "complex": [{ "agent": "codex", "model": "gpt-6-astra", "effort": "max" }]
+      "simple":  "claude code",
+      "normal":  [{ "agent": "gpt-6.1-sol", "effort": "high" }],
+      "complex": [
+        { "agent": "gpt-6-astra", "effort": "max" },
+        { "agent": "glm-5.3" },
+        { "agent": "deepseek-v4-pro", "effort": "max" }
+      ]
     }
   }
 }
 ```
 
-其中 `deepseek` 和 `mimo` 是示例：`api_key` 留空，也没有加进讨论等级，所以讨论默认只有 Codex。想让它们参加，见下文"让其他模型参加讨论"。
+**agents**
+- 键是协作方的代号，建议直接用模型名。代号可以用字母、数字、`.`、`-`、`_`。
+- `type` 有三种：
 
-### 任务等级、模型和推理强度
+  | type | 是什么 | 能做的任务 |
+  |---|---|---|
+  | `codex cli` | 本机的 Codex CLI | 执行、审查、讨论、生成图片 |
+  | `opencode cli` | 本机的 opencode CLI，能用它接入的各家模型 | 讨论（以后的版本会开放审查和执行） |
+  | `api` | 兼容 OpenAI 接口的模型，比如 DeepSeek、Kimi、MiMo | 讨论 |
 
-Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复杂 `complex`。等级看的是需要多少判断、出错的代价有多大，不看改动多少：照清单机械地改 20 个文件是简单，改模块之间的接口是复杂。每一级交给谁（包括 Claude 自己）、用哪个模型和推理强度，由你在 `levels` 里决定。没有隐式默认：Claude 每次都必须给出等级，漏了脚本直接报错，不会悄悄按某个档位运行。
+- 同一种可以配多个，各用不同模型。Codex 不是必需的。
 
-- 每一级写 `agent`（交给 `agents` 里的哪一方）和 `effort`（推理强度）；需要时再写 `model`，覆盖这一方的默认模型。不写 `model` 时用 `agents` 里的默认模型；Codex 的默认模型也是 `null` 时，用 Codex 自己配置的模型。示例只是一种搭配，换成你账号能用、适合你任务的模型。
-- Codex 的 `effort` 可选 `low`、`medium`、`high`、`xhigh`、`max`、`ultra`。模型不支持的档位会被 Codex 拒绝，报错会出现在结果里。
+**levels**
+- 三种任务（`run` 执行、`review` 审查、`discuss` 讨论）各分 `simple`、`normal`、`complex` 三级。
+- 每一级写交给谁：执行和审查写一个协作方，讨论写一组参与方。
+- 写成 `"claude code"` 表示 Claude 自己做；对审查和讨论来说，就是这一级不找外部模型。
+- `effort` 是推理强度，不写就用默认值：
+  - Codex：`low` 到 `ultra`；
+  - API：原样作为 `reasoning_effort` 发出，比如 DeepSeek 接受 `low` / `high` / `max`；
+  - opencode：模型的 variant。
+
+### 任务等级
+
+Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复杂 `complex`。等级看的是需要多少判断、出错的代价有多大，不看改动多少：照清单机械地改 20 个文件是简单，改模块之间的接口是复杂。每一级交给谁、用什么推理强度，由你在 `levels` 里决定。Claude 每次都必须给出等级，漏了脚本直接报错，不会悄悄按某个档位运行。
+
 - 你想临时指定时，可以对 Claude 说"用 ultra 跑"或"用某某模型跑"，Claude 会改用 `--effort` 或 `--model`。
-- `run` 的某一级想让 Claude 自己做、不派给 Codex，就把那一级整个写成 `"claude"`，比如 `"simple": "claude"`。这一级没有模型和推理强度可设：Claude 遇到这一级的执行任务会自己动手，脚本也会拒绝把它派出去。你明确要求某个任务派给 Codex 时，Claude 会加 `--agent codex`，用 Codex 的默认模型，推理强度用内置默认值。审查和讨论需要另一个模型，不支持这样写。
-- 小任务也一样按等级走：做法明确的小改动算 `simple`。默认配置里 `simple` 由 Claude 自己做；把它改成交给 Codex 的话，连很小的改动也会派出去。
+- 某一级写成 `"claude code"` 时，你仍然可以明确要求把某个任务派出去，Claude 会用 `--agent` 点名。
+- 小任务也按等级走：做法明确的小改动算 `simple`。默认 `simple` 由 Claude 自己做；把它改成交给 Codex 的话，连很小的改动也会派出去。
 
-### 让其他模型参加讨论
+### 接入 API 模型
 
-讨论（`discuss`）的每一级是一个参与方数组：可以只有 Codex，也可以加上兼容 OpenAI 接口的模型。几方同时、各自独立给出意见，Claude 再逐条裁决。以上面配置里的 DeepSeek 示例为例：
+1. **配置协作方**：自动生成的配置里，检测到 key 的厂商已经有了。别的厂商只要兼容 OpenAI 接口（GLM、通义千问、OpenRouter 等），就在 `agents` 里加一项 `{ "type": "api", "base_url": "...", "model": "..." }`；有特殊参数时写在 `extra_body` 里，会原样并进请求。
+2. **填 API key**，两种方式任选一种：
+   - 写在配置文件里：在这个协作方里加 `"api_key": "sk-..."`，改完立即生效。key 是明文保存的，这个文件不要提交到仓库或发给别人。
+   - 放在环境变量里：写 `"api_key_env": "DEEPSEEK_API_KEY"`，再设置这个环境变量。Windows 上在"系统属性 → 环境变量"里加一个用户变量；macOS 和 Linux 写进 shell 的启动文件。设置后要重启 Claude Code 才能读到。
+3. **加进讨论等级**：在 `levels.discuss` 里需要的等级加上它。
 
-1. **填 API key**，两种方式任选一种：
-   - **写在配置文件里**：把示例里的 `"api_key": ""` 填上。改完立即生效，不用重启：
+这些步骤也可以交给 `/foreman:setup`，比如运行 `/foreman:setup 加 DeepSeek`。key 由你自己填，不需要发到对话里。API 模型自己翻不了代码，Claude 会把相关文件随议题一起发过去（每次上限约 30 万字符），并对照原文核实它对代码的说法。
 
-     ```json
-     "deepseek": {
-       "type": "openai-compatible",
-       "base_url": "https://api.deepseek.com",
-       "api_key": "sk-你的 key",
-       "model": "deepseek-v4-pro"
-     }
-     ```
-
-     key 是明文保存的，这个文件不要提交到仓库或发给别人。
-   - **放在环境变量里**：`api_key` 留空，加一行 `"api_key_env": "DEEPSEEK_API_KEY"`，再设置这个环境变量。Windows 上在"系统属性 → 环境变量"里加一个用户变量；macOS 和 Linux 写进 shell 的启动文件。设置后要重启 Claude Code 才能读到。
-
-   两个都填时用 `api_key`。
-2. **加进讨论等级**：在 `levels.discuss` 里需要的等级加上它。比如只让复杂的讨论多一方：
-
-   ```json
-   "discuss": {
-     "simple":  [{ "agent": "codex", "effort": "medium" }],
-     "normal":  [{ "agent": "codex", "effort": "high" }],
-     "complex": [
-       { "agent": "codex", "model": "gpt-6-astra", "effort": "max" },
-       { "agent": "deepseek", "effort": "max" }
-     ]
-   }
-   ```
-
-   DeepSeek 的 `effort` 可选 `low`、`high`、`max`。小米 MiMo 没有推理强度可调，只有思考开关（默认开启），写 `{ "agent": "mimo", "effort": null }`。
-3. 运行 `/foreman:setup` 确认：模型能连通，每一级的参与方都对。
-
-配置里没有示例的厂商（Kimi、GLM、通义千问、OpenRouter 等），只要兼容 OpenAI 接口，就在 `agents` 里照着示例的格式加一项，名字自己起，再按上面的步骤做；有特殊参数时写在 `extra_body` 里，会原样并进请求。这些步骤也可以交给 `/foreman:setup`，比如运行 `/foreman:setup 加 DeepSeek`：它会帮你改好配置，再告诉你 key 填在哪里。key 由你自己填，不需要发到对话里。
-
-API 模型自己翻不了代码，Claude 会把相关文件随议题一起发过去（每次上限约 30 万字符），并对照原文核实它对代码的说法。目前 API 模型只能参加讨论，不能执行任务或审查。
-
-### 通过 opencode 接入更多模型
+### 接入 opencode
 
 装了 [opencode](https://opencode.ai)（2.x）的话，opencode 里能用的模型都可以参加讨论，比如 [OpenCode Go](https://opencode.ai/docs/go/) 订阅里的 GLM、Kimi、Qwen、MiniMax、DeepSeek 等。和 API 模型相比，它们能自己读项目里的代码、搜索文件，不用 Claude 挑文件附过去；代价是每读一次文件都多一次请求，更费额度。
 
 1. **在 opencode 里登录**：终端运行 `opencode`，用 `/connect` 登录（OpenCode Go 选 OpenCode Go），再运行 `opencode models` 看能用哪些模型。免费模型（名字带 `-free` 的）不用登录。
-2. **加进配置**：在 `agents` 里每个模型加一项，名字自己起，再加进需要的讨论等级：
-
-   ```json
-   "agents": {
-     "glm":  { "type": "opencode", "model": "opencode-go/glm-5.3" },
-     "kimi": { "type": "opencode", "model": "opencode-go/kimi-k3" }
-   },
-   "levels": {
-     "discuss": {
-       "complex": [
-         { "agent": "codex", "model": "gpt-6-astra", "effort": "max" },
-         { "agent": "glm",  "effort": null },
-         { "agent": "kimi", "effort": null }
-       ]
-     }
-   }
-   ```
-
-   `effort` 写 opencode 的 variant（比如 `high`），`null` 表示用模型的默认设置；各模型有哪些 variant 不一样。
-3. 运行 `/foreman:setup` 确认每个模型都能用。
+2. **加进配置**：每个模型加一项 `{ "type": "opencode cli", "model": "opencode-go/glm-5.3" }`，代号用模型名，再加进需要的讨论等级。也可以交给 `/foreman:setup`。
 
 讨论时插件给 opencode 注入一个只读代理，只有读文件、搜索和列目录的工具：它不能运行命令，也不能改文件。key 和登录都留在 opencode 里，插件的配置文件里不写。结果里会带上这一轮折算的费用（`cost_usd`），OpenCode Go 的额度就按这个扣。Go 的额度按模型分开算，几个模型一起讨论能把额度摊开；高档模型额度少，建议只放在复杂讨论里。
 
-### 全部字段
+### 项目配置
 
-| 字段 | 作用 | 默认 |
-|---|---|---|
-| `dispatch.auto` | `true`：符合条件的任务由 Claude 主动派给 Codex；`false`：Claude 先提议，你同意后再派 | `true` |
-| `dispatch.watch` | `auto`：派活后自动打开实时查看；`off`：不主动打开 | `auto` |
-| `dispatch.discuss_max_rounds` | 一场讨论最多几轮（第 1 轮加上之后的续接），每个参与方各自计数。达到上限后脚本拒绝再续接，Claude 按已有结果裁决 | `2` |
-| `dispatch.timeout_min` | 单次任务的总超时（分钟） | `480` |
-| `dispatch.stall_min` | 连续多少分钟没有动静就判定为卡死并结束：Codex 是没有任何活动、也没有命令在执行；API 模型是流式输出里没有任何数据。`0` 表示关闭 | `40` |
-| `dispatch.busy_ask_min` | API 模型因为服务繁忙排队超过多少分钟，Claude 就决定要不要终止它、先用其他参与方的结果继续，事后告诉你。`0` 表示不处理 | `2` |
-| `dispatch.runs_dir` | 运行记录目录（也可以用环境变量 `FOREMAN_RUNS_DIR`） | `~/.claude/foreman/runs` |
-| `agents.codex.bin` | codex 可执行文件或 `codex.js` 的路径（也可以用环境变量 `CODEX_BIN`） | 自动查找 |
-| `agents.codex.model` | Codex 的默认模型 | `null`，沿用 Codex 配置 |
-| `agents.<名字>.max_parallel` | 这个协作方同时最多运行几个任务，所有任务组和会话加起来算（服务商的限流和额度都是按账号的）。达到上限时新任务会被拒绝。对 Codex 来说，拆开并发的份数越多等得越短，但总 token 更多；设成 `1` 就不并发 | `4` |
-| `agents.codex.sandbox` | `run` / `review` / `discuss` 各自的沙箱：`read-only`、`workspace-write`、`danger-full-access` | 都是 `null`，沿用 Codex 配置 |
-| `agents.codex.approval` | Codex 的审批策略 | 不写时用 `never`：运行是无人值守的，没人能审批 |
-| `agents.<名字>`（API 模型） | `type` 为 `openai-compatible`；`base_url`、`model` 必填；`api_key`（key 本身，还没填就留空）和 `api_key_env`（存放 key 的环境变量名）任选，都填时用 `api_key`，都没有的不能参加讨论；`extra_body` 可选 | 无 |
-| `agents.<名字>`（opencode 模型） | `type` 为 `opencode`；`model` 必填，写成 `厂商/模型`；`bin`（opencode 可执行文件路径）可选，默认自动查找 | 无 |
-| `levels` | 见上文 | run 的 simple、normal 为 `"claude"`，complex 为 Codex max；review 为 Codex medium / high / max；discuss 三级都只有 Codex，medium / high / max |
+项目配置只能收紧，不能放宽：
+- 只认 `dispatch.timeout_min`、`dispatch.stall_min`、`dispatch.busy_ask_min` 和 `levels`；
+- 每一级只能改成 `"claude code"`，或者从用户配置这一级已有的协作方里选（可以改推理强度）。
 
-项目配置只认 `dispatch.timeout_min`、`dispatch.stall_min`、`dispatch.busy_ask_min`、`agents.codex.model` 和 `levels`，而且不能新增 Codex 以外的参与方（API 模型和 opencode 模型），只能去掉。其余字段只能写在用户配置里，这样别人的仓库没法通过项目配置放宽沙箱、换掉可执行文件、把代码发到别的地址，或者擅自花你的额度。敏感项目可以在项目配置的 `levels.discuss` 里只留 Codex，关掉其他模型。
+这样别人的仓库没法借项目配置换掉执行方、把代码发给新的厂商，或者擅自花你的额度。敏感项目可以把讨论改成只留 Codex，或者直接写成 `"claude code"`。
 
 ### 偏好文件
 

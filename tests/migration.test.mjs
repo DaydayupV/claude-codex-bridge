@@ -100,10 +100,10 @@ test('旧语言环境变量生效时也提示改名', async (t) => {
 
 test('项目里的旧配置和偏好文件名照常读取并提示改名', async (t) => {
   const h = sandbox(t);
-  const config = h.write('.claude/codex-bridge.json', { agents: { codex: { model: 'project-legacy' } } });
+  const config = h.write('.claude/codex-bridge.json', { levels: { review: { normal: { agent: 'codex', effort: 'low' } } } });
   const prefs = h.write('.claude/codex-bridge.md', '合成项目偏好');
   const r = await h.bridge(['config', '--cwd', h.cwd]), c = output(r);
-  assert.equal(c.effective.agents.codex.model, 'project-legacy');
+  assert.equal(c.effective.levels.review.normal.effort, 'low');
   assert.deepEqual(c.loaded_from, [h.userConfig, config]);
   assert.deepEqual(c.preferences[1], { file: prefs, exists: true });
   for (const [old, name] of [[config, 'foreman.json'], [prefs, 'foreman.md']]) {

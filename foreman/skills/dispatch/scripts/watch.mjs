@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { RUNS_ROOT, CANCEL_FILE, listRuns, findRun, readMeta, isRunning, runEnd, runOutcome, groupRuns } from './records.mjs';
-import { M, die, sleep, clip, oneLine, plainCommand, RECONNECT, isReconnect, modelOf, whoOf, needsDecision } from './util.mjs';
+import { M, die, sleep, clip, oneLine, plainCommand, RECONNECT, isReconnect, modelOf, whoOf, agentTypeOf, needsDecision } from './util.mjs';
 
 // 终端里中日韩字符和全角符号占两格，按显示宽度截断和换行，避免折行错位。
 const charWidth = (ch) => (/[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(ch) ? 2 : 1);
@@ -817,7 +817,7 @@ async function cmdWatch(o) {
   const rel = (p) => { const r = path.relative(cwd, p); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r : p; };
   // 任务还在运行、输出到终端时，时间线画在可以随窗口重排的实时画面里
   const view = !o.verbose ? timelineRenderer(meta, rel, { screen: liveCapable() && isRunning(meta), dir })
-    : (meta.agent_type === 'openai-compatible' ? apiVerboseRenderer : verboseRenderer)(meta, rel);
+    : (agentTypeOf(meta) === 'api' ? apiVerboseRenderer : verboseRenderer)(meta, rel);
   view.header(id, dir);
 
   const file = path.join(dir, 'events.jsonl');

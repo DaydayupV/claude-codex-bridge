@@ -10,11 +10,11 @@ for (const loggedIn of [true, false]) {
     const h = sandbox(t), s = h.scenario({ logged_in: loggedIn });
     const r = output(await h.bridge(['check'], { env: s.env }), loggedIn ? 0 : 1);
     assert.equal(r.ok, loggedIn);
-    assert.equal(r.codex.ok, loggedIn);
+    assert.equal(r.agents.codex.ok, loggedIn);
     assert.equal(r.node.ok, true);
     assert.equal(r.git.ok, true);
-    assert.equal(r.codex.version, 'codex-cli synthetic-1.0');
-    assert.equal(r.codex.fix, loggedIn ? null : M.fixCodexLogin);
+    assert.equal(r.agents.codex.version, 'codex-cli synthetic-1.0');
+    assert.equal(r.agents.codex.fix, loggedIn ? null : M.fixCodexLogin);
     assert.deepEqual(s.calls().map((c) => c.args), [['--version'], ['login', 'status']]);
   });
 }
@@ -25,14 +25,14 @@ test('check 找不到指定 Codex 时提示安装且不调用真实 CLI', async 
   h.config(c);
   const r = output(await h.bridge(['check']), 1);
   assert.equal(r.ok, false);
-  assert.equal(r.codex.version, null);
-  assert.equal(r.codex.login, null);
-  assert.equal(r.codex.fix, M.fixCodexMissing);
+  assert.equal(r.agents.codex.version, null);
+  assert.equal(r.agents.codex.login, null);
+  assert.equal(r.agents.codex.fix, M.fixCodexMissing);
   assert.equal(h.calls().length, 0);
 });
 
 for (const status of [200, 401]) {
-  test(`check 报告 API ${status === 200 ? '可连通' : '认证失败'}且不改变 Codex 总体结果`, async (t) => {
+  test(`check 报告 API ${status === 200 ? '可连通' : '认证失败'}且未被等级引用时不改变总体结果`, async (t) => {
     const h = sandbox(t), api = await apiServer(t, [status === 200 ? { answer: 'OK' } : { status, message: 'synthetic auth' }]);
     const c = baseConfig();
     c.agents.api = apiAgent(api.url);

@@ -101,7 +101,7 @@ function npmEntry(...parts) {
   let file = entry(path.join(process.env.APPDATA || '', 'npm', 'node_modules'));
   if (!fs.existsSync(file)) {
     // 改过 npm prefix 或用 nvm 时不在默认位置，问 npm 要全局目录。
-    const npm = spawnSync('npm', ['root', '-g'], { encoding: 'utf8', shell: true, windowsHide: true });
+    const npm = spawnSync('npm root -g', { encoding: 'utf8', shell: true, windowsHide: true, timeout: 30000 });
     file = npm.status === 0 && npm.stdout.trim() ? entry(npm.stdout.trim()) : '';
   }
   return file && fs.existsSync(file) ? file : null;
@@ -201,7 +201,8 @@ function plainCommand(cmd) {
 const isAscii = (s) => /^[ -~]*$/.test(s);
 // 界面上以模型为主，接入方式作附注；旧记录没有 agent_type 和 model_name，都是 Codex CLI。
 const modelOf = (m) => m?.model || m?.model_name || m?.model_shown || '?';
-const whoOf = (m) => M.who(modelOf(m), m?.agent_type === 'openai-compatible' ? M.channel.api : m?.agent_type === 'opencode' ? M.channel.opencode : M.channel.codex, m?.effort, !m?.model && !!m?.model_name && !['openai-compatible', 'opencode'].includes(m?.agent_type));
+const agentTypeOf = (m) => ({ codex: 'codex cli', opencode: 'opencode cli', 'openai-compatible': 'api' })[m?.agent_type] || m?.agent_type || 'codex cli';
+const whoOf = (m) => M.who(modelOf(m), agentTypeOf(m) === 'api' ? M.channel.api : agentTypeOf(m) === 'opencode cli' ? M.channel.opencode : M.channel.codex, m?.effort, !m?.model && !!m?.model_name && agentTypeOf(m) === 'codex cli');
 
 // 用改名替换文件。Windows 上目标文件正被别的进程读取时（watch、status、并发登记都会读 meta.json），
 // 改名会报 EPERM / EACCES / EBUSY，稍等再试；最多等约 2 秒。
@@ -215,4 +216,4 @@ function replaceFile(from, to) {
   }
 }
 
-export { replaceFile, HERE, LANGUAGE, M, notice, isObject, readJson, die, need, resolveDir, readBrief, MAX_MATERIAL_CHARS, readAttachments, focusFiles, binCommand, pathCommand, npmEntry, isGitRepo, pidAlive, killTree, relativePath, pathKey, RECONNECT, isReconnect, sleep, clip, oneLine, plainCommand, isAscii, modelOf, whoOf, looksLikeQuestion, looksLikeInputPrompt, looksLikeFinalQuestion, needsDecision };
+export { replaceFile, HERE, LANGUAGE, M, notice, isObject, readJson, die, need, resolveDir, readBrief, MAX_MATERIAL_CHARS, readAttachments, focusFiles, binCommand, pathCommand, npmEntry, isGitRepo, pidAlive, killTree, relativePath, pathKey, RECONNECT, isReconnect, sleep, clip, oneLine, plainCommand, isAscii, modelOf, whoOf, agentTypeOf, looksLikeQuestion, looksLikeInputPrompt, looksLikeFinalQuestion, needsDecision };

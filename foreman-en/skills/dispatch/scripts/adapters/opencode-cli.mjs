@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DISCUSS_SCHEMA } from '../config.mjs';
 import { newRunDir, isCancelled } from '../records.mjs';
-import { startRun, finishDiscussion, eventWriter, runLimits, reportWithRepair, spawnCli } from '../runner.mjs';
+import { startRun, finishDiscussion, eventWriter, runLimits, reportWithRepair, spawnCli, validateSchema } from '../runner.mjs';
 import { M, die, isObject, binCommand, pathCommand, npmEntry, killTree, readAttachments, focusFiles, relativePath, whoOf } from '../util.mjs';
 
 function opencodeCommand(agent) {
@@ -126,7 +126,7 @@ function runOpencode({ agent, args, cwd, prompt = '', timeoutMs, stallMin = 0, r
   });
 }
 
-async function executeOpencode(ctx, validateSchema) {
+async function executeOpencode(ctx) {
   const { cfg, agentName, agent, model, effort, level, cwd, brief, mode, opts } = ctx;
   if (ctx.parent && !ctx.sessionId) die(M.noSession(ctx.parent));
   const schemaText = fs.readFileSync(DISCUSS_SCHEMA, 'utf8');
@@ -214,7 +214,7 @@ async function executeOpencode(ctx, validateSchema) {
 
 async function checkOpencodeAgent(name, agent) {
   const started = Date.now();
-  const out = { ok: false, type: 'opencode', model: agent.model, version: null, model_listed: false, seconds: null, reply: null, error: null, fix: null };
+  const out = { ok: false, type: 'opencode cli', model: agent.model, version: null, model_listed: false, seconds: null, reply: null, error: null, fix: null };
   const call = (args, timeoutMs = 60000, prompt = '') => runOpencode({ agent, args, cwd: process.cwd(), timeoutMs, prompt });
   const failed = (result) => result.errors.join('; ') || result.stderrTail.trim() || result.status;
   const finish = () => ({ ...out, seconds: Number(((Date.now() - started) / 1000).toFixed(1)) });
@@ -238,10 +238,11 @@ function validate(agent, key, check, text) {
 }
 
 export default {
-  type: 'opencode', modes: ['discuss'], channel: M.channel.opencode,
+  type: 'opencode cli', capabilities: { modes: ['discuss'], isolation: 'tools', reads_code: true, native_schema: false, native_review: false, images: false, resume: true, command_start_events: false }, channel: M.channel.opencode,
   validate,
   status: (agent) => ({ bin: agent.bin || opencodeCommand(agent).file }),
   check: checkOpencodeAgent,
+  locate: opencodeCommand,
   execute: executeOpencode,
   validateResume: (parent) => { if (!parent.meta.session_id) die(M.noSession(parent.id)); },
 };
