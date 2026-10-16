@@ -1,0 +1,202 @@
+// 记录目录、启动登记锁、准入、活动状态和 watch 启动器。
+import fs from 'node:fs';
+import path from 'node:path';
+import { ENTRY, defaultRunsRoot, runsMovedNow, codexAgentName, DEFAULT_AGENT_PARALLEL } from './config.mjs';
+import { M, die, pidAlive, sleep, pathKey, clip, oneLine, plainCommand } from './util.mjs';
+
+// 终止标记：cancel 命令和实时查看里按 x 时写进任务的记录目录，运行中的任务看到就停下。
+const CANCEL_FILE = 'cancel';
+// 没有正常结束的几种状态：会话开始的提醒会列出这样的执行任务，对它们运行 cancel 表示已经处理，不再提醒
+const UNFINISHED_STATUSES = ['interrupted', 'quota_exhausted', 'stalled', 'timeout'];
+
+// 派活的 Claude 会话：Claude Code 运行命令时会带上会话 ID，记进任务元数据。
+// 不同会话可能起了同一个组名（比如同一天讨论同一个话题），按组查看时只算同一会话派出的那一批。
+const CLAUDE_SESSION = process.env.CLAUDE_CODE_SESSION_ID || null;
+
+
+let RUNS_ROOT;
+
+// 入口先加载配置，再搬记录目录和重写启动器，保持首次运行的副作用顺序。
+function initializeRecords(config) {
+  RUNS_ROOT = config.dispatch.runs_dir ? path.resolve(config.dispatch.runs_dir) : defaultRunsRoot();
+  if (runsMovedNow) writeWatchLauncher();
+}
+
+const isCancelled = (dir) => fs.existsSync(path.join(dir, CANCEL_FILE));
+
+// Microsoft Store 版的 Claude 桌面应用会把对 AppData\Roaming 的写入重定向到 AppData\Local\Packages\<应用>\LocalCache\Roaming：
+// 应用里的进程按原路径能找到插件，终端面板里的进程不行。所以启动器里先写实际路径，再写原路径，用第一个存在的。
+function writeWatchLauncher() {
+  const self = ENTRY;
+  let real = self;
+  try { real = fs.realpathSync.native(self); } catch { /* 用原路径 */ }
+  const launcher = `// 自动生成：转调 cli.mjs watch。按顺序用第一个存在的脚本路径（应用里外看到的路径可能不同）。
+import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
+const candidates = ${JSON.stringify([...new Set([real, self])])};
+process.argv.splice(2, 0, 'watch');
+await import(pathToFileURL(candidates.find((p) => fs.existsSync(p)) ?? candidates[0]).href);
+`;
+  try { fs.writeFileSync(path.join(RUNS_ROOT, 'watch.mjs'), launcher); } catch { /* 不影响主流程 */ }
+}
+
+// 并发上限按协作方算，任何任务（分不分组、哪个会话）都要在锁内登记并做准入检查，调用方用完 release。
+async function newRunDir() {
+  fs.mkdirSync(RUNS_ROOT, { recursive: true });
+  // 登记和准入串行完成，避免随机后缀让后登记的任务排到前面。
+  const lock = path.join(RUNS_ROOT, '.start.lock');
+  for (;;) {
+    try { fs.writeFileSync(lock, String(process.pid), { flag: 'wx' }); break; }
+    catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      let owner;
+      let age = 0;
+      try { owner = Number(fs.readFileSync(lock, 'utf8')); age = Date.now() - fs.statSync(lock).mtimeMs; } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      // 登记只需要几毫秒；持有者已退出，或者锁放了很久（持有者被强杀后 pid 又被复用），都当作残留锁清掉。
+      if ((owner && !pidAlive(owner)) || age > 30000) fs.rmSync(lock, { force: true });
+      await sleep(25);
+    }
+  }
+  const cleanup = () => fs.rmSync(lock, { force: true });
+  process.once('exit', cleanup);
+  const release = () => { cleanup(); process.removeListener('exit', cleanup); };
+  const previous = listRuns()[0] || '';
+  let id;
+  do {
+    if (id) await sleep(10);
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    id = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${Math.random().toString(36).slice(2, 6)}`;
+  } while (id <= previous);
+  const dir = path.join(RUNS_ROOT, id);
+  fs.mkdirSync(dir, { recursive: true });
+  writeWatchLauncher();
+  return { id, dir, release };
+}
+
+function listRuns() {
+  if (!fs.existsSync(RUNS_ROOT)) return [];
+  return fs.readdirSync(RUNS_ROOT)
+    .filter((n) => fs.existsSync(path.join(RUNS_ROOT, n, 'meta.json')))
+    .sort()
+    .reverse();
+}
+
+function findRun(ref) {
+  const id = ref === 'last' ? listRuns()[0] : ref;
+  if (!id) die(M.noRuns);
+  const dir = path.join(RUNS_ROOT, id);
+  if (!fs.existsSync(path.join(dir, 'meta.json'))) die(M.runNotFound(ref));
+  return { id, dir, meta: JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')) };
+}
+
+// 读 events.jsonl 末尾，给出最后活动时间和当前步骤，用来判断运行中的任务是活着还是卡住。
+function describeActivity(dir) {
+  const file = path.join(dir, 'events.jsonl');
+  if (!fs.existsSync(file)) return { idle_min: null, step: M.noEvents };
+  const st = fs.statSync(file);
+  const len = Math.min(st.size, 256 * 1024);
+  const chunk = Buffer.alloc(len);
+  const fd = fs.openSync(file, 'r');
+  try { fs.readSync(fd, chunk, 0, len, st.size - len); } finally { fs.closeSync(fd); }
+  const lines = chunk.toString('utf8').split('\n').slice(len < st.size ? 1 : 0).filter((l) => l.trim());
+  const running = new Map();
+  let last = null;
+  for (const l of lines) {
+    let ev;
+    try { ev = JSON.parse(l); } catch { continue; }
+    last = ev;
+    if (ev.item?.type !== 'command_execution') continue;
+    if (ev.type === 'item.started') running.set(ev.item.id, ev.item.command);
+    else if (ev.type === 'item.completed') running.delete(ev.item.id);
+  }
+  let step;
+  if (last?.type.startsWith('api.')) {
+    step = last.type === 'api.request' ? M.stepApiWaiting
+      : last.type === 'api.reasoning' ? M.stepApiThinking(last.total_chars)
+      : last.type === 'api.content' ? M.stepApiAnswering(last.total_chars)
+      : last.type === 'api.queued' ? M.stepApiQueued
+      : last.type === 'api.retry' ? M.stepApiRetry(last.reason)
+      : last.type === 'api.repair' ? M.stepApiRepair
+      : last.type === 'api.error' ? last.message
+      : last.type === 'api.usage' ? M.watchTokens(last.usage) : M.watchEnded('done');
+  } else if (running.size) step = M.stepCommand(clip(oneLine(plainCommand([...running.values()].pop())), 160));
+  else if (last?.item?.type === 'agent_message') step = M.stepSaid(clip(oneLine(last.item.text), 160));
+  else if (last?.item?.type === 'file_change') step = M.stepFileChanged;
+  else if (last?.type === 'image.generated') step = M.stepImageGenerated;
+  else if (last?.type === 'item.completed' && last.item?.type === 'command_execution') step = M.stepCommandDone;
+  else step = last ? M.stepLastEvent(`${last.type}${last.item?.type ? `/${last.item.type}` : ''}`) : M.noEvents;
+  return { idle_min: Number(((Date.now() - st.mtimeMs) / 60000).toFixed(1)), step };
+}
+
+// 一个组的任务，只取同一会话派出的那一批：当前会话用过这个组名就取当前会话的，
+// 否则（比如在终端里查看）跟最新派出的任务所在的会话。旧记录没有会话 ID，彼此算同一批。
+function groupRuns(group, since = 0) {
+  const runs = listRuns().map((id) => {
+    const dir = path.join(RUNS_ROOT, id);
+    return { id, dir, meta: readMeta(dir) };
+  }).filter(({ meta }) => meta?.group === group && Date.parse(meta.started_at) >= since);
+  if (!runs.length) return runs;
+  const sessionOf = (run) => run.meta.claude_session ?? null;
+  const newest = runs.reduce((a, b) => (Date.parse(b.meta.started_at) > Date.parse(a.meta.started_at) ? b : a));
+  const batch = CLAUDE_SESSION && runs.some((run) => sessionOf(run) === CLAUDE_SESSION) ? CLAUDE_SESSION : sessionOf(newest);
+  return runs.filter((run) => sessionOf(run) === batch);
+}
+
+// 准入检查（在登记锁内）：同一协作方正在运行的任务不超过它的 max_parallel，所有组和会话都算，
+// 因为服务商的限流和额度是按账号的；同组的执行任务写入范围不能重叠。
+function checkAdmission(meta, cfg) {
+  const codexName = codexAgentName(cfg);
+  const running = listRuns().filter((id) => id !== meta.id)
+    .map((id) => { const dir = path.join(RUNS_ROOT, id); return { id, dir, meta: readMeta(dir) }; })
+    .filter((r) => isRunning(r.meta));
+  const limit = cfg.agents[meta.agent].max_parallel ?? DEFAULT_AGENT_PARALLEL;
+  const same = running.filter((r) => (r.meta.agent || codexName) === meta.agent); // 旧记录没有 agent 字段，都是 Codex
+  if (same.length >= limit) return M.agentFull(meta.agent, same.length, limit, M.list(same.map((r) => r.id)));
+  if (meta.group == null || meta.kind === 'discuss') return null;
+  const absolute = (cwd, file) => pathKey(path.resolve(cwd, file.replace(/\\/g, '/')).replace(/\\/g, '/')).replace(/\/$/, '');
+  for (const other of running) {
+    if (other.meta.group !== meta.group || other.meta.kind === 'discuss') continue;
+    // 比较用归一化的绝对路径，报错里显示派活时写的原样路径。
+    const paths = meta.scope.filter((mine) => (other.meta.scope || []).some((file) => {
+      const a = absolute(meta.cwd, mine);
+      const b = absolute(other.meta.cwd, file);
+      return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+    }));
+    if (paths.length) return M.scopeOverlap(meta.group, other.id, paths);
+  }
+  return null;
+}
+
+// 任务的结束时间。中断的任务没写结束时间，用记录文件最后修改的时间，也就是最后一次活动的时间。
+function runEnd(dir, meta) {
+  if (meta.ended_at) return Date.parse(meta.ended_at);
+  if (isRunning(meta)) return Date.now();
+  let last = 0;
+  for (const file of ['events.jsonl', 'meta.json']) {
+    try { last = Math.max(last, fs.statSync(path.join(dir, file)).mtimeMs); } catch { /* 没有这个文件 */ }
+  }
+  return last || Date.now();
+}
+
+function runOutcome(run) {
+  const m = run.meta;
+  const running = isRunning(m);
+  const status = m.status === 'running' && !running ? 'interrupted' : m.status;
+  const file = path.join(run.dir, 'result.json');
+  const result = !running && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
+  const ok = status === 'done' && (!result?.report?.status || result.report.status === 'completed');
+  return { running, status, result, ok };
+}
+
+function groupSummary(runs) {
+  const outcomes = runs.map(runOutcome);
+  const running = outcomes.filter((r) => r.running).length;
+  const ok = outcomes.filter((r) => r.ok).length;
+  return M.groupSummary(runs.length, running, ok, runs.length - running - ok);
+}
+
+const readMeta = (dir) => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')); } catch { return null; } };
+const isRunning = (m) => m?.status === 'running' && pidAlive(m.pid);
+
+export { RUNS_ROOT, initializeRecords, CANCEL_FILE, UNFINISHED_STATUSES, CLAUDE_SESSION, isCancelled, writeWatchLauncher, newRunDir, listRuns, findRun, describeActivity, groupRuns, checkAdmission, runEnd, runOutcome, groupSummary, readMeta, isRunning };

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // PreToolUse 钩子：拦下 Claude 直接调用 codex exec / codex review 的 Bash 和 PowerShell 命令，
-// 要求改走 bridge.mjs。退出码 2 会阻止这次调用，并把 stderr 的内容反馈给 Claude。
+// 要求改走 cli.mjs。退出码 2 会阻止这次调用，并把 stderr 的内容反馈给 Claude。
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPT = path.join(HERE, '..', 'skills', 'dispatch', 'scripts', 'bridge.mjs');
+const SCRIPT = path.join(HERE, '..', 'skills', 'dispatch', 'scripts', 'cli.mjs');
 
 const MESSAGES = {
   zh: `已拦截：不要直接调用 codex exec / codex review，所有 Codex 调用都必须通过 foreman 插件的脚本：

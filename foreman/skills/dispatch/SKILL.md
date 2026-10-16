@@ -44,7 +44,7 @@ Codex 的文字表达弱，经常不说人话：术语堆砌、翻译腔、绕�
 - 出一张图要几十秒，这段时间实时查看停在上一步是正常的；图生成后时间线上会出现一行"生成图片 …"。
 
 ## 调用方式
-唯一入口是本 skill 目录下的 `scripts/bridge.mjs`（即 `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/bridge.mjs`）。不要手敲 `codex exec`。
+唯一入口是本 skill 目录下的 `scripts/cli.mjs`（即 `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/cli.mjs`）。不要手敲 `codex exec`。
 
 - **没有例外**：测试、验收、试跑、一次性问答，也都必须走这个脚本。只读的问答用 `discuss`。插件带有钩子，直接调用 `codex exec` 或 `codex review` 的命令会被拦下。
 - **遇到沙箱问题时停下来**：Codex 因为沙箱无法启动命令或报错时，把错误原文和你的判断告诉用户，由用户决定是否修改配置。不要自己换沙箱、改配置文件，也不要想办法绕开脚本。

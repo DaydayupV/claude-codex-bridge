@@ -2,7 +2,7 @@
 // SessionStart 钩子：会话开始（包括恢复和上下文压缩之后）时提醒 Claude 何时加载 dispatch skill，
 // 并附上用户的偏好文件。skill 是否加载全靠 Claude 自己判断，项目里有更贴合的领域 skill 时容易漏掉；
 // 偏好文件又只在 skill 加载后才会被读到，所以直接在会话开始时带上。
-// 只读文件，不 import bridge.mjs，避免触发它首次运行时生成配置文件。
+// 只读文件，不 import 主脚本，避免触发它首次运行时生成配置文件。
 
 import fs from 'node:fs';
 import os from 'node:os';

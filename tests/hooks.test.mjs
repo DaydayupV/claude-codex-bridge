@@ -60,7 +60,7 @@ for (const [label, command] of [
     assert.equal(r.stdout, '');
     assert.ok(r.stderr.includes('已拦截：不要直接调用 codex exec / codex review'));
     assert.ok(r.stderr.includes('foreman:dispatch'));
-    assert.ok(r.stderr.includes('bridge.mjs'));
+    assert.ok(r.stderr.includes('cli.mjs'));
   });
 }
 

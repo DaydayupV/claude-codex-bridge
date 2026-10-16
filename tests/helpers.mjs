@@ -8,7 +8,7 @@ import { setTimeout as pause } from 'node:timers/promises';
 export { MESSAGES } from '../foreman/skills/dispatch/scripts/messages.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const BRIDGE = path.join(ROOT, 'foreman/skills/dispatch/scripts/bridge.mjs');
+export const BRIDGE = path.join(ROOT, 'foreman/skills/dispatch/scripts/cli.mjs');
 export const CODEX = path.join(ROOT, 'tests/fake/codex.mjs');
 export const OPENCODE = path.join(ROOT, 'tests/fake/opencode.mjs');
 export const read = (file) => fs.readFileSync(file, 'utf8');

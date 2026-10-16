@@ -7,7 +7,7 @@ The user wants to see or change the foreman settings. Arguments:
 
 $ARGUMENTS
 
-1. Run `node "${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/bridge.mjs" config --cwd "<current project dir>"` to see the settings in effect and the config file paths. `references/config.md` in the `foreman-en:dispatch` skill folder explains each setting.
+1. Run `node "${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/cli.mjs" config --cwd "<current project dir>"` to see the settings in effect and the config file paths. `references/config.md` in the `foreman-en:dispatch` skill folder explains each setting.
 2. With no arguments, show the user a short table of:
    - `resolved_levels`: who each level of each task type goes to, with model and effort;
    - `agents_status`: which agents there are, and whether each API agent's key is set;

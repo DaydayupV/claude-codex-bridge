@@ -14,13 +14,16 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SOURCE = path.join(ROOT, 'foreman');
 const TARGET = path.join(ROOT, 'foreman-en');
-const SHARED = [
-  'skills/dispatch/scripts/bridge.mjs',
-  'skills/dispatch/scripts/messages.mjs',
-  'skills/dispatch/scripts/api-chat.mjs',
-  'hooks/guard-direct-calls.mjs',
-  'hooks/session-reminder.mjs',
-];
+function sharedFiles(root) {
+  const walk = (dir) => fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((entry) => {
+    const rel = `${dir}/${entry.name}`;
+    return entry.isDirectory() ? walk(rel) : entry.name === 'language.json' ? [] : [rel];
+  });
+  return [...walk('skills/dispatch/scripts'),
+    ...fs.readdirSync(path.join(root, 'hooks')).filter((name) => name.endsWith('.mjs')).map((name) => `hooks/${name}`)];
+}
+
+const SHARED = sharedFiles(SOURCE);
 
 const check = process.argv.includes('--check');
 let problems = 0;
@@ -36,6 +39,17 @@ for (const rel of SHARED) {
   } else {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.writeFileSync(dest, src);
+    console.log(`已同步：${rel}`);
+  }
+}
+
+// 入口拆分后，目标插件里多出的旧脚本也要移除；只检查时列出来。
+for (const rel of sharedFiles(TARGET).filter((rel) => !SHARED.includes(rel))) {
+  if (check) {
+    console.log(`多余文件：${rel}`);
+    problems++;
+  } else {
+    fs.rmSync(path.join(TARGET, rel));
     console.log(`已同步：${rel}`);
   }
 }

@@ -7,7 +7,7 @@ The user wants to set up foreman. Arguments:
 
 $ARGUMENTS
 
-The script is `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/bridge.mjs`. Go through these steps in order, and tell the user the result of each one briefly:
+The script is `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/cli.mjs`. Go through these steps in order, and tell the user the result of each one briefly:
 
 1. **Check the environment**: run `node "<script path>" check` and show each result in a table (Node.js, Git, Codex, live view, each API model and opencode model).
    - Codex is required. If `codex.ok` is `false`, pass on the `fix` from the result (for example installing the Codex CLI or running `codex login`), ask the user to run `/foreman-en:setup` again once that's done, and stop here.

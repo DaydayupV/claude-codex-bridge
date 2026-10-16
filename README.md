@@ -291,7 +291,7 @@ Windows 上已经实际测试过，包括命令行版和桌面版（含 Microsof
 
 ## 开发
 
-两个插件的脚本（`bridge.mjs`、`api-chat.mjs`、`messages.mjs` 和钩子 `hooks/guard-direct-calls.mjs`、`hooks/session-reminder.mjs`）是同一份。只改 `foreman/` 里的那份，再运行同步工具复制到英文插件：
+两个插件的脚本是同一份：`skills/dispatch/scripts/` 下除 `language.json` 以外的全部文件（入口是 `cli.mjs`），以及 `hooks/` 下的两个钩子。只改 `foreman/` 里的那份，再运行同步工具复制到英文插件：
 
 ```bash
 node tools/sync-shared.mjs

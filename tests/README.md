@@ -2,7 +2,7 @@
 
 在仓库根目录运行 `npm test`。单文件可用 `node --test tests/discuss.test.mjs`，也可替换为下面任意测试文件。仅使用 Node 内置模块和已有的 Git，不安装依赖。
 
-所有产品调用都是子进程：`node foreman/skills/dispatch/scripts/bridge.mjs` 或 `foreman/hooks/*.mjs`。仅导入允许的 `messages.mjs` 取提示文字。基线固定当前实现，不预先要求设计文档中后续阶段的行为。
+所有产品调用都是子进程：`node foreman/skills/dispatch/scripts/cli.mjs` 或 `foreman/hooks/*.mjs`。仅导入允许的 `messages.mjs` 取提示文字。基线固定当前实现，不预先要求设计文档中后续阶段的行为。
 
 每个测试在 `os.tmpdir()` 下创建独立用户目录，设置 `HOME`、`USERPROFILE`、`CODEX_HOME`、`APPDATA`，只继承启动所需系统变量。`PATH` 仅保留 Git 和系统工具目录，防止初始配置查询 npm 全局路径时找到真实 npm/CLI；Git 的全局和系统配置也隔离。语言默认中文、时区 UTC、会话为 `test-session`。假 API 仅监听 `127.0.0.1` 的随机端口，所有 key 都是合成字符串。
 

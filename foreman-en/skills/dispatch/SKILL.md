@@ -46,7 +46,7 @@ Codex's writing is weak: piles of jargon, stiff phrasing, roundabout sentences t
 - An image takes tens of seconds, so the live view sitting on the previous step meanwhile is normal; once the image is ready, a "Generated image …" line appears in the timeline.
 
 ## How to call it
-The only entry point is `scripts/bridge.mjs` in this skill's folder (that is, `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/bridge.mjs`). Don't type `codex exec` by hand.
+The only entry point is `scripts/cli.mjs` in this skill's folder (that is, `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/cli.mjs`). Don't type `codex exec` by hand.
 
 - **No exceptions**: tests, checks, trial runs and one-off questions all go through this script too. Use `discuss` for read-only questions. The plugin includes a hook that blocks commands calling `codex exec` or `codex review` directly.
 - **Stop on sandbox problems**: if the sandbox stops Codex from starting commands or it errors, tell the user the exact error and your assessment, and let them decide whether to change the config. Don't switch the sandbox, edit config files or look for a way around the script yourself.

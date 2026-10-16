@@ -291,7 +291,7 @@ Install just one. Both share the same config file, preference files and run reco
 
 ## Development
 
-Both plugins use the same scripts (`bridge.mjs`, `api-chat.mjs`, `messages.mjs` and the hooks `hooks/guard-direct-calls.mjs` and `hooks/session-reminder.mjs`). Only edit the copy in `foreman/`, then run the sync tool to copy it into the English plugin:
+Both plugins use the same scripts: everything under `skills/dispatch/scripts/` except `language.json` (the entry point is `cli.mjs`), plus the two hooks under `hooks/`. Only edit the copy in `foreman/`, then run the sync tool to copy it into the English plugin:
 
 ```bash
 node tools/sync-shared.mjs

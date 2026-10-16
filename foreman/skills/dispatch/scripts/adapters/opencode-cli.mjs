@@ -1,0 +1,205 @@
+// opencode CLI：只读代理与环境、事件翻译、会话导出和检查项。
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DISCUSS_SCHEMA } from '../config.mjs';
+import { newRunDir, isCancelled } from '../records.mjs';
+import { startRun, finishDiscussion, eventWriter, runLimits, reportWithRepair } from '../runner.mjs';
+import { M, die, isObject, binCommand, pathCommand, npmEntry, killTree, readAttachments, focusFiles, relativePath, whoOf } from '../util.mjs';
+
+function opencodeCommand(agent) {
+  if (agent.bin) return binCommand(agent.bin);
+  if (process.platform !== 'win32') return pathCommand('opencode', [path.join(os.homedir(), '.opencode', 'bin')]);
+  return binCommand(npmEntry('@opencode', 'cli', 'bin', 'opencode.exe') || 'opencode.exe');
+}
+
+const OPENCODE_AGENT = 'foreman-discuss';
+
+function opencodeEnv() {
+  let config;
+  try { config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}'); } catch { /* 无效配置由本次注入替代 */ }
+  if (!isObject(config)) config = {};
+  const agent = { mode: 'primary', description: 'Read-only code discussion for foreman',
+    permission: { '*': 'deny', read: 'allow', grep: 'allow', glob: 'allow', list: 'allow' } };
+  return { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, agent: { ...(isObject(config.agent) ? config.agent : {}), [OPENCODE_AGENT]: agent } }) };
+}
+
+// 私有服务才会读取本次注入的代理配置，也能随 run 一起终止。
+const opencodeArgs = (model, effort) => ['run', '--standalone', '--format', 'json', '--agent', OPENCODE_AGENT, '-m', `${model}${effort != null ? `#${effort}` : ''}`];
+
+function runOpencode({ agent, args, cwd, prompt = '', timeoutMs, stallMin = 0, runDir, onEvent }) {
+  return new Promise((resolve) => {
+    const { file, pre } = opencodeCommand(agent);
+    const out = { code: null, status: null, stdout: '', stderrTail: '', text: '', errors: [], events: 0 };
+    // opencode 按环境变量 PWD 认工作目录，不看进程真实的 cwd；PWD 是从调用方的 shell 继承来的，可能指向别的目录。
+    const child = spawn(file, [...pre, ...args], { cwd, env: { ...opencodeEnv(), PWD: cwd }, windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+    const stop = (status) => { if (out.status) return; out.status = status; if (child.pid) killTree(child.pid); };
+    const onSignal = () => stop('cancelled');
+    process.once('SIGINT', onSignal);
+    process.once('SIGTERM', onSignal);
+    let lastEventAt = Date.now();
+    let buf = '';
+    const record = (line) => {
+      if (runDir) fs.appendFileSync(path.join(runDir, 'opencode.jsonl'), line + '\n');
+      let ev;
+      try { ev = JSON.parse(line); } catch { return; }
+      if (!isObject(ev) || !ev.type) return;
+      lastEventAt = Date.now();
+      out.events++;
+      if (ev.type === 'text') out.text = ev.part?.text || '';
+      if (ev.type === 'error') out.errors.push(ev.error?.message || ev.error?.type || JSON.stringify(ev));
+      onEvent?.(ev);
+    };
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      if (!onEvent) out.stdout += chunk;
+      buf += chunk;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) { record(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => {
+      out.stderrTail = (out.stderrTail + chunk).slice(-4000);
+      if (runDir) fs.appendFileSync(path.join(runDir, 'stderr.log'), chunk);
+    });
+    const timer = setTimeout(() => stop('timeout'), Math.max(1, timeoutMs));
+    const poll = setInterval(() => {
+      if (runDir && isCancelled(runDir)) stop('cancelled');
+      else if (stallMin && Date.now() - lastEventAt >= stallMin * 60000) stop('stalled');
+    }, 1000);
+    child.on('error', (e) => out.errors.push(e.message));
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      clearInterval(poll);
+      process.removeListener('SIGINT', onSignal);
+      process.removeListener('SIGTERM', onSignal);
+      if (buf.trim()) record(buf);
+      out.code = code;
+      if (runDir && isCancelled(runDir)) out.status = 'cancelled';
+      out.status ||= out.errors.some((e) => /usage limit|quota|insufficient balance/i.test(e)) ? 'quota_exhausted'
+        : code === 0 && !out.errors.length ? 'done' : 'failed';
+      if (!out.events && out.status === 'failed') out.errors.push(M.exitCode(code, out.stderrTail.trim().split(/\r?\n/).slice(-6).join('\n'), 'opencode'));
+      resolve(out);
+    });
+    child.stdin.on('error', () => { /* 提前退出时忽略 EPIPE */ });
+    child.stdin.end(prompt, 'utf8');
+  });
+}
+
+async function executeOpencode(ctx, validateSchema) {
+  const { cfg, agentName, agent, model, effort, level, cwd, brief, mode, opts } = ctx;
+  if (ctx.parent && !ctx.sessionId) die(M.noSession(ctx.parent));
+  const schemaText = fs.readFileSync(DISCUSS_SCHEMA, 'utf8');
+  const schema = JSON.parse(schemaText);
+  const files = readAttachments(opts.file, cwd, false);
+  const prompt = `${brief}${focusFiles(files)}\n\n${ctx.parent ? M.opencodeResumeFooter : M.opencodeDiscussFooter(cwd, schemaText)}\n`;
+  const { id, dir, release } = await newRunDir();
+  const run = startRun({ ...ctx, kind: 'discuss', id, dir, release });
+  const { started, meta, writeMeta } = run;
+  const { deadline, stallMin } = runLimits(ctx, started);
+  const event = eventWriter(dir);
+  for (const file of ['events.jsonl', 'opencode.jsonl', 'stderr.log']) fs.writeFileSync(path.join(dir, file), '');
+  fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
+  process.stderr.write(`foreman: ${M.started(mode, whoOf(meta), level, dir)}\n`);
+  const errors = [], warnings = [], notes = [];
+  let commands = 0, seenSession = false, last = '', report = null;
+  // 翻译成 Codex 的事件形状，让 watch 和 status 共用现有的时间线、命令和报告显示。
+  const translate = (ev) => {
+    if (ev.sessionID && !seenSession) {
+      seenSession = true;
+      meta.session_id = ev.sessionID;
+      writeMeta();
+      event({ type: 'thread.started', thread_id: ev.sessionID });
+    }
+    if (ev.type === 'reasoning' || ev.type === 'text') {
+      if (ev.type === 'text') last = ev.part?.text || '';
+      event({ type: 'item.completed', item: { type: ev.type === 'reasoning' ? 'reasoning' : 'agent_message', text: ev.part?.text || '' } });
+    } else if (ev.type === 'tool_use') {
+      const { tool, state = {} } = ev.part || {};
+      const input = state.input || {};
+      const params = ['filePath', 'path', 'pattern', 'include'].filter((k) => input[k] != null).map((k) => {
+        const value = String(input[k]);
+        return (k === 'filePath' || k === 'path') && path.isAbsolute(value) ? relativePath(cwd, value) : value;
+      });
+      event({ type: 'item.completed', item: { id: `opencode-${++commands}`, type: 'command_execution', command: [tool, ...params].join(' '),
+        exit_code: state.status === 'completed' ? 0 : 1, aggregated_output: String(state.output || state.error || '').slice(0, 2000) } });
+    } else if (ev.type === 'error') event({ type: 'error', message: ev.error?.message || ev.error?.type || JSON.stringify(ev) });
+  };
+  let nextPrompt = prompt;
+  report = await reportWithRepair({
+    schema, validate: validateSchema,
+    request: async () => {
+      if (isCancelled(dir)) { meta.status = 'cancelled'; return null; }
+      if (Date.now() >= deadline) { meta.status = 'timeout'; return null; }
+      const args = opencodeArgs(model, effort);
+      if (meta.session_id) args.push('--session', meta.session_id);
+      if (meta.title) args.push('--title', meta.title);
+      const out = await runOpencode({ agent, args, cwd, prompt: nextPrompt, runDir: dir, onEvent: translate,
+        timeoutMs: deadline - Date.now(), stallMin });
+      errors.push(...out.errors);
+      meta.status = out.status;
+      return meta.status === 'done' ? { last, canRepair: !!meta.session_id } : null;
+    },
+    onInvalid: () => warnings.push(M.reportInvalid(agentName, path.join(dir, 'last-message.txt'))),
+    repair: (invalid) => { nextPrompt = M.reportRepairPrompt(invalid.join('\n')); },
+  });
+  if (meta.status === 'cancelled') errors.push(M.runCancelled(model));
+  if (meta.status === 'stalled') errors.push(M.stalled(stallMin));
+  let usage = null, cost = null;
+  if (meta.session_id) {
+    // 最后一步没有 step_finish，用会话导出按开始时间过滤，包含同一轮的格式修复。
+    const exported = await runOpencode({ agent, args: ['session', 'export', '--standalone', meta.session_id], cwd, timeoutMs: 60000 });
+    try {
+      if (exported.status !== 'done') throw new Error(exported.errors.join('; ') || exported.stderrTail || exported.status);
+      const messages = JSON.parse(exported.stdout).messages.filter((m) => m.type === 'assistant' && m.time.created >= started);
+      usage = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 };
+      cost = 0;
+      for (const m of messages) {
+        const t = m.tokens;
+        usage.input_tokens += (t.input || 0) + (t.cache?.read || 0) + (t.cache?.write || 0);
+        usage.cached_input_tokens += t.cache?.read || 0;
+        usage.output_tokens += t.output || 0;
+        usage.reasoning_output_tokens += t.reasoning || 0;
+        cost += m.cost || 0;
+      }
+    } catch (e) { usage = null; cost = null; notes.push(M.opencodeExportFailed(e.message)); }
+  }
+  fs.writeFileSync(path.join(dir, 'last-message.txt'), last);
+  return finishDiscussion(run, { usage, cost, commands, errors, notes, warnings, report, last, files, changesNote: M.opencodeNoChanges });
+}
+
+async function checkOpencodeAgent(name, agent) {
+  const started = Date.now();
+  const out = { ok: false, type: 'opencode', model: agent.model, version: null, model_listed: false, seconds: null, reply: null, error: null, fix: null };
+  const call = (args, timeoutMs = 60000, prompt = '') => runOpencode({ agent, args, cwd: process.cwd(), timeoutMs, prompt });
+  const failed = (result) => result.errors.join('; ') || result.stderrTail.trim() || result.status;
+  const finish = () => ({ ...out, seconds: Number(((Date.now() - started) / 1000).toFixed(1)) });
+  const version = await call(['--version']);
+  if (version.status !== 'done') { out.error = failed(version); out.fix = M.fixOpencodeMissing(name); return finish(); }
+  out.version = version.stdout.trim();
+  const models = await call(['models']);
+  out.model_listed = models.status === 'done' && models.stdout.split(/\s+/).includes(agent.model);
+  if (!out.model_listed) { out.error = models.status === 'done' ? null : failed(models); out.fix = M.fixOpencodeModel(name, agent.model); return finish(); }
+  const reply = await call(opencodeArgs(agent.model, null), 120000, 'Reply with the single word OK.');
+  out.ok = reply.status === 'done';
+  out.reply = reply.text.trim().slice(0, 40);
+  if (!out.ok) { out.error = failed(reply); out.fix = M.fixOpencodeRun(name, out.error); }
+  return finish();
+}
+
+function validate(agent, key, check, text) {
+  const why = M.invalid;
+  check(text(agent.model) && agent.model.includes('/'), `${key}.model`, why.opencodeModel);
+  check(agent.bin == null || text(agent.bin), `${key}.bin`, why.stringOrNull);
+}
+
+export default {
+  type: 'opencode', modes: ['discuss'], channel: M.channel.opencode,
+  validate,
+  status: (agent) => ({ bin: agent.bin || opencodeCommand(agent).file }),
+  check: checkOpencodeAgent,
+  execute: executeOpencode,
+  validateResume: (parent) => { if (!parent.meta.session_id) die(M.noSession(parent.id)); },
+};

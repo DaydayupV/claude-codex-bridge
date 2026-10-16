@@ -1,0 +1,271 @@
+// Codex CLI：参数、进程事件、会话用量、生成图片和环境检查。
+import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { SCHEMA, DISCUSS_SCHEMA } from '../config.mjs';
+import { newRunDir } from '../records.mjs';
+import { execute, eventWriter, watchCancellation } from '../runner.mjs';
+import { M, die, isObject, binCommand, pathCommand, npmEntry, killTree, isReconnect, readAttachments, focusFiles } from '../util.mjs';
+
+// 模型、推理强度、沙箱、审批这几项 exec / resume / review 都接受 -m 和 -c。
+function codexOptions(agent, { model, effort, mode }) {
+  const args = [];
+  if (model) args.push('-m', model);
+  args.push('-c', `model_reasoning_effort="${effort}"`);
+  if (agent.sandbox?.[mode]) args.push('-c', `sandbox_mode="${agent.sandbox[mode]}"`);
+  if (agent.approval) args.push('-c', `approval_policy="${agent.approval}"`);
+  return args;
+}
+
+function codexCommand(agent) {
+  if (agent?.bin) return binCommand(agent.bin);
+  if (process.platform !== 'win32') return pathCommand('codex');
+  // Windows 的 npm 包装不能直接 spawn，改用包内入口，避开 shell 引号问题。
+  return binCommand(npmEntry('@openai', 'codex', 'bin', 'codex.js') || 'codex.exe');
+}
+
+// 没配置模型时从 Codex 的 config.toml 读出实际模型名，只用于显示，让用户知道用的是哪个模型。
+function codexConfigModel() {
+  const file = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'config.toml');
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); } catch { return null; }
+  const top = text.split(/^\s*\[/m)[0]; // 只看第一个 [表] 之前的顶层键
+  return /^\s*model\s*=\s*["']([^"']+)["']/m.exec(top)?.[1] || null;
+}
+
+// Codex 内置 image_gen 出的图存在 <CODEX_HOME>/generated_images/<会话 id>/ 下，按生成先后返回完整路径。
+function generatedImages(sessionId) {
+  if (!sessionId) return [];
+  const dir = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'generated_images', sessionId);
+  try {
+    return fs.readdirSync(dir).map((f) => path.join(dir, f))
+      .map((file) => [file, fs.statSync(file).mtimeMs]).sort((a, b) => a[1] - b[1]).map(([file]) => file);
+  } catch { return []; }
+}
+
+function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, sessionId, onSession }) {
+  return new Promise((resolve) => {
+    const { file, pre } = codexCommand(agent);
+    const events = fs.createWriteStream(path.join(runDir, 'events.jsonl'));
+    const errLog = fs.createWriteStream(path.join(runDir, 'stderr.log'));
+    const event = eventWriter(runDir, events);
+    const out = { code: null, sessionId: null, usage: null, errors: [], warnings: [], fileChanges: new Set(), images: [], quotaExhausted: false, timedOut: false, stalled: false, cancelled: false, commands: 0 };
+    const runningCommands = new Set();
+    let lastEventAt = Date.now();
+    const child = spawn(file, [...pre, ...args], {
+      cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32',
+    });
+
+    const onSignal = () => { killTree(child.pid); process.exit(130); };
+    process.once('SIGINT', onSignal);
+    process.once('SIGTERM', onSignal);
+
+    let buf = '';
+    const handle = (line) => {
+      let ev;
+      try { ev = JSON.parse(line); } catch { return null; }
+      lastEventAt = Date.now();
+      if (ev.item?.type === 'file_change') {
+        for (const change of ev.item.changes || []) out.fileChanges.add(change.path);
+      }
+      if (ev.item?.type === 'command_execution') {
+        if (ev.type === 'item.started') runningCommands.add(ev.item.id);
+        else if (ev.type === 'item.completed') runningCommands.delete(ev.item.id);
+      }
+      if (ev.type === 'thread.started') { out.sessionId = ev.thread_id; onSession?.(ev.thread_id); }
+      else if (ev.type === 'turn.completed') out.usage = ev.usage;
+      else if (ev.type === 'turn.failed') out.errors.push(ev.error?.message || JSON.stringify(ev));
+      else if (ev.type === 'error') (isReconnect(ev.message) ? out.warnings : out.errors).push(ev.message || JSON.stringify(ev));
+      else if (ev.type === 'item.completed' && ev.item?.type === 'error') out.warnings.push(ev.item.message);
+      else if (ev.type === 'item.completed' && ev.item?.type === 'command_execution') out.commands++;
+      return ev;
+    };
+    // 每个事件记下收到的时间，watch 回放时也能显示时间线
+    const record = (line) => {
+      const ev = handle(line);
+      if (ev) event(ev);
+      else events.write(`${line}\n`);
+    };
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      buf += chunk;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) { record(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    });
+    child.stderr.pipe(errLog);
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (c) => {
+      const text = (out.stderrTail || '') + c;
+      if (/usage limit|quota/i.test(text)) out.quotaExhausted = true;
+      out.stderrTail = text.slice(-4000);
+    });
+
+    const timer = setTimeout(() => { out.timedOut = true; killTree(child.pid); }, timeoutMin * 60000);
+    const stallCheck = setInterval(() => {
+      if (!stallMin || runningCommands.size || Date.now() - lastEventAt < stallMin * 60000) return;
+      out.stalled = true;
+      out.errors.push(M.stalled(stallMin));
+      clearInterval(stallCheck);
+      killTree(child.pid);
+    }, 30000);
+    // cancel 命令或实时查看里按 x 会在记录目录里留一个终止标记
+    const cancelCheck = watchCancellation(runDir, () => {
+      out.cancelled = true;
+      clearInterval(cancelCheck);
+      killTree(child.pid);
+    });
+    // exec --json 里没有出图事件：定时查看图片目录，新图记成 image.generated 事件给 watch 显示。
+    // 续接时目录里已有的是上一轮的图，不算。
+    const seenImages = new Set(generatedImages(sessionId));
+    const scanImages = () => {
+      for (const image of generatedImages(out.sessionId || sessionId)) {
+        if (seenImages.has(image)) continue;
+        seenImages.add(image);
+        out.images.push(image);
+        lastEventAt = Date.now();
+        event({ type: 'image.generated', path: image });
+      }
+    };
+    const imageCheck = setInterval(scanImages, 2000);
+    const finish = (code) => {
+      clearTimeout(timer);
+      clearInterval(stallCheck);
+      clearInterval(cancelCheck);
+      clearInterval(imageCheck);
+      process.removeListener('SIGINT', onSignal);
+      process.removeListener('SIGTERM', onSignal);
+      if (buf.trim()) record(buf);
+      scanImages();
+      events.end();
+      errLog.end();
+      out.code = code;
+      resolve(out);
+    };
+    child.on('error', (e) => { out.errors.push(M.spawnFailed(e.message)); finish(-1); });
+    child.on('close', (code) => finish(code));
+    child.stdin.on('error', () => { /* codex 提前退出时忽略 EPIPE */ });
+    child.stdin.end(prompt, 'utf8');
+  });
+}
+
+// 从 Codex 自己的会话记录里读最后一次 token 统计：累计用量、最近一次请求、窗口和额度。
+// exec --json 只在结尾给一次总用量，这些数只有会话记录里有。找不到就返回 null。
+function codexSessionStats(sessionId, startedAt) {
+  if (!sessionId) return null;
+  const root = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions');
+  let file = null;
+  // 会话记录按开始日期放在 sessions/年/月/日 下；续接的会话还在最初那天的目录里，所以从开始日期往前找。
+  const day = new Date(startedAt || Date.now());
+  for (let i = -1; i <= 60 && !file; i++) {
+    const d = new Date(day.getTime() - i * 86400000);
+    const dir = path.join(root, String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'));
+    try { file = fs.readdirSync(dir).filter((f) => f.includes(sessionId)).map((f) => path.join(dir, f))[0] || null; } catch { /* 没有这天的目录 */ }
+  }
+  if (!file) return null;
+  const st = fs.statSync(file);
+  const len = Math.min(st.size, 1024 * 1024);
+  const chunk = Buffer.alloc(len);
+  const fd = fs.openSync(file, 'r');
+  try { fs.readSync(fd, chunk, 0, len, st.size - len); } finally { fs.closeSync(fd); }
+  const lines = chunk.toString('utf8').split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('"token_count"')) continue;
+    let p;
+    try { p = JSON.parse(lines[i]).payload; } catch { continue; }
+    const last = p?.info?.last_token_usage;
+    const rl = p?.rate_limits?.primary;
+    return {
+      total_token_usage: p?.info?.total_token_usage || null,
+      last_request: last && p.info.model_context_window ? { tokens: last.total_tokens ?? last.input_tokens, window: p.info.model_context_window } : null,
+      rate_limit: rl ? { used_percent: rl.used_percent, window_minutes: rl.window_minutes, resets_at: rl.resets_at } : null,
+    };
+  }
+  return null;
+}
+
+function validate(agent, key, check, text) {
+  const why = M.invalid;
+  for (const field of ['bin', 'approval']) check(agent[field] == null || text(agent[field]), `${key}.${field}`, why.stringOrNull);
+  check(agent.sandbox == null || isObject(agent.sandbox), `${key}.sandbox`, why.object);
+  for (const [mode, value] of Object.entries(agent.sandbox || {})) check(['run', 'review', 'discuss'].includes(mode) && (value === null || ['read-only', 'workspace-write', 'danger-full-access'].includes(value)), `${key}.sandbox.${mode}`, why.sandbox);
+}
+
+function checkCodex(name, agent) {
+  const { file, pre } = codexCommand(agent);
+  const codex = (args) => spawnSync(file, [...pre, ...args], { encoding: 'utf8', windowsHide: true, timeout: 60000 });
+  const version = codex(['--version']);
+  const installed = !version.error && version.status === 0;
+  const login = installed ? codex(['login', 'status']) : null;
+  const loginText = login ? `${login.stdout}${login.stderr}`.trim() : null;
+  const loggedIn = !!login && login.status === 0 && !/not logged in/i.test(loginText);
+  return {
+    ok: installed && loggedIn, version: installed ? version.stdout.trim() : null, login: loginText,
+    model: agent.model || codexConfigModel(),
+    fix: !installed ? M.fixCodexMissing : loggedIn ? null : M.fixCodexLogin,
+  };
+}
+
+async function executeCodex(ctx) {
+  const { agent, model, effort, cwd, mode, kind, brief, opts: o, addDirs = [], git } = ctx;
+  const files = mode === 'discuss' || mode === 'resume' ? readAttachments(o.file, cwd, false) : [];
+  const { id, dir, release } = await newRunDir();
+  const last = path.join(dir, 'last-message.txt');
+  let args, prompt;
+  if (mode === 'run') {
+    args = ['exec', '--json', '--skip-git-repo-check', ...codexOptions(agent, { model, effort, mode: 'run' }),
+      '-C', cwd, '--output-schema', SCHEMA, '-o', last];
+    for (const d of addDirs) args.push('--add-dir', d);
+    args.push('-');
+    prompt = `${brief}\n\n${M.footer(cwd, addDirs)}\n`;
+  } else if (mode === 'discuss') {
+    args = ['exec', '--json', '--skip-git-repo-check', ...codexOptions(agent, { model, effort, mode: 'discuss' }),
+      '-C', cwd, '--output-schema', DISCUSS_SCHEMA, '-o', last, '-'];
+    prompt = `${brief}${focusFiles(files)}\n\n${M.discussFooter(cwd)}\n`;
+  } else if (mode === 'resume') {
+    const discuss = kind === 'discuss';
+    args = ['exec', 'resume', '--json', '--skip-git-repo-check', ...codexOptions(agent, { model, effort, mode: discuss ? 'discuss' : 'run' }),
+      '--output-schema', discuss ? DISCUSS_SCHEMA : SCHEMA, '-o', last, ctx.sessionId, '-'];
+    prompt = `${brief}${focusFiles(files)}\n\n${discuss ? M.discussResumeFooter : M.resumeFooter}\n`;
+  } else {
+    const codexOpts = codexOptions(agent, { model, effort, mode: 'review' });
+    if (git && !brief) {
+      // codex exec review 的 --uncommitted/--base/--commit 不能和自定义提示同时用，没有审查重点时走原生审查。
+      args = ['exec', 'review', '--json', ...codexOpts, '-o', last];
+      if (o.base) args.push('--base', o.base);
+      else if (o.commit) args.push('--commit', o.commit);
+      else args.push('--uncommitted');
+      if (o.title) args.push('--title', o.title);
+      prompt = '';
+    } else if (git) {
+      // 有审查重点时改用普通 exec，让 Codex 自己用 git 查看审查范围。
+      const scope = o.base ? M.reviewScopeBase(o.base) : o.commit ? M.reviewScopeCommit(o.commit) : M.reviewScopeUncommitted;
+      args = ['exec', '--json', '--skip-git-repo-check', ...codexOpts, '-C', cwd, '-o', last, '-'];
+      prompt = `${M.reviewPromptGit(cwd, scope)}\n\n${brief}\n\n${M.reviewFooter}\n`;
+    } else {
+      // 非 git 目录没有"改动"可言，审查范围由任务说明指定。
+      args = ['exec', '--json', '--skip-git-repo-check', ...codexOpts, '-C', cwd, '-o', last, '-'];
+      prompt = `${M.reviewPromptPlain(cwd)}\n\n${brief}\n\n${M.reviewFooter}\n`;
+    }
+  }
+  return execute({ ...ctx, id, dir, release, args, prompt, expectReport: mode !== 'review' }, {
+    run: runCodex, stats: codexSessionStats,
+    describe: () => {
+      const sandbox = agent.sandbox?.[kind === 'exec' ? 'run' : kind] || null;
+      // model 为 null 时实际模型由 Codex 配置决定，model_shown 是给人看的实际模型名。
+      const modelShown = model || M.modelFromCodex(codexConfigModel() || M.unknownModel);
+      return { sandbox, modelShown, modelName: model || codexConfigModel() || null };
+    },
+  });
+}
+
+export default {
+  type: 'codex', modes: ['run', 'review', 'discuss'], channel: M.channel.codex,
+  validate,
+  status: (agent) => ({ model: agent.model || codexConfigModel() }),
+  check: checkCodex,
+  execute: executeCodex,
+  validateResume: (parent) => { if (!parent.meta.session_id) die(M.noSession(parent.id)); },
+  locate: codexCommand,
+  stats: codexSessionStats,
+};
