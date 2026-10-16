@@ -1275,7 +1275,8 @@ function runOpencode({ agent, args, cwd, prompt = '', timeoutMs, stallMin = 0, r
   return new Promise((resolve) => {
     const { file, pre } = opencodeCommand(agent);
     const out = { code: null, status: null, stdout: '', stderrTail: '', text: '', errors: [], events: 0 };
-    const child = spawn(file, [...pre, ...args], { cwd, env: opencodeEnv(), windowsHide: true,
+    // opencode 按环境变量 PWD 认工作目录，不看进程真实的 cwd；PWD 是从调用方的 shell 继承来的，可能指向别的目录。
+    const child = spawn(file, [...pre, ...args], { cwd, env: { ...opencodeEnv(), PWD: cwd }, windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
     const stop = (status) => { if (out.status) return; out.status = status; if (child.pid) killTree(child.pid); };
     const onSignal = () => stop('cancelled');
