@@ -130,6 +130,7 @@ async function execute(ctx, { run: runAgent, stats: sessionStats, describe }) {
   let report = null;
   if (expectReport && last) { try { report = JSON.parse(last); } catch { warnings.push(M.badReport); } }
   if (!report && last.length > 8000) notes.push(M.lastMessageTruncated(lastFile));
+  if (report?.status === 'blocked' && report.decision_requests?.length) notes.push(M.blockedNote(report.decision_requests.length));
 
   const reported = (report?.files_changed || []).map((f) => relativePath(cwd, f.path));
   const agentPaths = new Set([...r.fileChanges].map((f) => pathKey(relativePath(cwd, f))));

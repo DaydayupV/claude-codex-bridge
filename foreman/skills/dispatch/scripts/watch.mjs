@@ -490,8 +490,9 @@ function timelineRenderer(meta, rel, { screen: useScreen = false, dir = null } =
       return;
     }
     const ok = r.status === 'done' && (!r.report?.status || r.report.status === 'completed');
-    const color = ok ? C.green : C.red;
-    write(node(m?.ended_at, color('└')) + color(C.bold(`${ok ? '✔' : '✗'} ${M.watchFinished(M.statusName(shownStatus(r.status, r)), M.duration(r.duration_s), changedFor(r, m))}`)));
+    const blocked = r.status === 'done' && r.report?.status === 'blocked';
+    const color = ok ? C.green : blocked ? C.yellow : C.red;
+    write(node(m?.ended_at, color('└')) + color(C.bold(`${ok ? '✔' : blocked ? '?' : '✗'} ${M.watchFinished(M.statusName(shownStatus(r.status, r)), M.duration(r.duration_s), changedFor(r, m))}`)));
     if (r.usage) write(' '.repeat(TIME_W + 2) + C.dim(M.tokenSummary(r.usage, r.last_request ?? r.context, M.tokenCount, (r.usage_scope ?? (m?.mode === 'resume' ? 'session_total' : 'this_run')) === 'session_total')));
     const summary = r.report?.summary || r.report?.position;
     if (summary) { write(); paragraph(summary, '  ', 12); }
@@ -500,6 +501,16 @@ function timelineRenderer(meta, rel, { screen: useScreen = false, dir = null } =
       write();
       write(C.yellow(M.watchOpenIssues));
       for (const x of issues) paragraph(`· ${x}`, '  ', 4);
+    }
+    const asks = r.report?.decision_requests || [];
+    if (asks.length) {
+      write();
+      write(C.yellow(M.watchDecisions));
+      for (const d of asks) {
+        paragraph(`· ${d.question}`, '  ', 6);
+        for (const o of d.options || []) paragraph(`- ${o}`, '    ', 3);
+        if (d.recommendation) paragraph(M.watchRecommendation(d.recommendation), '    ', 4);
+      }
     }
     for (const e of realErrors(r, ok)) write(C.red(`✗ ${fitWidth(oneLine(e), W - 3)}`));
   };
@@ -601,11 +612,11 @@ function createFeed(run) {
 
 // 组视图一块的标题行：左边是模型，右边是状态和用时（结束后加上改动），放不下右侧时只留左侧
 function panelHead(run, stats, width, withTitle) {
-  const { running, status, result: r, ok } = runOutcome(run);
+  const { running, status, result: r, ok, blocked } = runOutcome(run);
   const m = run.meta;
   const elapsed = runEnd(run.dir, m) - Date.parse(m.started_at);
-  const color = running ? C.cyan : ok ? C.green : C.red;
-  const left = `${running ? '●' : ok ? '✔' : '✗'} ${whoOf(m)}${withTitle && m.title ? `  ${oneLine(m.title)}` : ''}`;
+  const color = running ? C.cyan : ok ? C.green : blocked ? C.yellow : C.red;
+  const left = `${running ? '●' : ok ? '✔' : blocked ? '?' : '✗'} ${whoOf(m)}${withTitle && m.title ? `  ${oneLine(m.title)}` : ''}`;
   const s = stats;
   const right = !running ? [M.statusName(shownStatus(status, r)), M.duration(r?.duration_s ?? elapsed / 1000), changedFor(r, m)].filter(Boolean).join(' · ')
     : s.queued ? M.watchApiQueuedLive(clock(Date.now() - Date.parse(s.req)))
@@ -645,8 +656,9 @@ function groupCounts(all) {
   const outcomes = all.map(runOutcome);
   const running = outcomes.filter((o) => o.running).length;
   const ok = outcomes.filter((o) => o.ok).length;
-  const failed = all.length - running - ok;
-  return [running && C.cyan(M.groupCount.running(running)), ok && C.green(M.groupCount.ok(ok)), failed && C.red(M.groupCount.failed(failed))].filter(Boolean).join(C.dim(' · '));
+  const blocked = outcomes.filter((o) => o.blocked).length;
+  const failed = all.length - running - ok - blocked;
+  return [running && C.cyan(M.groupCount.running(running)), ok && C.green(M.groupCount.ok(ok)), blocked && C.yellow(M.groupCount.blocked(blocked)), failed && C.red(M.groupCount.failed(failed))].filter(Boolean).join(C.dim(' · '));
 }
 
 // 组的标题行：左边是组名和标题，右边是各状态的个数，放不下右侧时只留左侧

@@ -148,3 +148,16 @@ test('会话图片收集到 generated_images 和事件文件', async (t) => {
   assert.equal(fs.readFileSync(image).subarray(1, 4).toString(), 'PNG');
   assert.ok(h.events(r.run_id).some((e) => e.type === 'image.generated' && e.path === image));
 });
+
+test('交回问题的执行任务提示 Claude 决定，watch 用问号列出问题和推荐', async (t) => {
+  const h = sandbox(t);
+  const ask = { question: '合成问题', why_it_matters: '影响后续', options: ['选项甲', '选项乙'], recommendation: '选项甲，已按它做了' };
+  const s = h.scenario({ last_message: { ...report, status: 'blocked', decision_requests: [ask] } });
+  const r = output(await h.bridge(taskArgs(h), { env: s.env }));
+  assert.equal(r.status, 'done');
+  assert.ok(r.notes.includes(M.blockedNote(1)));
+  const w = await h.bridge(['watch', '--run', r.run_id]);
+  assert.equal(w.code, 0, w.stderr);
+  assert.ok(w.stdout.includes(`? ${M.watchFinished(M.statusName('blocked'), M.duration(r.duration_s), null).split(' · ')[0]}`));
+  for (const text of [M.watchDecisions, '· 合成问题', '- 选项甲', '- 选项乙', M.watchRecommendation('选项甲，已按它做了')]) assert.ok(w.stdout.includes(text), text);
+});

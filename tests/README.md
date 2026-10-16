@@ -49,6 +49,7 @@
 | 3 组与范围 | run.test.mjs | 组名非法、缺少写入范围和范围重叠均被拒绝 |
 | 3 并发上限 | run.test.mjs | 达到协作方并发上限时拒绝新任务 |
 | 3 图片 | run.test.mjs | 会话图片收集到 generated_images 和事件文件 |
+| 3 交回问题 | run.test.mjs | 交回问题的执行任务提示 Claude 决定，watch 用问号列出问题和推荐 |
 | 4 会话、组、track 续接 | resume-review.test.mjs | 续接使用上一轮会话并沿用组、范围和 track，用量只算新增 |
 | 4 讨论轮数 | resume-review.test.mjs | 讨论续接到轮数上限后拒绝再开一轮 |
 | 5 原生审查 | resume-review.test.mjs | 没有审查重点时使用原生 exec review --uncommitted；没有审查重点时使用原生 exec review --base；没有审查重点时使用原生 exec review --commit |

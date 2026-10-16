@@ -149,11 +149,11 @@ ${schema}`,
   groupNotFound: (group) => `24 小时内没有找到任务组 ${group} 的任务`,
   statusGroup: (group) => `［组 ${group}］`,
   groupHeader: (group, title, n) => `任务组 ${group}${title ? ` · ${title}` : ''} · ${n} 个任务`,
-  groupCount: { running: (n) => `运行中 ${n}`, ok: (n) => `完成 ${n}`, failed: (n) => `失败 ${n}` },
+  groupCount: { running: (n) => `运行中 ${n}`, ok: (n) => `完成 ${n}`, blocked: (n) => `交回问题 ${n}`, failed: (n) => `失败 ${n}` },
   dashHint: '按 Ctrl+C 退出查看，任务照常运行',
   dashHintQueued: '有模型在排队：按 x 终止它 · Ctrl+C 退出查看，任务照常运行',
   dashCancelConfirm: (models) => `再按一次 x 终止 ${models}，按其他键取消`,
-  groupSummary: (total, running, ok, failed) => `共 ${total} 个任务：运行中 ${running}，成功 ${ok}，失败 ${failed}`,
+  groupSummary: (total, running, ok, failed, blocked = 0) => `共 ${total} 个任务：运行中 ${running}，成功 ${ok}，${blocked ? `交回问题 ${blocked}，` : ''}失败 ${failed}`,
   badArg: (a) => `无法识别的参数：${a}`,
   missingValue: (a) => `缺少参数值：${a}`,
   missingOpt: (key) => `缺少 --${key}`,
@@ -199,8 +199,9 @@ ${schema}`,
 ## 固定约束（调度方自动附加）
 - 工作目录：${cwd}${addDirs.length ? `；另可改动：${addDirs.join('、')}` : ''}。只改任务说明列出的文件和范围。任务说明"允许的适配"一节写明的事可以直接做，在报告里说明做了什么、为什么等效；没写明的越界都不要做。
 - 开始前先花很少的成本做预检：解释器和依赖能用、测试能被发现、任务需要的输入存在。只做检查，不要因此跑耗时的完整验收。
-- 遇到下面的情况，停在当前位置，把问题写进报告的 decision_requests，status 填 blocked：需要突破上面的范围或授权；需要改变研究口径、样本外纪律或验收标准；要做不可逆的操作；问题的答案不同会让后面耗时的工作作废。
-- 其他拿不准的地方，选保守、可逆的做法继续，并在报告里写明；能先做不受这个问题影响的部分就先做，问题攒到一起再提，不要每个小疑问都停下。
+- 运行期间没有人能回答你：不要在中途提问后等答复，问题只在最终报告里提。
+- 遇到下面的情况，这一项不要自己做主：需要突破上面的范围或授权；需要改变研究口径、样本外纪律或验收标准；要做不可逆的操作；问题的答案不同会让后面耗时的工作作废。这一项先不做，或者用最保守、能撤回的做法；不受它影响的部分照常做完。最后把问题写进报告的 decision_requests，status 填 blocked；recommendation 里写明你推荐哪个选项，以及你已经按哪个做了、还是这一项还没做。
+- 其他拿不准的地方，选保守、可逆的做法继续，并在报告里写明；不要每个小疑问都停下。
 - 测试只写任务说明要求的，或者确实需要用来验证这次改动的；小改动不另写测试。不要过度防御：不加多余的参数校验、try/catch、兜底分支和重复测试。
 - 按任务说明的规模做，不要做成更大的工程：不新增任务没要求的命令行参数、配置项、抽象层和兼容分支，能用现有函数就不新写。实际改动明显超过任务说明里预计的规模时，先想想是不是做多了；确实需要的，在报告里说明为什么。
 - 命名、注释和提示文字以任务说明为准，给了原文就照用。没有指定的：命名沿用项目现有风格，起直白、能看出用途的名字；注释只在不显而易见的地方用一句简短的话说明"为什么"，不要长篇解释，也不要逐行注释。
@@ -251,7 +252,7 @@ ${schema}`,
   watchWaiting: '等待任务开始…',
   modeNames: { run: '执行', resume: '续接', discuss: '讨论', review: '审查' },
   watchHeaderLines: (mode, title, level, cwd, dir) => [`${mode} · ${title}${level ? ` · 等级 ${level}` : ''}`, `工作目录 ${cwd}`, `记录目录 ${dir}`],
-  statusNames: { running: '运行中', done: '完成', completed: '完成', partial: '部分完成', blocked: '等待决定', failed: '失败', stalled: '卡住，已终止', timeout: '超时', quota_exhausted: '额度用完', interrupted: '中断', cancelled: '已终止' },
+  statusNames: { running: '运行中', done: '完成', completed: '完成', partial: '部分完成', blocked: '交回问题', failed: '失败', stalled: '卡住，已终止', timeout: '超时', quota_exhausted: '额度用完', interrupted: '中断', cancelled: '已终止' },
   statusName: (s) => zh.statusNames[s] ?? s,
   duration: (sec) => {
     const s = Math.round(sec), m = Math.floor(s / 60);
@@ -287,6 +288,9 @@ ${schema}`,
   watchScrolled: (n) => `已往回翻 ${n} 行，按 End 回到最新`,
   watchDetached: '已退出查看，任务照常运行',
   watchOpenIssues: '遗留问题',
+  watchDecisions: '交回的问题（由 Claude 决定后续接）',
+  watchRecommendation: (text) => `推荐：${text}`,
+  blockedNote: (n) => `Codex 交回 ${n} 个问题（report.decision_requests）。任务已经结束，不是卡住了：Claude 能决定的直接决定，再用 resume 续接或自己做掉；需要用户拍板的才问用户`,
 };
 
 const en = {
@@ -437,11 +441,11 @@ ${schema}`,
   groupNotFound: (group) => `No runs found for group ${group} in the last 24 hours`,
   statusGroup: (group) => `[group ${group}] `,
   groupHeader: (group, title, n) => `Group ${group}${title ? ` · ${title}` : ''} · ${n} runs`,
-  groupCount: { running: (n) => `${n} running`, ok: (n) => `${n} done`, failed: (n) => `${n} failed` },
+  groupCount: { running: (n) => `${n} running`, ok: (n) => `${n} done`, blocked: (n) => `${n} with questions`, failed: (n) => `${n} failed` },
   dashHint: 'Press Ctrl+C to stop watching; the runs keep going',
   dashHintQueued: 'A model is queued: press x to stop it · Ctrl+C to stop watching; the runs keep going',
   dashCancelConfirm: (models) => `Press x again to stop ${models}, or any other key to cancel`,
-  groupSummary: (total, running, ok, failed) => `${total} runs: ${running} running, ${ok} succeeded, ${failed} failed`,
+  groupSummary: (total, running, ok, failed, blocked = 0) => `${total} runs: ${running} running, ${ok} succeeded, ${blocked ? `${blocked} with questions, ` : ''}${failed} failed`,
   badArg: (a) => `Unknown argument: ${a}`,
   missingValue: (a) => `Missing value for ${a}`,
   missingOpt: (key) => `Missing --${key}`,
@@ -487,8 +491,9 @@ ${schema}`,
 ## Standing rules (added by the dispatcher)
 - Working directory: ${cwd}${addDirs.length ? `; you may also change: ${addDirs.join(', ')}` : ''}. Only change the files and scope listed in the brief. Things written in the brief's "Allowed adaptations" section may be done directly; say in the report what you did and why it is equivalent. Don't go beyond the scope in any other way.
 - Before starting, do a cheap preflight: the interpreter and dependencies work, tests can be discovered, and the inputs the task needs exist. Only check; don't run a long full verification for this.
-- In these cases, stop where you are, put the question in the report's decision_requests and set status to blocked: you would need to go beyond the scope or authorization above; the research definitions, out-of-sample discipline or acceptance criteria would change; an irreversible operation is needed; or different answers would make later time-consuming work wasted.
-- For anything else you are unsure about, take the conservative, reversible option, keep going and note it in the report. Do the parts the question doesn't affect first, and collect questions to ask together; don't stop for every small doubt.
+- Nobody can answer you while you run: don't ask a question mid-run and wait for a reply. Questions go only in the final report.
+- In these cases, don't decide the item yourself: you would need to go beyond the scope or authorization above; the research definitions, out-of-sample discipline or acceptance criteria would change; an irreversible operation is needed; or different answers would make later time-consuming work wasted. Leave that item undone, or take the most conservative, reversible option; finish everything it doesn't affect as usual. At the end, put the question in the report's decision_requests and set status to blocked. In recommendation, say which option you recommend and which one you've already gone with, or that the item is still undone.
+- For anything else you are unsure about, take the conservative, reversible option, keep going and note it in the report; don't stop for every small doubt.
 - Only write tests the brief asks for, or that are really needed to verify this change; don't add tests for small changes. Don't code defensively: no extra argument checks, try/catch, fallback branches or duplicate tests.
 - Keep to the size the brief describes; don't turn it into a bigger project. Don't add command-line options, settings, abstraction layers or compatibility branches the task didn't ask for, and use existing functions instead of writing new ones where you can. If your change ends up clearly bigger than the size the brief expects, ask yourself whether you've overdone it; if it really is needed, say why in the report.
 - Follow the brief for names, comments and user-facing text; if it gives exact wording, use it as is. Otherwise, follow the project's existing naming style and pick plain names that show what things are for. Comment only where something isn't obvious, with one short sentence on why. No long explanations, no line-by-line comments.
@@ -540,7 +545,7 @@ ${schema}`,
   watchWaiting: 'Waiting for a run to start…',
   modeNames: { run: 'run', resume: 'resume', discuss: 'discussion', review: 'review' },
   watchHeaderLines: (mode, title, level, cwd, dir) => [`${mode} · ${title}${level ? ` · level ${level}` : ''}`, `Working dir ${cwd}`, `Run dir ${dir}`],
-  statusNames: { running: 'running', done: 'done', completed: 'completed', partial: 'partly done', blocked: 'needs a decision', failed: 'failed', stalled: 'stalled, stopped', timeout: 'timed out', quota_exhausted: 'out of quota', interrupted: 'interrupted', cancelled: 'stopped' },
+  statusNames: { running: 'running', done: 'done', completed: 'completed', partial: 'partly done', blocked: 'questions returned', failed: 'failed', stalled: 'stalled, stopped', timeout: 'timed out', quota_exhausted: 'out of quota', interrupted: 'interrupted', cancelled: 'stopped' },
   statusName: (s) => en.statusNames[s] ?? s,
   duration: (sec) => {
     const s = Math.round(sec), m = Math.floor(s / 60);
@@ -576,6 +581,9 @@ ${schema}`,
   watchScrolled: (n) => `scrolled back ${n} lines, End to jump to the latest`,
   watchDetached: 'Stopped watching; the run keeps going',
   watchOpenIssues: 'Open issues',
+  watchDecisions: 'Questions returned (Claude decides, then resumes)',
+  watchRecommendation: (text) => `Recommended: ${text}`,
+  blockedNote: (n) => `Codex returned ${n} question(s) (report.decision_requests). The run has finished; it isn't stuck. Decide what Claude can decide, then resume or do it yourself; ask the user only about what needs their call`,
 };
 
 export const MESSAGES = { zh, en };

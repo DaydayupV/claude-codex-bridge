@@ -186,14 +186,17 @@ function runOutcome(run) {
   const file = path.join(run.dir, 'result.json');
   const result = !running && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
   const ok = status === 'done' && (!result?.report?.status || result.report.status === 'completed');
-  return { running, status, result, ok };
+  // 交回问题的任务已经正常结束，只是有事要 Claude 决定，不算失败
+  const blocked = status === 'done' && result?.report?.status === 'blocked';
+  return { running, status, result, ok, blocked };
 }
 
 function groupSummary(runs) {
   const outcomes = runs.map(runOutcome);
   const running = outcomes.filter((r) => r.running).length;
   const ok = outcomes.filter((r) => r.ok).length;
-  return M.groupSummary(runs.length, running, ok, runs.length - running - ok);
+  const blocked = outcomes.filter((r) => r.blocked).length;
+  return M.groupSummary(runs.length, running, ok, runs.length - running - ok - blocked, blocked);
 }
 
 const readMeta = (dir) => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')); } catch { return null; } };
