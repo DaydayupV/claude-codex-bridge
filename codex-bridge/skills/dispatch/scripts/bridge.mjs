@@ -220,7 +220,7 @@ function validateConfig(cfg) {
     const key = `agents.${name}`;
     check(/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name) && name !== CLAUDE, key, why.agentName);
     check(isObject(agent), key, why.object);
-    check(['codex', 'openai-compatible'].includes(agent.type), `${key}.type`, why.agentType);
+    check(['codex', 'openai-compatible', 'opencode'].includes(agent.type), `${key}.type`, why.agentType);
     check(agent.model == null || (text(agent.model) && agent.model !== CLAUDE), `${key}.model`, why.modelName);
     check(agent.max_parallel === undefined || (Number.isInteger(agent.max_parallel) && agent.max_parallel >= 1), `${key}.max_parallel`, why.positiveInt);
     if (agent.type === 'codex') {
@@ -228,6 +228,9 @@ function validateConfig(cfg) {
       for (const field of ['bin', 'approval']) check(agent[field] == null || text(agent[field]), `${key}.${field}`, why.stringOrNull);
       check(agent.sandbox == null || isObject(agent.sandbox), `${key}.sandbox`, why.object);
       for (const [mode, value] of Object.entries(agent.sandbox || {})) check(['run', 'review', 'discuss'].includes(mode) && (value === null || ['read-only', 'workspace-write', 'danger-full-access'].includes(value)), `${key}.sandbox.${mode}`, why.sandbox);
+    } else if (agent.type === 'opencode') {
+      check(text(agent.model) && agent.model.includes('/'), `${key}.model`, why.opencodeModel);
+      check(agent.bin == null || text(agent.bin), `${key}.bin`, why.stringOrNull);
     } else {
       for (const field of ['base_url', 'model']) check(text(agent[field]), `${key}.${field}`, why.nonEmpty);
       // api_key 写成空字符串表示还没填（首次生成的配置里的示例就是这样）；没有 key 的协作方被选去讨论时才报错。
@@ -256,7 +259,7 @@ function validateConfig(cfg) {
         const agent = cfg.agents[item.agent];
         check(!seen.has(item.agent), at, why.duplicate);
         seen.add(item.agent);
-        check(mode === 'discuss' || agent.type === 'codex', `${at}.agent`, M.apiOnlyDiscuss(item.agent));
+        check(mode === 'discuss' || agent.type === 'codex', `${at}.agent`, M.discussOnly(item.agent));
         check(item.model == null || (text(item.model) && item.model !== CLAUDE), `${at}.model`, why.modelName);
         check(agent.type === 'codex' ? CODEX_EFFORTS.includes(item.effort) : item.effort === null || text(item.effort), `${at}.effort`, agent.type === 'codex' ? CODEX_EFFORTS.join(' / ') : why.apiEffort);
       }
@@ -290,7 +293,7 @@ function projectConfig(cfg, project) {
         if (!Array.isArray(entries)) continue;
         const key = `levels.discuss.${lv}`;
         allowed.levels.discuss[lv] = entries.filter((item) => {
-          const drop = cfg.agents[item?.agent]?.type === 'openai-compatible' && !cfg.levels.discuss[lv]?.some((v) => v.agent === item.agent);
+          const drop = cfg.agents[item?.agent] && cfg.agents[item.agent].type !== 'codex' && !cfg.levels.discuss[lv]?.some((v) => v.agent === item.agent);
           if (drop) process.stderr.write(`bridge: ${M.projectApiDropped(item.agent, key)}\n`);
           return !drop;
         });
@@ -421,7 +424,7 @@ function pickProfile(cfg, o, mode, fallbackModel = null, parentAgent = null) {
   }
   if (!Object.hasOwn(cfg.agents, entry.agent)) die(M.unknownAgent('--agent', entry.agent));
   const agent = cfg.agents[entry.agent];
-  if (agent.type !== 'codex' && mode !== 'discuss') die(M.apiOnlyDiscuss(entry.agent));
+  if (agent.type !== 'codex' && mode !== 'discuss') die(M.discussOnly(entry.agent));
   if (agent.type === 'codex' && !CODEX_EFFORTS.includes(entry.effort)) die(M.effortChoices(CODEX_EFFORTS.join(' / ')));
   return { level, agentName: entry.agent, agent, model: o.model || entry.model || agent.model || fallbackModel, effort: entry.effort };
 }
@@ -481,36 +484,46 @@ function focusFiles(files) {
   return files.length ? `\n\n${M.focusFiles(files.map((f) => `- ${f.shown}${f.range ? (LANGUAGE === 'en' ? ` (lines ${f.range[0]}–${f.range[1]})` : `（第 ${f.range[0]}–${f.range[1]} 行）`) : ''}`).join('\n'))}` : '';
 }
 
-function codexCommand(agent = CONFIG.agents[codexAgentName(CONFIG)]) {
-  const bin = agent?.bin;
-  if (bin) return /\.[cm]?js$/i.test(bin) ? { file: process.execPath, pre: [bin] } : { file: bin, pre: [] };
-  if (process.platform !== 'win32') {
-    // 从图形界面启动的程序（比如 macOS 桌面版）PATH 可能不含 Homebrew、nvm 等目录，按常见位置再找一遍。
-    // npm 装的 codex 是 JS 脚本，用当前的 node 运行，不依赖 PATH 里有 node。
-    const home = os.homedir();
-    const dirs = [...(process.env.PATH || '').split(path.delimiter), path.dirname(process.execPath),
-      '/opt/homebrew/bin', '/usr/local/bin', path.join(home, '.local', 'bin'), path.join(home, '.npm-global', 'bin'), path.join(home, '.volta', 'bin')];
-    for (const dir of dirs) {
-      if (!dir) continue;
-      const file = path.join(dir, 'codex');
-      try { fs.accessSync(file, fs.constants.X_OK); } catch { continue; }
-      let real = file;
-      try { real = fs.realpathSync(file); } catch { /* 用原路径 */ }
-      return /\.[cm]?js$/i.test(real) ? { file: process.execPath, pre: [real] } : { file, pre: [] };
-    }
-    return { file: 'codex', pre: [] };
+const binCommand = (bin) => /\.[cm]?js$/i.test(bin) ? { file: process.execPath, pre: [bin] } : { file: bin, pre: [] };
+
+function pathCommand(name, extraDirs = []) {
+  // 图形界面的 PATH 可能不含常用安装目录；JS 入口用当前的 node，不依赖 PATH 里有 node。
+  const home = os.homedir();
+  const dirs = [...(process.env.PATH || '').split(path.delimiter), path.dirname(process.execPath),
+    '/opt/homebrew/bin', '/usr/local/bin', path.join(home, '.local', 'bin'), path.join(home, '.npm-global', 'bin'), path.join(home, '.volta', 'bin'), ...extraDirs];
+  for (const dir of dirs) {
+    if (!dir) continue;
+    const file = path.join(dir, name);
+    try { fs.accessSync(file, fs.constants.X_OK); } catch { continue; }
+    let real = file;
+    try { real = fs.realpathSync(file); } catch { /* 用原路径 */ }
+    return /\.[cm]?js$/i.test(real) ? binCommand(real) : binCommand(file);
   }
-  // npm 全局安装的 codex 在 Windows 上是 .ps1/.cmd 包装，spawn 不经 shell 找不到它；
-  // 直接用 node 跑入口脚本，也避开 shell 引号问题。
-  const entry = (root) => path.join(root, '@openai', 'codex', 'bin', 'codex.js');
-  let js = entry(path.join(process.env.APPDATA || '', 'npm', 'node_modules'));
-  if (!fs.existsSync(js)) {
+  return binCommand(name);
+}
+
+function npmEntry(...parts) {
+  const entry = (root) => path.join(root, ...parts);
+  let file = entry(path.join(process.env.APPDATA || '', 'npm', 'node_modules'));
+  if (!fs.existsSync(file)) {
     // 改过 npm prefix 或用 nvm 时不在默认位置，问 npm 要全局目录。
     const npm = spawnSync('npm', ['root', '-g'], { encoding: 'utf8', shell: true, windowsHide: true });
-    js = npm.status === 0 && npm.stdout.trim() ? entry(npm.stdout.trim()) : '';
+    file = npm.status === 0 && npm.stdout.trim() ? entry(npm.stdout.trim()) : '';
   }
-  if (js && fs.existsSync(js)) return { file: process.execPath, pre: [js] };
-  return { file: 'codex.exe', pre: [] };
+  return file && fs.existsSync(file) ? file : null;
+}
+
+function codexCommand(agent = CONFIG.agents[codexAgentName(CONFIG)]) {
+  if (agent?.bin) return binCommand(agent.bin);
+  if (process.platform !== 'win32') return pathCommand('codex');
+  // Windows 的 npm 包装不能直接 spawn，改用包内入口，避开 shell 引号问题。
+  return binCommand(npmEntry('@openai', 'codex', 'bin', 'codex.js') || 'codex.exe');
+}
+
+function opencodeCommand(agent) {
+  if (agent.bin) return binCommand(agent.bin);
+  if (process.platform !== 'win32') return pathCommand('opencode', [path.join(os.homedir(), '.opencode', 'bin')]);
+  return binCommand(npmEntry('@opencode', 'cli', 'bin', 'opencode.exe') || 'opencode.exe');
 }
 
 // 没配置模型时从 Codex 的 config.toml 读出实际模型名，只用于显示，让用户知道用的是哪个模型。
@@ -989,6 +1002,19 @@ const apiUsage = (u) => ({
 const apiKeyOf = (agent) => (agent.api_key ? { key: agent.api_key, source: 'config' }
   : process.env[agent.api_key_env] ? { key: process.env[agent.api_key_env], source: 'env' } : { key: null, source: null });
 
+function parseReport(last, schema) {
+  try {
+    let value;
+    try { value = JSON.parse(last); }
+    catch {
+      const stripped = last.trim().replace(/^```[^\n]*\n/, '').replace(/\n```$/, '');
+      value = JSON.parse(stripped.slice(stripped.indexOf('{'), stripped.lastIndexOf('}') + 1));
+    }
+    const invalid = validateSchema(schema, value);
+    return { report: invalid.length ? null : value, invalid };
+  } catch { return { report: null, invalid: [last.trim() ? 'Reply is not valid JSON' : 'Reply is empty'] }; }
+}
+
 async function executeApi(ctx) {
   const { cfg, agentName, agent, model, effort, level, cwd, brief, mode, opts } = ctx;
   const apiKey = apiKeyOf(agent).key;
@@ -1113,20 +1139,12 @@ async function executeApi(ctx) {
         event({ type: 'api.error', kind: 'length', status: null, message: M.apiTruncated(agentName) });
         throw Object.assign(new Error(M.apiTruncated(agentName)), { kind: 'length' });
       }
-      let invalid;
-      try {
-        let value;
-        try { value = JSON.parse(last); }
-        catch {
-          const stripped = last.trim().replace(/^```[^\n]*\n/, '').replace(/\n```$/, '');
-          value = JSON.parse(stripped.slice(stripped.indexOf('{'), stripped.lastIndexOf('}') + 1));
-        }
-        invalid = validateSchema(schema, value);
-        if (!invalid.length) { report = value; break; }
-      } catch { invalid = [last.trim() ? 'Reply is not valid JSON' : 'Reply is empty']; }
-      if (repair === 1) { warnings.push(M.apiReportInvalid(agentName, path.join(dir, 'last-message.txt'))); break; }
+      const parsed = parseReport(last, schema);
+      const { invalid } = parsed;
+      if (!invalid.length) { report = parsed.report; break; }
+      if (repair === 1) { warnings.push(M.reportInvalid(agentName, path.join(dir, 'last-message.txt'))); break; }
       event({ type: 'api.repair', errors: invalid });
-      messages = [...history, { role: 'assistant', content: last }, { role: 'user', content: M.apiRepairPrompt(invalid.join('\n')) }];
+      messages = [...history, { role: 'assistant', content: last }, { role: 'user', content: M.reportRepairPrompt(invalid.join('\n')) }];
     }
     meta.status = 'done';
   } catch (e) {
@@ -1147,6 +1165,190 @@ async function executeApi(ctx) {
     exit_code: meta.status === 'done' ? 0 : 1, duration_s: Math.round((Date.now() - started) / 1000), usage, usage_scope: 'this_run',
     last_request: null, rate_limit: null, quota_resets_at: null, commands_executed: 0, errors, notes, warnings, report,
     last_message: report ? undefined : last, changes: { available: false, note: M.apiNoChanges },
+    files: files.map(({ path, range, chars }) => ({ path, range, chars })), run_dir: dir,
+  };
+  fs.writeFileSync(path.join(dir, 'result.json'), JSON.stringify(result, null, 2));
+  writeMeta();
+  process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  process.exitCode = result.exit_code;
+}
+
+const OPENCODE_AGENT = 'codex-bridge-discuss';
+
+function opencodeEnv() {
+  let config;
+  try { config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}'); } catch { /* 无效配置由本次注入替代 */ }
+  if (!isObject(config)) config = {};
+  const agent = { mode: 'primary', description: 'Read-only code discussion for codex-bridge',
+    permission: { '*': 'deny', read: 'allow', grep: 'allow', glob: 'allow', list: 'allow' } };
+  return { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, agent: { ...(isObject(config.agent) ? config.agent : {}), [OPENCODE_AGENT]: agent } }) };
+}
+
+// 私有服务才会读取本次注入的代理配置，也能随 run 一起终止。
+const opencodeArgs = (model, effort) => ['run', '--standalone', '--format', 'json', '--agent', OPENCODE_AGENT, '-m', `${model}${effort != null ? `#${effort}` : ''}`];
+
+function runOpencode({ agent, args, cwd, prompt = '', timeoutMs, stallMin = 0, runDir, onEvent }) {
+  return new Promise((resolve) => {
+    const { file, pre } = opencodeCommand(agent);
+    const out = { code: null, status: null, stdout: '', stderrTail: '', text: '', errors: [], events: 0 };
+    const child = spawn(file, [...pre, ...args], { cwd, env: opencodeEnv(), windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+    const stop = (status) => { if (out.status) return; out.status = status; if (child.pid) killTree(child.pid); };
+    const onSignal = () => stop('cancelled');
+    process.once('SIGINT', onSignal);
+    process.once('SIGTERM', onSignal);
+    let lastEventAt = Date.now();
+    let buf = '';
+    const record = (line) => {
+      if (runDir) fs.appendFileSync(path.join(runDir, 'opencode.jsonl'), line + '\n');
+      let ev;
+      try { ev = JSON.parse(line); } catch { return; }
+      if (!isObject(ev) || !ev.type) return;
+      lastEventAt = Date.now();
+      out.events++;
+      if (ev.type === 'text') out.text = ev.part?.text || '';
+      if (ev.type === 'error') out.errors.push(ev.error?.message || ev.error?.type || JSON.stringify(ev));
+      onEvent?.(ev);
+    };
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      if (!onEvent) out.stdout += chunk;
+      buf += chunk;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) { record(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk) => {
+      out.stderrTail = (out.stderrTail + chunk).slice(-4000);
+      if (runDir) fs.appendFileSync(path.join(runDir, 'stderr.log'), chunk);
+    });
+    const timer = setTimeout(() => stop('timeout'), Math.max(1, timeoutMs));
+    const poll = setInterval(() => {
+      if (runDir && fs.existsSync(path.join(runDir, CANCEL_FILE))) stop('cancelled');
+      else if (stallMin && Date.now() - lastEventAt >= stallMin * 60000) stop('stalled');
+    }, 1000);
+    child.on('error', (e) => out.errors.push(e.message));
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      clearInterval(poll);
+      process.removeListener('SIGINT', onSignal);
+      process.removeListener('SIGTERM', onSignal);
+      if (buf.trim()) record(buf);
+      out.code = code;
+      if (runDir && fs.existsSync(path.join(runDir, CANCEL_FILE))) out.status = 'cancelled';
+      out.status ||= out.errors.some((e) => /usage limit|quota|insufficient balance/i.test(e)) ? 'quota_exhausted'
+        : code === 0 && !out.errors.length ? 'done' : 'failed';
+      if (!out.events && out.status === 'failed') out.errors.push(M.exitCode(code, out.stderrTail.trim().split(/\r?\n/).slice(-6).join('\n'), 'opencode'));
+      resolve(out);
+    });
+    child.stdin.on('error', () => { /* 提前退出时忽略 EPIPE */ });
+    child.stdin.end(prompt, 'utf8');
+  });
+}
+
+async function executeOpencode(ctx) {
+  const { cfg, agentName, agent, model, effort, level, cwd, brief, mode, opts } = ctx;
+  if (ctx.parent && !ctx.sessionId) die(M.noSession(ctx.parent));
+  const schemaText = fs.readFileSync(DISCUSS_SCHEMA, 'utf8');
+  const schema = JSON.parse(schemaText);
+  const files = readAttachments(opts.file, cwd, false);
+  const prompt = `${brief}${focusFiles(files)}\n\n${ctx.parent ? M.opencodeResumeFooter : M.opencodeDiscussFooter(cwd, schemaText)}\n`;
+  const { id, dir, release } = await newRunDir();
+  const started = Date.now();
+  const deadline = started + (Number(opts.timeout) || cfg.dispatch.timeout_min) * 60000;
+  const meta = {
+    id, mode, kind: 'discuss', title: ctx.title || null, cwd, model, model_shown: model, model_name: model, level, effort,
+    agent: agentName, agent_type: 'opencode', sandbox: null, parent: ctx.parent || null,
+    track: [], group: opts.group ?? null, scope: opts.scope, round: ctx.round,
+    started_at: new Date(started).toISOString(), status: 'running', pid: process.pid, session_id: ctx.sessionId || null,
+    claude_session: CLAUDE_SESSION,
+  };
+  const writeMeta = () => {
+    const file = path.join(dir, 'meta.json');
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify(meta, null, 2));
+    fs.renameSync(`${file}.tmp`, file);
+  };
+  let rejection;
+  try {
+    writeMeta();
+    rejection = checkAdmission(meta, cfg);
+    if (rejection) fs.rmSync(dir, { recursive: true });
+  } finally { release(); }
+  if (rejection) die(rejection);
+  const event = (ev) => fs.appendFileSync(path.join(dir, 'events.jsonl'), JSON.stringify({ ...ev, ts: new Date().toISOString() }) + '\n');
+  for (const file of ['events.jsonl', 'opencode.jsonl', 'stderr.log']) fs.writeFileSync(path.join(dir, file), '');
+  fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
+  process.stderr.write(`bridge: ${M.started(mode, whoOf(meta), level, dir)}\n`);
+  const errors = [], warnings = [], notes = [];
+  let commands = 0, seenSession = false, last = '', report = null;
+  // 翻译成 Codex 的事件形状，让 watch 和 status 共用现有的时间线、命令和报告显示。
+  const translate = (ev) => {
+    if (ev.sessionID && !seenSession) {
+      seenSession = true;
+      meta.session_id = ev.sessionID;
+      writeMeta();
+      event({ type: 'thread.started', thread_id: ev.sessionID });
+    }
+    if (ev.type === 'reasoning' || ev.type === 'text') {
+      if (ev.type === 'text') last = ev.part?.text || '';
+      event({ type: 'item.completed', item: { type: ev.type === 'reasoning' ? 'reasoning' : 'agent_message', text: ev.part?.text || '' } });
+    } else if (ev.type === 'tool_use') {
+      const { tool, state = {} } = ev.part || {};
+      const input = state.input || {};
+      const params = ['filePath', 'path', 'pattern', 'include'].filter((k) => input[k] != null).map((k) => {
+        const value = String(input[k]);
+        return (k === 'filePath' || k === 'path') && path.isAbsolute(value) ? relativePath(cwd, value) : value;
+      });
+      event({ type: 'item.completed', item: { id: `opencode-${++commands}`, type: 'command_execution', command: [tool, ...params].join(' '),
+        exit_code: state.status === 'completed' ? 0 : 1, aggregated_output: String(state.output || state.error || '').slice(0, 2000) } });
+    } else if (ev.type === 'error') event({ type: 'error', message: ev.error?.message || ev.error?.type || JSON.stringify(ev) });
+  };
+  let nextPrompt = prompt;
+  for (let repair = 0; repair <= 1; repair++) {
+    if (fs.existsSync(path.join(dir, CANCEL_FILE))) { meta.status = 'cancelled'; break; }
+    if (Date.now() >= deadline) { meta.status = 'timeout'; break; }
+    const args = opencodeArgs(model, effort);
+    if (meta.session_id) args.push('--session', meta.session_id);
+    if (meta.title) args.push('--title', meta.title);
+    const out = await runOpencode({ agent, args, cwd, prompt: nextPrompt, runDir: dir, onEvent: translate,
+      timeoutMs: deadline - Date.now(), stallMin: Number(opts.stall ?? cfg.dispatch.stall_min) });
+    errors.push(...out.errors);
+    meta.status = out.status;
+    if (meta.status !== 'done') break;
+    const parsed = parseReport(last, schema);
+    if (!parsed.invalid.length) { report = parsed.report; break; }
+    if (repair === 1 || !meta.session_id) { warnings.push(M.reportInvalid(agentName, path.join(dir, 'last-message.txt'))); break; }
+    nextPrompt = M.reportRepairPrompt(parsed.invalid.join('\n'));
+  }
+  if (meta.status === 'cancelled') errors.push(M.runCancelled(model));
+  if (meta.status === 'stalled') errors.push(M.stalled(Number(opts.stall ?? cfg.dispatch.stall_min)));
+  let usage = null, cost = null;
+  if (meta.session_id) {
+    // 最后一步没有 step_finish，用会话导出按开始时间过滤，包含同一轮的格式修复。
+    const exported = await runOpencode({ agent, args: ['session', 'export', '--standalone', meta.session_id], cwd, timeoutMs: 60000 });
+    try {
+      if (exported.status !== 'done') throw new Error(exported.errors.join('; ') || exported.stderrTail || exported.status);
+      const messages = JSON.parse(exported.stdout).messages.filter((m) => m.type === 'assistant' && m.time.created >= started);
+      usage = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 };
+      cost = 0;
+      for (const m of messages) {
+        const t = m.tokens;
+        usage.input_tokens += (t.input || 0) + (t.cache?.read || 0) + (t.cache?.write || 0);
+        usage.cached_input_tokens += t.cache?.read || 0;
+        usage.output_tokens += t.output || 0;
+        usage.reasoning_output_tokens += t.reasoning || 0;
+        cost += m.cost || 0;
+      }
+    } catch (e) { usage = null; cost = null; notes.push(M.opencodeExportFailed(e.message)); }
+  }
+  fs.writeFileSync(path.join(dir, 'last-message.txt'), last);
+  meta.ended_at = new Date().toISOString();
+  const result = {
+    run_id: id, mode, kind: 'discuss', status: meta.status, title: meta.title, cwd, track: [], group: meta.group, round: meta.round, scope: meta.scope,
+    agent: agentName, agent_type: 'opencode', model, model_shown: model, level, effort, sandbox: null, parent: meta.parent, session_id: meta.session_id,
+    exit_code: meta.status === 'done' ? 0 : 1, duration_s: Math.round((Date.now() - started) / 1000), usage, usage_scope: 'this_run', cost_usd: cost,
+    last_request: null, rate_limit: null, quota_resets_at: null, commands_executed: commands, errors, notes, warnings, report,
+    last_message: report ? undefined : last, changes: { available: false, note: M.opencodeNoChanges },
     files: files.map(({ path, range, chars }) => ({ path, range, chars })), run_dir: dir,
   };
   fs.writeFileSync(path.join(dir, 'result.json'), JSON.stringify(result, null, 2));
@@ -1182,6 +1384,7 @@ async function cmdDiscuss(o) {
   const profile = pickProfile(cfg, o, 'discuss');
   const { agent, model, effort } = profile;
   if (agent.type === 'openai-compatible') return executeApi({ cfg, ...profile, mode: 'discuss', cwd, brief, title: o.title, round: 1, opts: o });
+  if (agent.type === 'opencode') return executeOpencode({ cfg, ...profile, mode: 'discuss', cwd, brief, title: o.title, round: 1, opts: o });
   const files = readAttachments(o.file, cwd, false);
   const { id, dir, release } = await newRunDir();
   const args = [
@@ -1222,6 +1425,8 @@ async function cmdResume(o) {
   const { agent, model, effort } = profile;
   if (agent.type === 'openai-compatible') return executeApi({ cfg, ...profile, mode: 'resume', cwd: parent.meta.cwd, brief,
     title: o.title || parent.meta.title, parent: parent.id, parentDir: parent.dir, round, opts: o });
+  if (agent.type === 'opencode') return executeOpencode({ cfg, ...profile, mode: 'resume', cwd: parent.meta.cwd, brief,
+    title: o.title || parent.meta.title, parent: parent.id, sessionId: parent.meta.session_id, round, opts: o });
   const files = readAttachments(o.file, parent.meta.cwd, false);
   const { id, dir, release } = await newRunDir();
   const args = [
@@ -1273,6 +1478,7 @@ function cmdConfig(o) {
   const agents_status = Object.fromEntries(Object.entries(effective.agents).map(([name, agent]) => [name, {
     type: agent.type, model: agent.model || (agent.type === 'codex' ? codexConfigModel() : null), max_parallel: agent.max_parallel ?? DEFAULT_AGENT_PARALLEL,
     ...(agent.type === 'openai-compatible' ? { api_key_env: agent.api_key_env ?? null, key_set: !!apiKeyOf(agent).key, key_source: apiKeyOf(agent).source } : {}),
+    ...(agent.type === 'opencode' ? { bin: agent.bin || opencodeCommand(agent).file } : {}),
   }]));
   const resolved = (entry) => ({ agent: entry.agent, model: entry.model || agents_status[entry.agent].model, effort: entry.effort });
   const resolved_levels = Object.fromEntries(Object.entries(effective.levels).map(([mode, levels]) => [mode,
@@ -1328,6 +1534,7 @@ async function cmdCheck(o) {
   };
   for (const [name, agent] of Object.entries(cfg.agents)) {
     if (agent.type === 'openai-compatible' && (!o.agent || o.agent === name)) result.agents[name] = await checkApiAgent(name, agent);
+    if (agent.type === 'opencode' && (!o.agent || o.agent === name)) result.agents[name] = await checkOpencodeAgent(name, agent);
   }
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   process.exitCode = result.ok ? 0 : 1;
@@ -1348,6 +1555,25 @@ async function checkApiAgent(name, agent) {
     const fix = { auth: M.fixApiAuth(name, source, agent.api_key_env), balance: M.fixApiBalance, bad_request: M.fixApiRequest(name), network: M.fixApiNetwork(agent.base_url), busy: M.fixApiBusy }[e.kind] || M.fixApiRetry;
     return { ...out, error: `${e.kind}${e.status ? ` ${e.status}` : ''}: ${redactKey(e.message, apiKey)}`, fix };
   }
+}
+
+async function checkOpencodeAgent(name, agent) {
+  const started = Date.now();
+  const out = { ok: false, type: 'opencode', model: agent.model, version: null, model_listed: false, seconds: null, reply: null, error: null, fix: null };
+  const call = (args, timeoutMs = 60000, prompt = '') => runOpencode({ agent, args, cwd: process.cwd(), timeoutMs, prompt });
+  const failed = (result) => result.errors.join('; ') || result.stderrTail.trim() || result.status;
+  const finish = () => ({ ...out, seconds: Number(((Date.now() - started) / 1000).toFixed(1)) });
+  const version = await call(['--version']);
+  if (version.status !== 'done') { out.error = failed(version); out.fix = M.fixOpencodeMissing(name); return finish(); }
+  out.version = version.stdout.trim();
+  const models = await call(['models']);
+  out.model_listed = models.status === 'done' && models.stdout.split(/\s+/).includes(agent.model);
+  if (!out.model_listed) { out.error = models.status === 'done' ? null : failed(models); out.fix = M.fixOpencodeModel(name, agent.model); return finish(); }
+  const reply = await call(opencodeArgs(agent.model, null), 120000, 'Reply with the single word OK.');
+  out.ok = reply.status === 'done';
+  out.reply = reply.text.trim().slice(0, 40);
+  if (!out.ok) { out.error = failed(reply); out.fix = M.fixOpencodeRun(name, out.error); }
+  return finish();
 }
 
 // 读 events.jsonl 末尾，给出最后活动时间和当前步骤，用来判断运行中的任务是活着还是卡住。
@@ -1612,7 +1838,7 @@ const changedText = (c) => (c?.available ? M.watchChanged(c.codex_total ?? c.fil
 const paint = (code) => (s) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
 // 界面上以模型为主，接入方式作附注；旧记录没有 agent_type 和 model_name，都是 Codex CLI。
 const modelOf = (m) => m?.model || m?.model_name || m?.model_shown || '?';
-const whoOf = (m) => M.who(modelOf(m), m?.agent_type === 'openai-compatible' ? M.channel.api : M.channel.codex, m?.effort, !m?.model && !!m?.model_name && m?.agent_type !== 'openai-compatible');
+const whoOf = (m) => M.who(modelOf(m), m?.agent_type === 'openai-compatible' ? M.channel.api : m?.agent_type === 'opencode' ? M.channel.opencode : M.channel.codex, m?.effort, !m?.model && !!m?.model_name && !['openai-compatible', 'opencode'].includes(m?.agent_type));
 // 讨论和审查本来只读，只有真的改了文件才显示改动数（那是越界，要提醒）。
 const changedFor = (r, m) => (m?.kind === 'exec' || r?.changes?.codex_total ? changedText(r?.changes) : null);
 const C = { dim: paint('2'), bold: paint('1'), red: paint('31'), green: paint('32'), yellow: paint('33'), cyan: paint('36') };
@@ -1648,6 +1874,7 @@ async function pickWatchRun(ref) {
 // 详细模式（--verbose）：每个事件一行，带时间戳，包括思考过程、命令输出和 token 用量。
 function verboseRenderer(meta, rel) {
   let live = false;
+  const commands = new Set();
   const out = (sym, text, ts) => process.stdout.write(`${ts ? new Date(ts).toTimeString().slice(0, 8) : live ? new Date().toTimeString().slice(0, 8) : '        '} ${sym} ${text}\n`);
   const header = (id, dir) => {
     const [first, ...rest] = M.watchHeaderLines(M.modeNames[meta.mode] || meta.mode, meta.title || id, meta.level, meta.cwd, dir);
@@ -1656,6 +1883,7 @@ function verboseRenderer(meta, rel) {
   const show = (ev) => {
     const it = ev.item || {};
     const o = (sym, text) => out(sym, text, ev.ts);
+    if (ev.type === 'item.completed' && it.type === 'command_execution' && !commands.has(it.id)) show({ ...ev, type: 'item.started' });
     if (ev.type === 'thread.started') o('●', M.watchSession(ev.thread_id));
     else if (ev.type === 'turn.failed') o('✗', M.watchTurnFailed(ev.error?.message || ''));
     else if (ev.type === 'error') {
@@ -1666,6 +1894,7 @@ function verboseRenderer(meta, rel) {
     } else if (ev.type === 'image.generated') {
       o('▣', M.watchImage(ev.path));
     } else if (ev.type === 'item.started' && it.type === 'command_execution') {
+      commands.add(it.id);
       o('▶', clip(oneLine(plainCommand(it.command)), 240));
     } else if (ev.type === 'item.completed') {
       if (it.type === 'agent_message') {
@@ -1678,6 +1907,7 @@ function verboseRenderer(meta, rel) {
       } else if (it.type === 'reasoning') {
         o('…', clip(oneLine(it.text), 200));
       } else if (it.type === 'command_execution') {
+        commands.delete(it.id);
         const lines = String(it.aggregated_output || '').replace(/\r/g, '').split('\n').map((x) => x.trimEnd()).filter(Boolean);
         o(it.exit_code === 0 ? '✓' : '✗', M.watchExit(it.exit_code, lines.length ? clip(lines.slice(-3).join(' ⏎ '), 240) : ''));
       } else if (it.type === 'file_change') {
@@ -1939,6 +2169,8 @@ function timelineRenderer(meta, rel, { screen: useScreen = false, dir = null } =
   const show = (ev) => {
     if (ev.type?.startsWith('api.')) { showApi(ev); return; }
     const it = ev.item || {};
+    // 只有完成事件的工具调用，也要补出命令行供时间线显示。
+    if (ev.type === 'item.completed' && it.type === 'command_execution' && !commands.has(it.id)) show({ ...ev, type: 'item.started' });
     if (ev.type === 'turn.failed' || ev.type === 'error') {
       newBlock();
       const msg = ev.error?.message || ev.message || '';
@@ -2064,12 +2296,14 @@ function createFeed(run) {
   let offset = 0;
   let buf = '';
   let thinking = null; // API 的思考内容一直追加在同一条里
+  const commands = new Set();
   const push = (text, style, clip = true) => {
     items.push({ text, style, clip });
     if (items.length > 40) items.splice(0, items.length - 40);
   };
   const take = (ev) => {
     const it = ev.item || {};
+    if (ev.type === 'item.completed' && it.type === 'command_execution' && !commands.has(it.id)) take({ ...ev, type: 'item.started' });
     if (ev.type === 'api.request') {
       Object.assign(stats, { api: true, req: ev.ts, chars: 0, answerChars: 0, answering: false, queued: false });
       thinking = null;
@@ -2096,13 +2330,14 @@ function createFeed(run) {
       const re = RECONNECT.exec(msg);
       push(re ? `⚠ ${M.watchReconnect(re[1], re[2])}` : `✗ ${msg}`, re ? 'yellow' : 'red');
     } else if (ev.type === 'image.generated') push(`▣ ${M.watchImage(path.basename(ev.path))}`, 'green');
-    else if (ev.type === 'item.started' && it.type === 'command_execution') push(`$ ${oneLine(plainCommand(it.command))}`, 'dim');
+    else if (ev.type === 'item.started' && it.type === 'command_execution') { commands.add(it.id); push(`$ ${oneLine(plainCommand(it.command))}`, 'dim'); }
     else if (ev.type === 'item.completed') {
       if (it.type === 'agent_message') {
         const t = it.text.trim();
         if (t.startsWith('{')) { try { JSON.parse(t); return; } catch { /* 普通消息 */ } } // 最终报告在任务结束后显示
         push(t, null, false);
       } else if (it.type === 'command_execution') {
+        commands.delete(it.id);
         stats.commands++;
         if (it.exit_code !== 0 && it.exit_code != null) push(`  ${M.watchExit(it.exit_code, '')}`, 'red');
       } else if (it.type === 'file_change') for (const c of it.changes || []) push(`✎ ${M.fileKinds[c.kind] || c.kind} ${rel(c.path)}`, 'green');
@@ -2432,7 +2667,7 @@ async function cmdAwaitBusy(o) {
     await sleep(1000);
   }
   for (;;) {
-    const running = pick().filter((run) => isRunning(run.meta));
+    const running = pick().filter((run) => isRunning(run.meta) && run.meta.agent_type !== 'opencode');
     const busy = running.map((run) => ({ run, s: queuedSeconds(run.dir) })).filter((x) => x.s != null && x.s >= after * 60);
     if (busy.length || !running.length) {
       print({

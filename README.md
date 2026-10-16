@@ -2,7 +2,7 @@
 
 [English](README.en.md)
 
-一个 Claude Code 插件：让 Claude 把执行类编码工作派给 OpenAI Codex，再由 Claude 验收；也可以让 Codex 独立审查代码，或者在复杂方案上让 Codex 和其他模型（比如 DeepSeek）一起给意见，由 Claude 裁决。
+一个 Claude Code 插件：让 Claude 把执行类编码工作派给 OpenAI Codex，再由 Claude 验收；也可以让 Codex 独立审查代码，或者在复杂方案上让 Codex 和其他模型（比如 DeepSeek，或者通过 opencode 接入的各家模型）一起给意见，由 Claude 裁决。
 
 分工的思路是：Claude 负责规划、核心决策、设计和文字，Codex 负责其余的执行工作。Codex 用的是你自己的 OpenAI 额度，不占 Claude 的额度。
 
@@ -28,7 +28,7 @@
 - [Codex CLI](https://github.com/openai/codex)，已安装并登录（必需）。在终端里运行 `codex exec "hello"` 能正常回复就行
 - Node.js 18 或更高版本。在 WSL 里运行 Claude Code 时，WSL 里也要装 Node.js，否则插件的钩子会在每条命令前报错
 - Git 2.25 或更高版本，用来追踪 Codex 改了哪些文件
-- 可选：想让其他模型参加讨论时，需要对应厂商的 API key（比如 DeepSeek）
+- 可选：想让其他模型参加讨论时，需要对应厂商的 API key（比如 DeepSeek），或者装好 [opencode](https://opencode.ai) 2.x
 
 ## 安装
 
@@ -62,7 +62,7 @@
 | 块 | 管什么 |
 |---|---|
 | `dispatch` | 插件怎么派活：是否主动派、实时查看、并发、讨论轮数、超时、记录目录 |
-| `agents` | 有哪些协作方、怎么连接：Codex 的可执行文件、默认模型、沙箱；API 模型的接口地址、API key（直接写在配置里，或者指定存放它的环境变量）、默认模型 |
+| `agents` | 有哪些协作方、怎么连接：Codex 的可执行文件、默认模型、沙箱；API 模型的接口地址、API key（直接写在配置里，或者指定存放它的环境变量）、默认模型；通过 opencode 调用的模型名 |
 | `levels` | 每类任务的每个等级交给谁，用什么模型和推理强度 |
 
 连接方式只写在 `agents`，分派只写在 `levels`。下面是第一次使用时自动生成的配置：
@@ -172,6 +172,34 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 
 API 模型自己翻不了代码，Claude 会把相关文件随议题一起发过去（每次上限约 30 万字符），并对照原文核实它对代码的说法。目前 API 模型只能参加讨论，不能执行任务或审查。
 
+### 通过 opencode 接入更多模型
+
+装了 [opencode](https://opencode.ai)（2.x）的话，opencode 里能用的模型都可以参加讨论，比如 [OpenCode Go](https://opencode.ai/docs/go/) 订阅里的 GLM、Kimi、Qwen、MiniMax、DeepSeek 等。和 API 模型相比，它们能自己读项目里的代码、搜索文件，不用 Claude 挑文件附过去；代价是每读一次文件都多一次请求，更费额度。
+
+1. **在 opencode 里登录**：终端运行 `opencode`，用 `/connect` 登录（OpenCode Go 选 OpenCode Go），再运行 `opencode models` 看能用哪些模型。免费模型（名字带 `-free` 的）不用登录。
+2. **加进配置**：在 `agents` 里每个模型加一项，名字自己起，再加进需要的讨论等级：
+
+   ```json
+   "agents": {
+     "glm":  { "type": "opencode", "model": "opencode-go/glm-5.3" },
+     "kimi": { "type": "opencode", "model": "opencode-go/kimi-k3" }
+   },
+   "levels": {
+     "discuss": {
+       "complex": [
+         { "agent": "codex", "model": "gpt-6-astra", "effort": "max" },
+         { "agent": "glm",  "effort": null },
+         { "agent": "kimi", "effort": null }
+       ]
+     }
+   }
+   ```
+
+   `effort` 写 opencode 的 variant（比如 `high`），`null` 表示用模型的默认设置；各模型有哪些 variant 不一样。
+3. 运行 `/codex-bridge:setup` 确认每个模型都能用。
+
+讨论时插件给 opencode 注入一个只读代理，只有读文件、搜索和列目录的工具：它不能运行命令，也不能改文件。key 和登录都留在 opencode 里，插件的配置文件里不写。结果里会带上这一轮折算的费用（`cost_usd`），OpenCode Go 的额度就按这个扣。Go 的额度按模型分开算，几个模型一起讨论能把额度摊开；高档模型额度少，建议只放在复杂讨论里。
+
 ### 全部字段
 
 | 字段 | 作用 | 默认 |
@@ -189,9 +217,10 @@ API 模型自己翻不了代码，Claude 会把相关文件随议题一起发过
 | `agents.codex.sandbox` | `run` / `review` / `discuss` 各自的沙箱：`read-only`、`workspace-write`、`danger-full-access` | 都是 `null`，沿用 Codex 配置 |
 | `agents.codex.approval` | Codex 的审批策略，比如 `never` | `null`，沿用 Codex 配置 |
 | `agents.<名字>`（API 模型） | `type` 为 `openai-compatible`；`base_url`、`model` 必填；`api_key`（key 本身，还没填就留空）和 `api_key_env`（存放 key 的环境变量名）任选，都填时用 `api_key`，都没有的不能参加讨论；`extra_body` 可选 | 无 |
+| `agents.<名字>`（opencode 模型） | `type` 为 `opencode`；`model` 必填，写成 `厂商/模型`；`bin`（opencode 可执行文件路径）可选，默认自动查找 | 无 |
 | `levels` | 见上文 | run 的 simple、normal 为 `"claude"`，complex 为 Codex max；review 为 Codex medium / high / max；discuss 三级都只有 Codex，medium / high / max |
 
-项目配置只认 `dispatch.timeout_min`、`dispatch.stall_min`、`dispatch.busy_ask_min`、`agents.codex.model` 和 `levels`，而且不能新增 API 模型参与方，只能去掉。其余字段只能写在用户配置里，这样别人的仓库没法通过项目配置放宽沙箱、换掉可执行文件、把代码发到别的地址，或者擅自花你的额度。敏感项目可以在项目配置的 `levels.discuss` 里只留 Codex，关掉 API 模型。
+项目配置只认 `dispatch.timeout_min`、`dispatch.stall_min`、`dispatch.busy_ask_min`、`agents.codex.model` 和 `levels`，而且不能新增 Codex 以外的参与方（API 模型和 opencode 模型），只能去掉。其余字段只能写在用户配置里，这样别人的仓库没法通过项目配置放宽沙箱、换掉可执行文件、把代码发到别的地址，或者擅自花你的额度。敏感项目可以在项目配置的 `levels.discuss` 里只留 Codex，关掉其他模型。
 
 ### 偏好文件
 

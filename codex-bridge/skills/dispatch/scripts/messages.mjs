@@ -12,8 +12,8 @@ const zh = {
   configMigrated: (file, bak) => `已把配置文件 ${file} 改成新结构（dispatch / agents / levels），原文件备份在 ${bak}`,
   configMigrateFailed: (file, err) => `配置文件 ${file} 是旧写法，改写失败（${err}），本次在内存里按新结构读取`,
   projectOldFormat: (file) => `项目配置 ${file} 是旧写法，已按新结构读取；建议改成新写法（见 README 的"配置"一节）`,
-  projectApiDropped: (agent, key) => `项目配置让 ${agent} 参加 ${key}，但用户配置里这一级没有它，已忽略：项目配置不能新增 API 协作方`,
-  projectLevelEmpty: (key) => `项目配置去掉 API 协作方后，${key} 没有参与方了，请检查项目配置`,
+  projectApiDropped: (agent, key) => `项目配置让 ${agent} 参加 ${key}，但用户配置里这一级没有它，已忽略：项目配置不能新增 Codex 以外的协作方`,
+  projectLevelEmpty: (key) => `项目配置去掉这些协作方后，${key} 没有参与方了，请检查项目配置`,
   configInvalid: (key, reason) => `配置 ${key} 无效：${reason}`,
   // 配置校验的报错原因，接在 configInvalid 后面
   invalid: {
@@ -24,7 +24,8 @@ const zh = {
     minutes: '应为分钟数（stall_min 和 busy_ask_min 可以是 0）',
     pathOrNull: '应为路径或 null',
     agentName: '名字只能用字母、数字、- 和 _，而且不能叫 claude',
-    agentType: '只能是 codex 或 openai-compatible',
+    agentType: '只能是 codex、openai-compatible 或 opencode',
+    opencodeModel: '应写成 厂商/模型，例如 opencode-go/glm-5.3',
     modelName: '应为模型名或 null',
     codexCount: '必须有且只有一个 type 为 codex 的协作方（Codex 是必需的）',
     stringOrNull: '应为字符串或 null',
@@ -42,7 +43,7 @@ const zh = {
   agentNotInLevel: (name, key, names) => `${key} 的参与方里没有 ${name}，这一级的参与方：${names}`,
   agentRequired: (key, names) => `${key} 有多个参与方：${names}。请用 --agent 指定这次发给谁`,
   agentMismatch: (name, key, expected) => `${key} 用的是 ${expected}，不能用 --agent ${name}`,
-  apiOnlyDiscuss: (name) => `${name} 是 API 协作方，目前只能参加讨论（discuss），不能执行任务或审查`,
+  discussOnly: (name) => `${name} 只能参加讨论（discuss），执行任务和审查目前只能交给 Codex`,
   resumeAgentMismatch: (name, parent) => `续接沿用上一轮的协作方 ${parent}，不能改成 ${name}`,
   apiKeyMissing: (name, env) => `协作方 ${name} 没有可用的 API key：${env ? `环境变量 ${env} 没有设置，` : ''}请在 ~/.claude/codex-bridge.json 的 agents.${name}.api_key 里填上（立即生效）${env ? `，或者设置环境变量 ${env}（设置后要重启 Claude Code）` : ''}`,
   fileNotFound: (p) => `找不到附带文件：${p}`,
@@ -54,9 +55,11 @@ const zh = {
   apiBalance: (name, msg) => `${name} 账户余额不足：${msg}。充值后可以用 resume 继续`,
   apiBusy: (name, waited, retried) => `${name} 服务繁忙：请求在服务端排队约 ${waited}，还没开始处理就被断开${retried ? '，重试一次也一样' : ''}。稍后再试；这次可以先用其他参与方的结果`,
   apiTruncated: (name) => `${name} 的回答被截断（达到 max_tokens）。可以在 agents.${name}.extra_body 里调大 max_tokens`,
-  apiReportInvalid: (name, file) => `${name} 两次都没有输出符合格式的报告，原文见 ${file}`,
+  reportInvalid: (name, file) => `${name} 两次都没有输出符合格式的报告，原文见 ${file}`,
   apiNoResponseFormat: '接口不接受 response_format，已去掉后重试，只靠提示词要求 JSON 格式',
   apiNoChanges: 'API 协作方不能改动文件，不追踪改动',
+  opencodeNoChanges: 'opencode 协作方只能读文件和搜索，不能改动文件，不追踪改动',
+  opencodeExportFailed: (err) => `读取 opencode 会话用量失败（${err}），这次没有 token 统计`,
   stepApiWaiting: '已发出请求，等待回复',
   stepApiThinking: (n) => `思考中（已收到 ${n} 字）`,
   stepApiAnswering: (n) => `正在输出回答（已收到 ${n} 字）`,
@@ -91,7 +94,19 @@ ${schema}`,
     ...(files.length ? [`### 文件内容\n${files.map((f) => `#### ${f.shown}${f.range ? `（第 ${f.range[0]}–${f.range[1]} 行）` : ''}\n${f.fence}\n${f.content}\n${f.fence}`).join('\n\n')}`] : []),
   ].join('\n\n'),
   apiResumeFooter: '---\n（调度方提示：前面的讨论规则仍然有效：只依据给出的材料、不迎合、说人话、有依据。最后同样只输出符合 schema 的 JSON 对象。）',
-  apiRepairPrompt: (errors) => `你上一条回答不符合要求的 JSON 格式：\n${errors}\n请只输出修正后的完整 JSON 对象，不要输出其他文字。`,
+  reportRepairPrompt: (errors) => `你上一条回答不符合要求的 JSON 格式：\n${errors}\n请只输出修正后的完整 JSON 对象，不要输出其他文字。`,
+  opencodeDiscussFooter: (cwd, schema) => `---
+## 讨论规则（调度方自动附加）
+- 这是方案讨论，不是执行任务。你只能用读文件和搜索工具查看 ${cwd} 下的代码和数据，不能运行命令，也不能修改文件。
+- 独立思考，不要迎合。不同意就直说，并给出理由；同意也要说清楚为什么。
+- 结论先行，用短句和直白的话，像跟同事当面讲清楚一样。不要堆砌术语，不要套话。
+- 每个观点都要有依据：代码位置（文件路径和行号）、数据或清楚的推理。拿不准的明确标出来；没看过的代码不要假装看过。
+- 用议题的语言回答。
+- 最后只输出一个 JSON 对象，符合下面的 JSON schema。不要输出 JSON 以外的文字，也不要用代码块包起来。
+
+JSON schema：
+${schema}`,
+  opencodeResumeFooter: '---\n（调度方提示：前面的讨论规则仍然有效：只读、不迎合、说人话、有依据。最后同样只输出符合 schema 的 JSON 对象，不要用代码块包起来。）',
 
   // ---------- check ----------
   fixNode: (v) => `Node.js ${v} 太旧，需要 18 或更高版本：https://nodejs.org`,
@@ -106,6 +121,9 @@ ${schema}`,
   fixApiNetwork: (url) => `连不上 ${url}，检查地址和网络`,
   fixApiRetry: '服务暂时不可用或太忙，稍后再试',
   fixApiBusy: '服务繁忙：请求一直在排队，没开始处理。稍后再试',
+  fixOpencodeMissing: (name) => `没有找到 opencode。在终端运行 npm install -g @opencode/cli 安装；装在别的位置时，在配置的 agents.${name}.bin 里写上路径`,
+  fixOpencodeModel: (name, model) => `opencode 里找不到模型 ${model}。在终端运行 opencode models 查看可用的模型，改好 agents.${name}.model；OpenCode Go 的模型要先在 opencode 里运行 /connect 登录`,
+  fixOpencodeRun: (name, err) => `opencode 调用 ${name} 的模型失败：${err}。先在终端里用 opencode run -m <模型> "hi" 试一下`,
   fixLauncherNotAscii: '记录目录的路径里有非英文字符，桌面版的终端面板打不开实时查看（它只接受 ASCII 命令）。在 ~/.claude/codex-bridge.json 里把 dispatch.runs_dir 设成只含英文字母和数字的路径，比如 "D:/codex-runs"。命令行版不受影响',
 
   // ---------- 参数 ----------
@@ -148,11 +166,11 @@ ${schema}`,
   tooManyFiles: (n, max) => `文件数 ${n} 超过 ${max}，跳过快照`,
   stalled: (min) => `超过 ${min} 分钟没有任何活动，且没有命令在执行，判定为卡死并已终止`,
   spawnFailed: (err) => `启动 codex 失败：${err}`,
-  exitCode: (code, tail) => `codex 退出码 ${code}：${tail}`,
+  exitCode: (code, tail, bin = 'codex') => `${bin} 退出码 ${code}：${tail}`,
   unknownModel: '未知',
   modelFromCodex: (name) => `${name}（来自 Codex 配置）`,
   // 界面上以模型为主，接入方式（Codex CLI 或 API）作附注
-  channel: { codex: 'Codex CLI', api: 'API' },
+  channel: { codex: 'Codex CLI', api: 'API', opencode: 'opencode CLI' },
   who: (model, channel, effort, fromConfig) => `${model}（${channel}，effort ${effort ?? 'default'}${fromConfig ? '，模型来自 Codex 配置' : ''}）`,
   busyHint: (command, min) => `排队检查：在后台运行 ${command}（同一组只需一次）。有参与方排队超过 ${min} 分钟时它会退出，届时问用户要不要终止那一方`,
   started: (mode, who, level, dir) =>
@@ -273,8 +291,8 @@ const en = {
   configMigrated: (file, bak) => `Rewrote config file ${file} in the new layout (dispatch / agents / levels); the original is backed up at ${bak}`,
   configMigrateFailed: (file, err) => `Config file ${file} uses the old layout and couldn't be rewritten (${err}); reading it in the new layout in memory for this run`,
   projectOldFormat: (file) => `Project config ${file} uses the old layout; it was converted when read. Consider updating it (see "Configuration" in the README)`,
-  projectApiDropped: (agent, key) => `The project config adds ${agent} to ${key}, but the user config doesn't have it at that level, so it was ignored: project config can't add API agents`,
-  projectLevelEmpty: (key) => `After dropping API agents, ${key} has no participants left; check the project config`,
+  projectApiDropped: (agent, key) => `The project config adds ${agent} to ${key}, but the user config doesn't have it at that level, so it was ignored: project config can't add agents other than Codex`,
+  projectLevelEmpty: (key) => `After dropping those agents, ${key} has no participants left; check the project config`,
   configInvalid: (key, reason) => `Invalid config ${key}: ${reason}`,
   // Reasons for config validation errors, appended to configInvalid
   invalid: {
@@ -285,7 +303,8 @@ const en = {
     minutes: 'must be a number of minutes (stall_min and busy_ask_min may be 0)',
     pathOrNull: 'must be a path or null',
     agentName: 'names may only use letters, digits, - and _, and claude is reserved',
-    agentType: 'must be codex or openai-compatible',
+    agentType: 'must be codex, openai-compatible or opencode',
+    opencodeModel: 'must be provider/model, e.g. opencode-go/glm-5.3',
     modelName: 'must be a model name or null',
     codexCount: 'must have exactly one agent with type codex (Codex is required)',
     stringOrNull: 'must be a string or null',
@@ -303,7 +322,7 @@ const en = {
   agentNotInLevel: (name, key, names) => `${name} isn't a participant in ${key}; the participants at this level are: ${names}`,
   agentRequired: (key, names) => `${key} has several participants: ${names}. Use --agent to say which one this call is for`,
   agentMismatch: (name, key, expected) => `${key} uses ${expected}, so --agent ${name} can't be used`,
-  apiOnlyDiscuss: (name) => `${name} is an API agent and can only take part in discussions (discuss) for now, not hands-on work or reviews`,
+  discussOnly: (name) => `${name} can only take part in discussions (discuss); hands-on work and reviews can only go to Codex for now`,
   resumeAgentMismatch: (name, parent) => `A resume keeps the previous round's agent ${parent}; it can't switch to ${name}`,
   apiKeyMissing: (name, env) => `Agent ${name} has no API key${env ? ` (environment variable ${env} isn't set)` : ''}. Fill in agents.${name}.api_key in ~/.claude/codex-bridge.json (takes effect immediately)${env ? `, or set ${env} (then restart Claude Code)` : ''}`,
   fileNotFound: (p) => `Attached file not found: ${p}`,
@@ -315,9 +334,11 @@ const en = {
   apiBalance: (name, msg) => `${name}'s account balance is too low: ${msg}. Top it up, then continue with resume`,
   apiBusy: (name, waited, retried) => `${name} is too busy: the request waited about ${waited} in the server's queue and was dropped before it started${retried ? ', and the retry went the same way' : ''}. Try again later; for now, go ahead with the other participants' results`,
   apiTruncated: (name) => `${name}'s reply was cut off (max_tokens reached). Raise max_tokens in agents.${name}.extra_body`,
-  apiReportInvalid: (name, file) => `${name} didn't produce a report in the required format in two tries; the raw text is in ${file}`,
+  reportInvalid: (name, file) => `${name} didn't produce a report in the required format in two tries; the raw text is in ${file}`,
   apiNoResponseFormat: "The API doesn't accept response_format; retried without it, relying on the prompt alone for JSON",
   apiNoChanges: "API agents can't change files, so changes aren't tracked",
+  opencodeNoChanges: "opencode agents can only read and search files, not change them, so changes aren't tracked",
+  opencodeExportFailed: (err) => `Couldn't read token usage from the opencode session (${err}), so there are no token counts this time`,
   stepApiWaiting: 'Request sent, waiting for a reply',
   stepApiThinking: (n) => `Thinking (${n} characters so far)`,
   stepApiAnswering: (n) => `Writing the answer (${n} characters so far)`,
@@ -352,7 +373,19 @@ ${schema}`,
     ...(files.length ? [`### File contents\n${files.map((f) => `#### ${f.shown}${f.range ? ` (lines ${f.range[0]}–${f.range[1]})` : ''}\n${f.fence}\n${f.content}\n${f.fence}`).join('\n\n')}`] : []),
   ].join('\n\n'),
   apiResumeFooter: "---\n(Note from the dispatcher: the discussion rules above still apply: work only from the material given, don't just agree, speak plainly, back it up. Finish with a single JSON object matching the schema.)",
-  apiRepairPrompt: (errors) => `Your last reply wasn't valid JSON in the required format:\n${errors}\nOutput only the corrected, complete JSON object and nothing else.`,
+  reportRepairPrompt: (errors) => `Your last reply wasn't valid JSON in the required format:\n${errors}\nOutput only the corrected, complete JSON object and nothing else.`,
+  opencodeDiscussFooter: (cwd, schema) => `---
+## Discussion rules (added by the dispatcher)
+- This is a design discussion, not a task to carry out. You may only use file-reading and search tools to inspect the code and data under ${cwd}. Don't run commands or change files.
+- Think independently; don't just agree. If you disagree, say so and give your reasons; if you agree, say why.
+- Lead with the conclusion. Use short, plain sentences, as if explaining it to a colleague in person. No jargon piles, no filler.
+- Back every point up: a code location (file path and line number), data, or clear reasoning. Flag anything you're unsure about; don't pretend you've read code you haven't seen.
+- Answer in the language of the topic.
+- Finish with a single JSON object that matches the JSON schema below. No text outside the JSON, and don't wrap it in a code block.
+
+JSON schema:
+${schema}`,
+  opencodeResumeFooter: "---\n(Note from the dispatcher: the discussion rules above still apply: read-only, don't just agree, speak plainly, back it up. Finish with a single JSON object matching the schema, without a code block.)",
 
   // ---------- check ----------
   fixNode: (v) => `Node.js ${v} is too old; version 18 or later is needed: https://nodejs.org`,
@@ -367,6 +400,9 @@ ${schema}`,
   fixApiNetwork: (url) => `Can't reach ${url}; check the address and your network`,
   fixApiRetry: 'The service is unavailable or busy right now; try again later',
   fixApiBusy: 'The service is busy: the request stayed queued and never started. Try again later',
+  fixOpencodeMissing: (name) => `opencode wasn't found. Install it by running npm install -g @opencode/cli in a terminal. If it's installed elsewhere, put its path in agents.${name}.bin in the config`,
+  fixOpencodeModel: (name, model) => `opencode doesn't list the model ${model}. Run opencode models in a terminal to see what's available and fix agents.${name}.model. For OpenCode Go models, sign in first by running /connect in opencode`,
+  fixOpencodeRun: (name, err) => `opencode failed to call ${name}'s model: ${err}. Try opencode run -m <model> "hi" in a terminal first`,
   fixLauncherNotAscii: "The run directory path has non-English characters, so the desktop app's terminal panel can't open the live view (it only accepts ASCII commands). In ~/.claude/codex-bridge.json, set dispatch.runs_dir to a path with only English letters and digits, such as \"D:/codex-runs\". The CLI isn't affected",
 
   // ---------- arguments ----------
@@ -409,11 +445,11 @@ ${schema}`,
   tooManyFiles: (n, max) => `${n} files is more than ${max}; skipping the snapshot`,
   stalled: (min) => `No activity for ${min} minutes and no command running; treated as stuck and stopped`,
   spawnFailed: (err) => `Failed to start codex: ${err}`,
-  exitCode: (code, tail) => `codex exited with code ${code}: ${tail}`,
+  exitCode: (code, tail, bin = 'codex') => `${bin} exited with code ${code}: ${tail}`,
   unknownModel: 'unknown',
   modelFromCodex: (name) => `${name} (from Codex config)`,
   // The model comes first in the UI, with how it's reached (Codex CLI or API) as a note
-  channel: { codex: 'Codex CLI', api: 'API' },
+  channel: { codex: 'Codex CLI', api: 'API', opencode: 'opencode CLI' },
   who: (model, channel, effort, fromConfig) => `${model} (${channel}, effort ${effort ?? 'default'}${fromConfig ? ', model from Codex config' : ''})`,
   busyHint: (command, min) => `Queue check: run ${command} in the background (once per group). It exits when a participant has been queued over ${min} min; then ask the user whether to stop that participant`,
   started: (mode, who, level, dir) =>

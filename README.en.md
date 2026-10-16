@@ -2,7 +2,7 @@
 
 [中文](README.md)
 
-A Claude Code plugin that lets Claude hand off hands-on coding work to OpenAI Codex and then check the result. Claude can also ask Codex for an independent code review, or have Codex and other models (such as DeepSeek) weigh in on a complex design before Claude decides.
+A Claude Code plugin that lets Claude hand off hands-on coding work to OpenAI Codex and then check the result. Claude can also ask Codex for an independent code review, or have Codex and other models (such as DeepSeek, or any model you can reach through opencode) weigh in on a complex design before Claude decides.
 
 The idea is a split of roles: Claude does the planning, key decisions, design and writing; Codex does the rest of the hands-on work. Codex runs on your own OpenAI plan or API key, so it doesn't use your Claude quota.
 
@@ -28,7 +28,7 @@ Every time Claude hands something off, it tells you in the chat who got it and w
 - [Codex CLI](https://github.com/openai/codex), installed and signed in (required). If `codex exec "hello"` gets a reply in your terminal, you're set
 - Node.js 18 or later. If you run Claude Code inside WSL, Node.js must be installed inside WSL too, or the plugin's hooks will error before every command
 - Git 2.25 or later (used to track which files Codex changed)
-- Optional: to have other models join discussions, an API key from that provider (for example DeepSeek)
+- Optional: to have other models join discussions, an API key from that provider (for example DeepSeek), or [opencode](https://opencode.ai) 2.x installed
 
 ## Install
 
@@ -62,7 +62,7 @@ The config has three parts:
 | Part | What it covers |
 |---|---|
 | `dispatch` | How the plugin hands off work: whether to do it on its own, the live view, parallel runs, discussion rounds, time limits, the run directory |
-| `agents` | Which agents there are and how to reach them: Codex's executable, default model and sandbox; an API model's address, its API key (written in the config, or the environment variable holding it), and its default model |
+| `agents` | Which agents there are and how to reach them: Codex's executable, default model and sandbox; an API model's address, its API key (written in the config, or the environment variable holding it), and its default model; the model name for models called through opencode |
 | `levels` | Who each level of each task type goes to, with which model and reasoning effort |
 
 How to reach an agent goes only under `agents`; who gets what goes only under `levels`. Here's the config generated on first use:
@@ -172,6 +172,34 @@ For providers without an example in the config (Kimi, GLM, Qwen, OpenRouter and 
 
 API models can't look through your code themselves, so Claude sends the relevant files along with the topic (up to about 300,000 characters each time) and checks what they say about the code against the source. For now, API models can only take part in discussions, not do hands-on work or reviews.
 
+### More models through opencode
+
+If you have [opencode](https://opencode.ai) (2.x) installed, any model it can use can join discussions, for example GLM, Kimi, Qwen, MiniMax or DeepSeek from an [OpenCode Go](https://opencode.ai/docs/go/) subscription. Unlike API models, they read your project's code and search files themselves, so Claude doesn't have to pick files to send; the trade-off is that every file they read is another request, which uses more quota.
+
+1. **Sign in inside opencode**: run `opencode` in a terminal and sign in with `/connect` (choose OpenCode Go for a Go subscription), then run `opencode models` to see which models you can use. Free models (names ending in `-free`) need no sign-in.
+2. **Add them to the config**: add one entry per model under `agents`, with a name of your choice, then add it to the discussion levels you want:
+
+   ```json
+   "agents": {
+     "glm":  { "type": "opencode", "model": "opencode-go/glm-5.3" },
+     "kimi": { "type": "opencode", "model": "opencode-go/kimi-k3" }
+   },
+   "levels": {
+     "discuss": {
+       "complex": [
+         { "agent": "codex", "model": "gpt-6-astra", "effort": "max" },
+         { "agent": "glm",  "effort": null },
+         { "agent": "kimi", "effort": null }
+       ]
+     }
+   }
+   ```
+
+   `effort` is opencode's variant (for example `high`); `null` means the model's default. Each model has its own variants.
+3. Run `/codex-bridge-en:setup` to confirm each model works.
+
+For discussions the plugin gives opencode a read-only agent with only the read, search and list tools: it can't run commands or change files. Keys and sign-in stay in opencode; the plugin's config file holds none. Results include this round's cost (`cost_usd`), which is what OpenCode Go quota is charged by. Go's limits are per model, so several models in one discussion spread the load; premium models have small limits, so keep them for complex discussions.
+
 ### All settings
 
 | Setting | What it does | Default |
@@ -189,9 +217,10 @@ API models can't look through your code themselves, so Claude sends the relevant
 | `agents.codex.sandbox` | Sandbox for each of `run` / `review` / `discuss`: `read-only`, `workspace-write` or `danger-full-access` | All `null` (use Codex config) |
 | `agents.codex.approval` | Codex approval policy, e.g. `never` | `null` (use Codex config) |
 | `agents.<name>` (API model) | `type` is `openai-compatible`; `base_url` and `model` are required; `api_key` (the key itself, left empty until filled in) and/or `api_key_env` (the environment variable holding it), with `api_key` used if both are set; an agent with neither can't take part in discussions; `extra_body` is optional | None |
+| `agents.<name>` (opencode model) | `type` is `opencode`; `model` is required, written as `provider/model`; `bin` (path to the opencode executable) is optional and found automatically by default | None |
 | `levels` | See above | run: `"claude"` for simple and normal, Codex max for complex; review: Codex medium / high / max; discuss: only Codex at all three levels, medium / high / max |
 
-Project config only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `dispatch.busy_ask_min`, `agents.codex.model` and `levels`, and it can't add API models as participants, only remove them. Everything else must go in your user config, so that a repository you cloned can't loosen the sandbox, swap the executable, send your code to another address, or spend your quota on its own. For a sensitive project, keep only Codex under `levels.discuss` in its project config to turn API models off.
+Project config only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `dispatch.busy_ask_min`, `agents.codex.model` and `levels`, and it can't add participants other than Codex (API or opencode models), only remove them. Everything else must go in your user config, so that a repository you cloned can't loosen the sandbox, swap the executable, send your code to another address, or spend your quota on its own. For a sensitive project, keep only Codex under `levels.discuss` in its project config to turn the other models off.
 
 ### Preference files
 

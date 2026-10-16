@@ -64,10 +64,10 @@ node "<script path>" await-busy (--group <name> | --run <run_id>) [--after minut
 node "<script path>" cancel --run <run_id>
 ```
 
-- `check` tests whether the environment works: Node.js, Git, Codex (whether it starts and is signed in), and each API agent (whether its key is set, plus a tiny request to confirm it connects). Codex is required: if `codex.ok` is `false`, the plugin can't be used. API agents are optional: if one fails, only its part in discussions is affected. For each failed item, `fix` in the result says what to do; pass it on to the user. When a handoff or discussion fails because of the environment (codex not found, not signed in, a 401 from an API, and so on), run `check` first to confirm the cause.
+- `check` tests whether the environment works: Node.js, Git, Codex (whether it starts and is signed in), each API agent (whether its key is set, plus a tiny request to confirm it connects), and each opencode agent (whether opencode starts, whether `opencode models` lists the model, plus a tiny request to confirm it works). Codex is required: if `codex.ok` is `false`, the plugin can't be used. API and opencode agents are optional: if one fails, only its part in discussions is affected. For each failed item, `fix` in the result says what to do; pass it on to the user. When a handoff or discussion fails because of the environment (codex not found, not signed in, a 401 from an API, and so on), run `check` first to confirm the cause.
 
 - Who gets the work, the model, reasoning effort, sandbox, approval policy and time limits come from the config file (see "Configuration"). Anything not configured for Codex comes from its own `~/.codex/config.toml`.
-- `--agent <agent>` picks which entry under `agents` in the config gets this call. Without it, the one configured for that level is used; it's required when a discussion level has several participants. For now, API agents (such as DeepSeek) can only take part in `discuss`.
+- `--agent <agent>` picks which entry under `agents` in the config gets this call. Without it, the one configured for that level is used; it's required when a discussion level has several participants. For now, API agents (such as DeepSeek) and opencode agents can only take part in `discuss`. opencode agents also go only through this script; don't run `opencode run` directly to bring one into a discussion.
 - If you're unsure of the current settings, run `config --cwd "<project dir>"` first. It shows the settings in effect, the run directory and the path of the watch launcher.
 - When the sandbox isn't `read-only` / `workspace-write` (for example `danger-full-access`), `--cwd` **doesn't limit what Codex can write**. The scope is then held only by the brief and by reviewing the diff afterwards.
 - If the allowed scope includes paths ignored by `.gitignore` (such as `tests/` or a results folder), pass them with `--track "<path>"` (can be given more than once); otherwise change tracking can't see those files. Resume keeps the previous round's `--track`.
@@ -81,7 +81,7 @@ node "<script path>" cancel --run <run_id>
   - `notes`: informational messages, such as changes of unknown origin, or files Codex reported but tracking didn't see.
   - `session_id`, `run_dir`: the full diff is in `run_dir/diff.patch`.
   - Token use: `usage` is this call's input, cached and output tokens (when `usage_scope` is `session_total`, it's the whole session's total); `last_request` is the size of the latest request and the model's context window; `rate_limit` is how much of the Codex quota is used.
-  - `agent`: which agent this call went to. Results from API agents have no change tracking (`changes.available` is `false`); `files` lists the files that were attached.
+  - `agent`: which agent this call went to. Results from API and opencode agents have no change tracking (`changes.available` is `false`); for API agents `files` lists the files that were attached, and opencode agents add `cost_usd`.
 - Several runs can go in parallel, but their file scopes must not overlap; see "Splitting work to run in parallel". **Claude doesn't touch files Codex is changing.**
 
 ## Configuration
@@ -98,7 +98,7 @@ Right after starting `run`, `discuss` or `resume` in the background, let the use
 - The run_id is in the first line of the background output ("run dir …/<run_id>"). Without `--run`, watch follows whichever run is in progress, but other sessions may be running tasks too, so pass it when you can.
 - Right after it opens, switch the terminal panel to that tab so the user sees it: call the tool that shows panes (in the Claude desktop app its name contains `show_pane`; you may need to load it with ToolSearch first) with `pane` set to `terminal` and `tab_id` set to the tab_id you just got. Opening a tab alone can leave the terminal panel hidden behind another panel. Skip this if there's no such tool.
 - Then send the user the tab link `[<title>](#terminal/<tab_id>)`.
-- When a discussion has API participants, also start the queue check `await-busy` in the background (once per group). The "Queue check" line the script prints at startup gives the full command; run it as is. What to do when it exits is in "When an API participant is busy" under the discussion mode.
+- When a discussion has API participants, also start the queue check `await-busy` in the background (once per group; opencode participants don't need it). The "Queue check" line the script prints at startup gives the full command; run it as is. What to do when it exits is in "When an API participant is busy" under the discussion mode.
 - **If `run_in_terminal` isn't available** (for example in the Claude Code CLI), send the user the full watch command in a bash code block and ask them to run it in another terminal.
 - When the run ends, watch exits on its own and the tab stays for the user to look back at. Don't close it.
 - A tab whose watch has exited won't show new runs. So for every resume (a discussion's next round, a rework), open a new tab as above; don't send the user back to the previous round's tab. A discussion's next round still uses `--group <name>`, titled "Discussion: <short title> (round N)", and the view shows only that round's participants.
@@ -247,7 +247,7 @@ Before research conclusions go into long-term records, reports or docs, or are h
 - If the reminder at the start of the session lists runs that didn't finish normally, mention it to the user at a suitable moment and handle them as the user wants.
 
 ## Discussion mode (/codex-bridge-en:discuss)
-For complex plans, designs or ideas, discuss them with other models first, without carrying anything out. The participants come from `levels.discuss.<level>` in the config: Codex alone, or Codex plus API agents (such as DeepSeek), all giving their views at the same time. **Claude stays in charge of the conclusions**: the participants' views are input only. Claude accepts or rejects them on the strength of the arguments, doesn't give in just because someone insists, and doesn't go by majority vote.
+For complex plans, designs or ideas, discuss them with other models first, without carrying anything out. The participants come from `levels.discuss.<level>` in the config: Codex alone, or Codex plus API agents (such as DeepSeek) and opencode agents, all giving their views at the same time. **Claude stays in charge of the conclusions**: the participants' views are input only. Claude accepts or rejects them on the strength of the arguments, doesn't give in just because someone insists, and doesn't go by majority vote.
 
 ### When to start one on your own
 Start one directly when the user uses `/codex-bridge-en:discuss` or explicitly asks to discuss something with Codex or other models. Starting one on your own requires **all three** of these; one or two isn't enough:
@@ -259,14 +259,19 @@ Start one directly when the user uses `/codex-bridge-en:discuss` or explicitly a
 
 Don't start one for ordinary implementation details, tasks with a clear plan, or decisions the user has already made. When you start one on your own, tell the user in one sentence, for example: "I'll talk this through with the other models first."
 
-### Two kinds of participants
+### Three kinds of participants
 - **Codex**: can read the code and run read-only commands to check things itself.
+- **opencode agents** (`type` is `opencode` in the config, such as `opencode-go/glm-5.3`): models called through the opencode CLI on this machine. The script gives them only the read, search and list tools, so they can look through the project's code themselves but can't run commands or change files. So:
+  - `--file` works as it does for Codex: the paths are listed as "key files" without their contents. They can only read files inside the project directory; put material from outside the project into the topic itself.
+  - Every file they read is another request, so they use more quota than API agents. Put premium models with tight subscription limits (such as Kimi K3 or Qwen Max on OpenCode Go) only at the `complex` level.
+  - `cost_usd` in the result is this round's cost at the provider's prices; OpenCode Go quota is charged by this. Include it when reporting tokens.
+  - Check what they say about the code before accepting it, too.
 - **API agents** (`type` is `openai-compatible` in the config, such as DeepSeek): see only the topic and the attached material and can't look through the code themselves. So:
   - Attach the relevant files with `--file "<path>"` (can be given more than once); `--file "<path>:<start>-<end>"` attaches just those lines. Attach the code the topic mentions and the core modules under discussion. There's a size limit (about 300,000 characters); the script errors if it's exceeded, so pick files more carefully or use line ranges. The script also attaches the project's file list.
   - The attached material is sent to that provider. Don't add API agents for projects whose preference file or project config says not to.
   - Check what it says about the code against the source before accepting it.
   - Files it asks for in `open_questions` get attached with `--file` in the next round.
-- When the same `--file` is passed to Codex, the script only lists the paths as "key files" without their contents; Codex reads them itself.
+- When the same `--file` is passed to Codex or an opencode agent, the script only lists the paths as "key files" without their contents; they read the files themselves.
 
 ### Process (round limit set by `dispatch.discuss_max_rounds`, 2 by default)
 1. **Round 1, independent proposals**: the topic brief only gives the background, the problem to solve, constraints, known facts, relevant code locations, and the specific questions to answer. **Don't include Claude's own leaning**, so the participants don't just go along with it. Before reading any participant's result, Claude writes its own proposal to a file (scratchpad directory or system temp directory), so it isn't swayed the other way either. Then, going by `resolved_levels.discuss.<level>` in the `config` output, start one `discuss` per participant: the same brief, the same `--group` (a short title plus the date, such as `config-rework-1013`; a different name for each discussion within a conversation, kept for its later rounds), and `--agent <name>` for each, all started in the background in the same message. When the level has only one participant, `--agent` and `--group` can be left out.
@@ -278,7 +283,7 @@ Don't start one for ordinary implementation details, tasks with a clear plan, or
 - Pick the level by the discussion criteria in "Task levels and reasoning effort"; discussions started on their own meet all three conditions, so they use `complex`. Later rounds keep round 1's level.
 - Each participant has its own run_id, and the round limit applies to each participant separately. Each participant takes one of its own agent's parallel slots; if one is refused because its agent is at the limit, start it again once that agent's running tasks finish rather than skipping it.
 - If one participant fails (for example `quota_exhausted` from a low balance, an API error, a missing key, or `cancelled` because the user stopped it), the others carry on: tell the user which one failed and why, and continue with the other participants' results. Don't change the config just to get every participant in.
-- Discussion is read-only: Codex can read code and run read-only commands to back up its points, but can't change files. If `warnings` says Codex changed files, check the diff and revert what Codex changed. Don't revert changes of unknown origin listed in `notes`; most likely someone else made them. API agents can't change files.
+- Discussion is read-only: Codex can read code and run read-only commands to back up its points, but can't change files. If `warnings` says Codex changed files, check the diff and revert what Codex changed. Don't revert changes of unknown origin listed in `notes`; most likely someone else made them. API and opencode agents can't change files.
 - Discussions get the live view too.
 
 ### When an API participant is busy, ask the user whether to stop it

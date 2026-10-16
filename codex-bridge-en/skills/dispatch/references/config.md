@@ -20,7 +20,7 @@ How to reach an agent goes only under `agents`; who gets what goes only under `l
 | `watch` | `auto`: open the live view after a handoff; `off`: don't open it | `auto` |
 | `discuss_max_rounds` | How many rounds one discussion may have (round 1 plus later resumes), counted per participant; the script refuses resumes beyond it | `2` |
 | `timeout_min` | Total time limit for one run, in minutes | `480` |
-| `stall_min` | How long without activity counts as stuck, in minutes (0 turns it off). Codex: no events and no command running; API agents: no data at all in the stream | `40` |
+| `stall_min` | How long without activity counts as stuck, in minutes (0 turns it off). Codex: no events and no command running; API agents: no data at all in the stream; opencode agents: no events at all | `40` |
 | `busy_ask_min` | Ask the user whether to stop an API agent once it has been queued this many minutes because its service is busy (0 means never ask) | `2` |
 | `runs_dir` | Run record directory (or the `CODEX_RUNS_DIR` environment variable) | `~/.claude/codex-runs` |
 
@@ -49,6 +49,16 @@ Each key is an agent's name, which `levels` uses to refer to it. `claude` is res
 | `max_parallel` | Optional; how many runs may go at once, `4` by default |
 | `extra_body` | Optional parameters merged into the request body as is, for example `{ "max_tokens": 65536 }` |
 
+**`type: "opencode"`** (models called through the opencode CLI on this machine; there can be several; they can only take part in discussions)
+
+| Setting | What it does |
+|---|---|
+| `model` | The model, written as `provider/model`, for example `opencode-go/glm-5.3`. Anything `opencode models` lists works |
+| `bin` | Optional path to the opencode executable. Found automatically by default |
+| `max_parallel` | Optional; how many runs may go at once, `4` by default |
+
+Sign-in and keys are handled by opencode itself (for OpenCode Go, sign in first by running `/connect` in opencode); the plugin doesn't touch them. For discussions the script gives opencode a read-only agent with only the read, search and list tools: participants can look through the project's code themselves, but can't run commands or change files.
+
 ## levels
 
 Three modes, `run` / `review` / `discuss`, each with three levels, `simple` / `normal` / `complex`.
@@ -56,7 +66,7 @@ Three modes, `run` / `review` / `discuss`, each with three levels, `simple` / `n
 - Each `run` and `review` level: `{ "agent": "<agent>", "model": "<optional>", "effort": "<effort>" }`. A `run` level can also be written as `"claude"` as a whole, meaning Claude does that level itself instead of handing it off.
 - Each `discuss` level: an array of participants, one or several, for example `[{ "agent": "codex", "effort": "max" }, { "agent": "deepseek", "effort": "max" }]`. An agent can appear only once per level.
 - Leave out `model` to use that agent's default model under `agents`.
-- `effort`: for Codex, one of `low` `medium` `high` `xhigh` `max` `ultra`; for API agents it's sent as is as `reasoning_effort` (DeepSeek takes `low` / `high` / `max`), and `null` means don't send it. Use `null` for models with no reasoning effort parameter, such as Xiaomi MiMo (only a thinking on/off switch, on by default). When reporting to the user, describe `null` as "effort: default".
+- `effort`: for Codex, one of `low` `medium` `high` `xhigh` `max` `ultra`; for API agents it's sent as is as `reasoning_effort` (DeepSeek takes `low` / `high` / `max`), and `null` means don't send it. Use `null` for models with no reasoning effort parameter, such as Xiaomi MiMo (only a thinking on/off switch, on by default). For opencode agents it's the model's variant (for example `high`), passed to opencode as `-m model#variant`; `null` means the model's default. Each model has its own variants, and opencode reports an error for a wrong one. When reporting to the user, describe `null` as "effort: default".
 - For now, `run` and `review` can only use the codex agent.
 
 Defaults: run uses `"claude"` for simple and normal and Codex max for complex; review uses Codex medium / high / max; discuss has only Codex at all three levels, with medium / high / max.
@@ -65,8 +75,8 @@ Defaults: run uses `"claude"` for simple and normal and Codex max for complex; r
 
 - If the user config doesn't exist, the script's first run (any subcommand) creates one: `gpt-6.1-sol` as Codex's default model, and `gpt-6-astra` for complex reviews and discussions; plus two example agents, `deepseek` and `mimo`, with an empty `api_key` and not in any discussion level, as a reminder that they can be added. `check` reports them as having no API key yet; if the user doesn't plan to use them, nothing needs doing.
 - A user config in the old layout (`auto_dispatch`, top-level `model`, `sandbox` and so on at the top level) is rewritten into the new layout the first time the script runs, with the original saved as `codex-bridge.json.bak`.
-- Project config only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `dispatch.busy_ask_min`, `agents.codex.model` and `levels`. `levels` can contain just the parts to change. Project config **can't add API agents**: an API agent that the user config doesn't have at that level is dropped even if the project config adds it. It can remove them, though, which is how a sensitive project turns API agents off. A project config in the old layout is converted when read; the file isn't rewritten.
+- Project config only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `dispatch.busy_ask_min`, `agents.codex.model` and `levels`. `levels` can contain just the parts to change. Project config **can't add agents other than Codex** (API or opencode): one that the user config doesn't have at that level is dropped even if the project config adds it. It can remove them, though, which is how a sensitive project keeps only Codex. A project config in the old layout is converted when read; the file isn't rewritten.
 - Each agent's parallel limit counts only its own runs in progress, across all groups and sessions; at the limit the script refuses to start a new run, and the error lists the runs holding the slots.
 - Everything else (handing off on your own, parallel limits, executable, API address and key, sandbox, approval, run directory) can only be set in the user config, so a cloned repository can't raise its own permissions, send code elsewhere, or spend the user's quota.
 - When the sandbox isn't `read-only` / `workspace-write` (for example `danger-full-access`), Codex can write to any directory. `--cwd` only sets where it starts working; **it doesn't limit what it can write**. The scope is then held only by the brief and by reviewing the diff afterwards.
-- After the user changes settings, run `config`: `resolved_levels` in the output shows who each level finally goes to, with model and effort, and `agents_status` shows whether each API agent's environment variable is set.
+- After the user changes settings, run `config`: `resolved_levels` in the output shows who each level finally goes to, with model and effort, and `agents_status` shows whether each API agent's key is set and which executable each opencode agent uses.
