@@ -1,0 +1,203 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { sandbox, baseConfig, opencodeAgent, apiAgent, taskArgs, output, failed, json, read, write, poll, seedRun, ROOT, MESSAGES } from './helpers.mjs';
+import { report } from './fixtures/reports.mjs';
+const M = MESSAGES.zh;
+const configure = (h, access = 'edit') => {
+  const c = baseConfig();
+  c.agents.oc = { ...opencodeAgent(), ...(access === undefined ? {} : { run_access: access }) };
+  c.levels.run.complex = { agent: 'oc' };
+  h.config(c);
+  return c;
+};
+const runs = (s) => s.calls().filter((c) => c.operation === 'run');
+const tool = (name, input, files, status = 'completed') => ({ files,
+  event: { type: 'tool_use', part: { tool: name, state: { status, input, output: 'synthetic output' } } } });
+const permissions = (access) => ({ '*': 'deny', read: 'allow', grep: 'allow', glob: 'allow', list: 'allow', edit: 'allow', ...(access === 'shell' ? { shell: 'allow' } : {}) });
+
+test('run_access 只校验 opencode，config 展示权限和执行能力', async (t) => {
+  const h = sandbox(t), c = configure(h);
+  for (const value of [null, '', 'all', true, 1]) {
+    c.agents.oc.run_access = value; h.config(c);
+    failed(await h.bridge(['config']), M.configInvalid('agents.oc.run_access', M.invalid.runAccess));
+  }
+  c.agents.codex.run_access = 'ignored';
+  c.agents.api = { ...apiAgent('http://127.0.0.1:1'), run_access: 'ignored' };
+  for (const value of ['edit', 'shell', undefined]) {
+    c.agents.oc.run_access = value;
+    c.levels.run.complex = value ? { agent: 'oc' } : 'claude code'; h.config(c);
+    const r = output(await h.bridge(['config']));
+    assert.equal(r.agents_status.oc.run_access, value ?? null);
+    assert.deepEqual(r.agents_status.oc.capabilities.modes, ['run', 'review', 'discuss']);
+    assert.equal(r.agents_status.codex.run_access, undefined);
+  }
+});
+
+test('opencode 执行和续接需要用户授权，项目配置不能开启执行', async (t) => {
+  const h = sandbox(t), c = configure(h);
+  delete c.agents.oc.run_access; h.config(c);
+  failed(await h.bridge(['config']), M.runAccessRequired('oc'));
+  c.levels.run.complex = 'claude code'; h.config(c);
+  h.write('.claude/foreman.json', { agents: { oc: { run_access: 'shell' } }, levels: { run: { complex: { agent: 'oc' } } } });
+  const r = output(await h.bridge(['config', '--cwd', h.cwd]));
+  assert.equal(r.agents_status.oc.run_access, null);
+  assert.equal(r.effective.levels.run.complex, 'claude code');
+  failed(await h.bridge(taskArgs(h, 'run', ['--agent', 'oc'])), M.runAccessRequired('oc'));
+  seedRun(h, 'previous-exec', { agent: 'oc', agent_type: 'opencode cli', run_access: 'edit' });
+  failed(await h.bridge(['resume', '--run', 'previous-exec', '--level', 'complex', '--brief', '-', '--agent', 'oc']), M.runAccessRequired('oc'));
+  assert.equal(h.calls().filter((c) => ['run', 'exec'].includes(c.operation)).length, 0, JSON.stringify(h.calls()));
+});
+
+for (const access of ['edit', 'shell']) test(`opencode ${access} 执行：权限、归属、报告、用量及 watch 时间线`, async (t) => {
+  const h = sandbox(t); configure(h, access); h.initGit();
+  const changed = { ...report, files_changed: [{ path: 'reported.txt', change: '模型自报' }] };
+  const edits = [['edit', 'source.txt'], ['write', 'write.txt'], ['custom_edit', 'edit.txt'], ['custom_write', 'custom.txt'], ['apply_patch', 'patch.txt']];
+  const s = h.scenario({ last_message: `\`\`\`json\n${JSON.stringify(changed)}\n\`\`\``, files: { 'unknown.txt': 'unknown', 'reported.txt': 'claim' }, steps: [
+    tool('read', { filePath: path.join(h.cwd, 'source.txt') }), tool('grep', { pattern: 'before' }),
+    ...edits.map(([name, file], i) => tool(name, { [i % 2 ? 'path' : 'filePath']: path.join(h.cwd, file) }, { [file]: 'after\n' })),
+    tool('edit', { path: 'denied.txt' }, { 'denied.txt': 'outside actor' }, 'error'),
+    ...(access === 'shell' ? [tool('shell', { command: 'node --version' }), tool('bash', { command: 'npm test' })] : []),
+  ], export_messages: [{ type: 'assistant', tokens: { input: 10, output: 5 }, cost: 0.125 }] });
+  const execution = await h.bridge(taskArgs(h), { env: s.env, input: '合成执行任务' });
+  const r = output(execution), call = runs(s)[0], config = JSON.parse(call.env.OPENCODE_CONFIG_CONTENT);
+  assert.equal(r.status, 'done');
+  assert.deepEqual(r.report, changed);
+  assert.equal(r.isolation, 'tools'); assert.equal(r.run_access, access); assert.equal(r.sandbox, null);
+  assert.equal(r.cost_usd, 0.125); assert.equal(r.usage_scope, 'this_run');
+  assert.equal(r.commands_executed, access === 'shell' ? 2 : 0);
+  assert.equal(r.session_id, 'synthetic-opencode-session');
+  assert.deepEqual(json(path.join(r.run_dir, 'result.json')), r);
+  assert.equal(json(path.join(r.run_dir, 'meta.json')).run_access, access);
+  assert.deepEqual(Object.keys(config.agent), ['foreman-run']);
+  assert.deepEqual(config.agent['foreman-run'].permission, permissions(access));
+  assert.ok(call.args.includes('--standalone'));
+  assert.ok(execution.stderr.includes(M.unsandboxedRun(access)));
+  assert.ok(call.stdin.includes(M.footer(h.cwd, [])));
+  const schema = read(path.join(ROOT, 'foreman/skills/dispatch/schemas/report.schema.json'));
+  assert.ok(call.stdin.includes(M.opencodeRunFooter(schema, access)));
+  assert.equal(r.changes.agent_total, edits.length); assert.equal(r.changes.reported_total, 1); assert.equal(r.changes.unknown_total, 2);
+  for (const f of r.changes.files) assert.equal(f.by, edits.some(([, name]) => name === f.path) ? 'agent' : f.path === 'reported.txt' ? 'reported' : 'unknown');
+  assert.match(read(path.join(r.run_dir, 'diff.patch')), /-before\n\+after/);
+  assert.equal(fs.existsSync(path.join(r.run_dir, 'review.patch')), false);
+  const items = h.events(r.run_id).filter((e) => e.item?.tool).map((e) => e.item);
+  assert.equal(items[0].category, 'read'); assert.equal(items[1].category, 'search');
+  for (const item of items.filter((i) => i.category === 'edit')) assert.equal(item.type, 'file_change');
+  assert.deepEqual(items.filter((i) => i.category === 'shell').map((i) => i.command), access === 'shell' ? ['node --version', 'npm test'] : []);
+  for (const extra of [[], ['--verbose']]) {
+    const watch = await h.bridge(['watch', '--run', r.run_id, ...extra]);
+    assert.equal(watch.code, 0); assert.match(watch.stdout, /✎.*source.txt/);
+    assert.ok(watch.stdout.includes('read source.txt'));
+    assert.ok(watch.stdout.includes('grep before'));
+    if (access === 'shell') assert.ok(watch.stdout.includes('node --version'));
+  }
+});
+
+for (const access of ['edit', 'shell']) test(`opencode ${access} 报告只修复一次，同会话 foreman-repair 无任何工具`, async (t) => {
+  const h = sandbox(t); configure(h, access);
+  const s = h.scenario({ calls: [
+    { last_message: 'not json', steps: [tool('write', { path: 'once.txt' }, { 'once.txt': 'once' })] },
+    { last_message: report, expected_agent: 'foreman-repair' },
+  ] });
+  const r = output(await h.bridge(taskArgs(h), { env: s.env })), calls = runs(s);
+  assert.equal(calls.length, 2); assert.deepEqual(r.report, report);
+  assert.equal(calls[1].args[calls[1].args.indexOf('--session') + 1], r.session_id);
+  assert.equal(calls[1].stdin, M.reportRepairPrompt('Reply is not valid JSON'));
+  assert.deepEqual(JSON.parse(calls[1].env.OPENCODE_CONFIG_CONTENT).agent, {
+    'foreman-repair': { mode: 'primary', description: 'Report format repair for foreman', permission: { '*': 'deny' } },
+  });
+  assert.deepEqual(r.changes.files, [{ status: 'A', path: 'once.txt', by: 'agent' }]);
+});
+
+test('opencode 修复仍不合格只警告，最终提问不修复', async (t) => {
+  const h = sandbox(t); configure(h);
+  for (const last of ['not json', '你希望选择哪一个？']) {
+    const s = h.scenario({ last_message: last }, last === 'not json' ? 'invalid' : 'question');
+    const r = output(await h.bridge(taskArgs(h), { env: s.env }));
+    assert.equal(r.status, 'done'); assert.equal(r.report, null);
+    assert.equal(r.last_message, last);
+    assert.equal(runs(s).length, last === 'not json' ? 2 : 1);
+    if (last === 'not json') assert.deepEqual(r.warnings, [M.reportInvalid('oc', path.join(r.run_dir, 'last-message.txt'))]);
+    else { assert.equal(r.questions[0].source, 'final_question'); assert.equal(r.needs_decision, true); assert.deepEqual(r.warnings, []); }
+  }
+});
+
+test('opencode 禁止 no-snapshot，快照失败不启动，Codex 保持可执行', async (t) => {
+  const h = sandbox(t); configure(h);
+  failed(await h.bridge(taskArgs(h, 'run', ['--no-snapshot'])), M.snapshotRequired);
+  assert.equal(h.records().length, 0);
+  const s = h.scenario({ last_message: report });
+  const noGit = { ...s.env, PATH: h.home };
+  const r = output(await h.bridge(taskArgs(h), { env: noGit }), 1);
+  assert.equal(r.status, 'failed'); assert.equal(r.session_id, null); assert.equal(r.cost_usd, null);
+  assert.equal(s.calls().length, 0); assert.equal(r.changes.available, false);
+  assert.ok(r.errors[0].startsWith('拍改动快照失败（'));
+  assert.ok(r.errors[0].endsWith('没有系统沙箱时不能在追踪不到改动的情况下执行，已取消'));
+  assert.equal(json(path.join(r.run_dir, 'meta.json')).status, 'failed');
+  h.config(baseConfig());
+  const codex = output(await h.bridge(taskArgs(h), { env: noGit }));
+  assert.equal(codex.status, 'done'); assert.equal(codex.changes.available, false);
+  assert.ok(codex.warnings.some((w) => w.startsWith('改动追踪不可用：')));
+});
+
+test('opencode shell 静默时不判卡死，edit 按 stall_min 终止', async (t) => {
+  const shell = sandbox(t), edit = sandbox(t);
+  for (const [h, access] of [[shell, 'shell'], [edit, 'edit']]) {
+    const c = configure(h, access); c.dispatch.stall_min = 0.001; h.config(c);
+  }
+  const gate = path.join(shell.home, 'release'), ss = shell.scenario({ last_message: report, steps: [{ wait_for: gate }] });
+  const running = shell.startBridge(taskArgs(shell), { env: ss.env });
+  const meta = await shell.running(); await poll(() => runs(ss).length, 'shell 已启动');
+  const es = edit.scenario({ hold: true });
+  const stalled = output(await edit.bridge(taskArgs(edit), { env: es.env }), 1);
+  assert.equal(stalled.status, 'stalled'); assert.ok(stalled.errors.includes(M.stalled(0.001)));
+  assert.equal(output(await shell.bridge(['status', '--run', meta.id])).status, 'running');
+  write(gate, 'release'); assert.equal(output(await running.done).status, 'done');
+});
+
+test('opencode 续接同一会话和组范围 track，权限变化记入 notes', async (t) => {
+  const h = sandbox(t), c = configure(h);
+  h.write('.gitignore', 'ignored.txt\n'); h.write('ignored.txt', 'before');
+  const s = h.scenario({ last_message: report });
+  const first = output(await h.bridge(taskArgs(h, 'run', ['--group', 'work', '--scope', 'src', '--track', 'ignored.txt']), { env: s.env }));
+  const resume = ['resume', '--run', first.run_id, '--level', 'complex', '--brief', '-'];
+  const same = output(await h.bridge(resume, { env: s.env }));
+  assert.equal(same.run_access, 'edit'); assert.equal(same.session_id, first.session_id); assert.deepEqual(same.notes, []);
+  c.agents.oc.run_access = 'shell'; h.config(c);
+  const second = output(await h.bridge(resume, { env: s.env, input: '续接合成任务' }));
+  assert.equal(second.session_id, first.session_id); assert.equal(second.run_access, 'shell');
+  assert.equal(second.group, 'work'); assert.deepEqual(second.scope, ['src']); assert.deepEqual(second.track, ['ignored.txt']);
+  assert.ok(second.notes.includes(M.runAccessChanged('edit', 'shell')));
+  const call = runs(s).at(-1);
+  assert.equal(call.args[call.args.indexOf('--session') + 1], first.session_id);
+  assert.deepEqual(JSON.parse(call.env.OPENCODE_CONFIG_CONTENT).agent['foreman-run'].permission, permissions('shell'));
+  assert.equal(call.stdin, `续接合成任务\n\n${M.resumeFooter}\n\n${M.opencodeRunResumeFooter}\n`);
+  failed(await h.bridge([...resume, '--no-snapshot']), M.snapshotRequired);
+});
+
+test('opencode 执行准入仍拦截同组 scope 重叠', async (t) => {
+  const h = sandbox(t); configure(h);
+  const s = h.scenario({ hold: true });
+  const running = h.startBridge(taskArgs(h, 'run', ['--group', 'same', '--scope', 'src']), { env: s.env });
+  const meta = await h.running(); await poll(() => runs(s).length, 'opencode 已启动');
+  const rejected = await h.bridge(taskArgs(h, 'run', ['--group', 'same', '--scope', 'src/file.mjs']), { env: s.env });
+  assert.equal(rejected.code, 2); assert.ok(rejected.stderr.includes(M.scopeOverlap('same', meta.id, ['src/file.mjs'])));
+  assert.equal(runs(s).length, 1);
+  assert.equal(output(await h.bridge(['cancel', '--run', meta.id])).status, 'cancelled');
+  assert.equal(output(await running.done, 1).status, 'cancelled');
+});
+
+test('opencode 执行保留总超时、额度和输入看门狗状态', async (t) => {
+  const h = sandbox(t); configure(h, 'shell');
+  for (const [status, scenario, extra, env] of [
+    ['timeout', { hold: true }, ['--timeout', '0.04'], {}],
+    ['quota_exhausted', { steps: [{ event: { type: 'error', error: { message: 'quota exhausted' } } }], exit_code: 1 }, [], {}],
+    ['needs_input', { hold: true, stderr: 'Continue? [y/n]' }, [], { FOREMAN_TEST_INPUT_WAIT_MIN: '0.001' }],
+  ]) {
+    const s = h.scenario(scenario, status);
+    const r = output(await h.bridge(taskArgs(h, 'run', extra), { env: { ...s.env, ...env } }), 1);
+    assert.equal(r.status, status); assert.equal(runs(s).length, 1);
+    if (status === 'needs_input') assert.equal(r.questions[0].source, 'input_prompt');
+  }
+});

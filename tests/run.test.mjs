@@ -24,10 +24,11 @@ test('执行成功写报告、补丁、事件归属和会话用量', async (t) =
   assert.deepEqual(r.rate_limit, sessionStats.rate_limits.primary);
   assert.equal(r.commands_executed, 1);
   assert.equal(r.changes.available, true);
-  assert.equal(r.changes.agent_total, 2);
+  assert.equal(r.changes.agent_total, 1);
+  assert.equal(r.changes.reported_total, 1);
   assert.equal(r.changes.unknown_total, 0);
   assert.deepEqual(r.changes.files.map(({ path, status, by }) => ({ path, status, by })), [
-    { path: 'reported.txt', status: 'A', by: 'agent' }, { path: 'source.txt', status: 'M', by: 'agent' },
+    { path: 'reported.txt', status: 'A', by: 'reported' }, { path: 'source.txt', status: 'M', by: 'agent' },
   ]);
   assert.match(read(path.join(r.run_dir, 'diff.patch')), /-before\n\+after/);
   assert.deepEqual(json(path.join(r.run_dir, 'result.json')), r);

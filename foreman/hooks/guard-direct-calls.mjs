@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// PreToolUse 钩子：拦下 Claude 直接调用 codex exec / codex review 的 Bash 和 PowerShell 命令，
+// PreToolUse 钩子：拦下直接调用 codex exec / codex review / opencode run 的 Bash 和 PowerShell 命令，
 // 要求改走 cli.mjs。退出码 2 会阻止这次调用，并把 stderr 的内容反馈给 Claude。
 
 import fs from 'node:fs';
@@ -10,14 +10,14 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(HERE, '..', 'skills', 'dispatch', 'scripts', 'cli.mjs');
 
 const MESSAGES = {
-  zh: `已拦截：不要直接调用 codex exec / codex review，所有 Codex 调用都必须通过 foreman 插件的脚本：
+  zh: `已拦截：不要直接调用 codex exec / codex review / opencode run。协作方的调用都必须通过 foreman 插件的脚本：
   node "${SCRIPT}" <run|discuss|resume|review> ...
 用法见 foreman:dispatch skill。测试、验收和一次性问答也一样，只读问答用 discuss。
-如果是脚本本身满足不了的需求（比如沙箱导致 Codex 无法运行），停下来把情况告诉用户，由用户决定，不要设法绕过。`,
-  en: `Blocked: don't call codex exec / codex review directly. Every Codex call must go through the foreman-en plugin's script:
+如果是脚本本身满足不了的需求（比如沙箱导致协作方无法运行），停下来把情况告诉用户，由用户决定，不要设法绕过。`,
+  en: `Blocked: don't call codex exec / codex review / opencode run directly. Every call to an agent must go through the foreman-en plugin's script:
   node "${SCRIPT}" <run|discuss|resume|review> ...
 See the foreman-en:dispatch skill. This applies to tests, checks and one-off questions too; use discuss for read-only questions.
-If the script can't do what's needed (for example the sandbox stops Codex from running), stop and tell the user so they can decide. Don't look for a way around it.`,
+If the script can't do what's needed (for example a sandbox stops an agent from running), stop and tell the user so they can decide. Don't look for a way around it.`,
 };
 
 const CODEX_SUBCOMMANDS = new Set(['exec', 'e', 'review']);
@@ -49,21 +49,26 @@ function splitSegments(command) {
   return segments;
 }
 
-// 只看每段命令开头真正被执行的程序，文字里提到 "codex exec" 不算。
-function callsCodexDirectly(command) {
+// 只看每段命令开头真正被执行的程序，文字里提到调用不算。
+function callsAgentDirectly(command) {
   for (const segment of splitSegments(command)) {
     const tokens = segment.replace(/^[\s(`$&.]+/, '').match(/"[^"]*"|'[^']*'|\S+/g) || [];
     let i = 0;
     while (i < tokens.length && /^\w+=/.test(tokens[i])) i++; // 跳过 VAR=value 前缀
     const first = base(tokens[i] || '');
     let rest;
+    let opencode = false;
     if (/^codex(\.exe|\.cmd|\.ps1)?$/.test(first)) rest = tokens.slice(i + 1);
     else if (/^node(\.exe)?$/.test(first) && base(tokens[i + 1] || '') === 'codex.js') rest = tokens.slice(i + 2);
     else if (/^npx(\.cmd)?$/.test(first) && /^(@openai\/codex|codex)(@.*)?$/.test((tokens[i + 1] || '').replace(/["']/g, ''))) rest = tokens.slice(i + 2);
+    else if (/^opencode(\.exe|\.cmd|\.ps1)?$/.test(first)) { rest = tokens.slice(i + 1); opencode = true; }
+    else if (/^npx(\.cmd)?$/.test(first) && /^(opencode-ai|@opencode\/cli)(@.*)?$/.test((tokens[i + 1] || '').replace(/["']/g, ''))) { rest = tokens.slice(i + 2); opencode = true; }
     else continue;
     const words = rest.map((t) => t.replace(/^["']|["']$/g, ''));
     if (words.some((w) => w === '--help' || w === '-h')) continue;
-    if (words.some((w) => CODEX_SUBCOMMANDS.has(w))) return true;
+    // session 等子命令后也可能出现名为 run 的参数。
+    if (opencode ? words.find((w, n) => !w.startsWith('-') && words[n - 1] !== '--log-level') === 'run'
+      : words.some((w) => CODEX_SUBCOMMANDS.has(w))) return true;
   }
   return false;
 }
@@ -74,7 +79,7 @@ process.stdin.on('data', (chunk) => { input += chunk; });
 process.stdin.on('end', () => {
   let command;
   try { command = JSON.parse(input).tool_input?.command; } catch { process.exit(0); }
-  if (typeof command !== 'string' || !callsCodexDirectly(command)) process.exit(0);
+  if (typeof command !== 'string' || !callsAgentDirectly(command)) process.exit(0);
   let language = 'zh';
   try { language = JSON.parse(fs.readFileSync(path.join(path.dirname(SCRIPT), 'language.json'), 'utf8')).language; } catch { /* 用默认 */ }
   process.stderr.write((MESSAGES[language] || MESSAGES.zh) + '\n');

@@ -8,6 +8,8 @@ import { newRunDir } from '../records.mjs';
 import { execute, eventWriter, watchCancellation, spawnCli, validateSchema } from '../runner.mjs';
 import { M, die, isObject, binCommand, pathCommand, npmEntry, killTree, isReconnect, readAttachments, focusFiles } from '../util.mjs';
 
+const capabilities = { modes: ['run', 'review', 'discuss'], isolation: 'os', reads_code: true, native_schema: true, native_review: true, images: true, resume: true, command_start_events: true };
+
 // 模型、推理强度、沙箱、审批这几项 exec / resume / review 都接受 -m 和 -c。
 function codexOptions(agent, { model, effort, mode }) {
   const args = [];
@@ -256,7 +258,7 @@ async function executeCodex(ctx) {
     }
   }
   return execute({ ...ctx, id, dir, release, args, prompt, expectReport: mode !== 'review' }, {
-    run: runCodex, stats: codexSessionStats,
+    capabilities, run: runCodex, stats: codexSessionStats,
     schema: JSON.parse(fs.readFileSync(kind === 'discuss' ? DISCUSS_SCHEMA : SCHEMA, 'utf8')), validate: validateSchema,
     describe: () => {
       const sandbox = agent.sandbox?.[kind === 'exec' ? 'run' : kind] || null;
@@ -268,7 +270,7 @@ async function executeCodex(ctx) {
 }
 
 export default {
-  type: 'codex cli', capabilities: { modes: ['run', 'review', 'discuss'], isolation: 'os', reads_code: true, native_schema: true, native_review: true, images: true, resume: true, command_start_events: true },
+  type: 'codex cli', capabilities,
   efforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   defaultEffort: (level) => ({ simple: 'medium', normal: 'high', complex: 'max' })[level], channel: M.channel.codex,
   validate,

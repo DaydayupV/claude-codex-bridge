@@ -124,7 +124,7 @@
   | type | 是什么 | 能做的任务 |
   |---|---|---|
   | `codex cli` | 本机的 Codex CLI | 执行、审查、讨论、生成图片 |
-  | `opencode cli` | 本机的 opencode CLI，能用它接入的各家模型 | 审查、讨论（执行以后的版本开放） |
+  | `opencode cli` | 本机的 opencode CLI，能用它接入的各家模型 | 执行（要显式开启）、审查、讨论 |
   | `api` | 兼容 OpenAI 接口的模型，比如 DeepSeek、Kimi、MiMo | 讨论 |
 
 - 同一种可以配多个，各用不同模型。Codex 不是必需的。
@@ -163,6 +163,12 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 1. **在 opencode 里登录**：终端运行 `opencode`，用 `/connect` 登录（OpenCode Go 选 OpenCode Go），再运行 `opencode models` 看能用哪些模型。免费模型（名字带 `-free` 的）不用登录。
 2. **加进配置**：每个模型加一项 `{ "type": "opencode cli", "model": "opencode-go/glm-5.3" }`，代号用模型名，再加进需要的讨论等级。也可以交给 `/foreman:setup`。
 
+**让 opencode 做执行任务**：要你在用户配置里给它写 `run_access`，再放进 `levels.run`。两档权限：
+- `"edit"`：只能读写项目目录里的文件，不能运行命令。测试由 Claude 事后跑。
+- `"shell"`：还能运行命令，比如跑测试。opencode 没有系统沙箱，命令以你的账户权限运行、能访问整台机器，只适合你信任的项目和模型。
+
+两档都会先拍改动快照，Claude 事后逐个文件审查 diff。
+
 讨论和审查时，插件给 opencode 注入一个只读代理，只有读文件、搜索和列目录的工具：它不能运行命令，也不能改文件。审查时要看的改动由插件用 git 算好附给它，范围和 Codex 原生审查一致。key 和登录都留在 opencode 里，插件的配置文件里不写。结果里会带上这一轮折算的费用（`cost_usd`），OpenCode Go 的额度就按这个扣。Go 的额度按模型分开算，几个模型一起讨论能把额度摊开；高档模型额度少，建议只放在复杂讨论里。
 
 ### 项目配置
@@ -193,7 +199,8 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 ## 安全提示
 
 - **沙箱以 Codex 的配置为准。** 如果你的 Codex 配置是 `danger-full-access`，Codex 能读写电脑上的任何目录。任务说明会限定它的改动范围，Claude 事后也会审查 diff，但这些都不是技术上的隔离。想要技术隔离，就在配置里把 `agents.codex.sandbox` 设成 `workspace-write` 或 `read-only`。注意 Codex 在 Windows 上的沙箱支持可能不完整，改了之后要实际测试。
-- **Claude 只能通过插件调用 Codex。** 插件带有一个钩子：Claude 直接运行 `codex exec` 或 `codex review` 的命令会被拦下，这样每次调用都有记录、改动追踪和明确的模型和推理强度。你自己在终端里运行 codex 不受影响。
+- **opencode 做执行时没有系统沙箱。** `run_access` 为 `edit` 时它写不了项目以外的文件、也不能运行命令；为 `shell` 时它的命令能访问整台机器。默认不开放，要你自己在用户配置里写，项目配置开不了。
+- **Claude 只能通过插件调用协作方。** 插件带有一个钩子：Claude 直接运行 `codex exec`、`codex review` 或 `opencode run` 的命令会被拦下，这样每次调用都有记录、改动追踪和明确的模型和推理强度。你自己在终端里运行它们不受影响。
 - **协作方不会因为等人回答而卡住。** Codex 默认不需要审批，opencode 不开放提问和需要确认的权限；协作方要人回答的事（交回的问题、被权限挡住的操作、等终端输入的提示）都收集在结果里，由 Claude 判断：在你已有的授权内的直接决定后续接，业务取舍、扩大范围、花钱和不可逆的操作才问你。
 - **你的代码和任务说明会发给 OpenAI。** 加了 API 模型参与讨论后，议题和附带的代码也会发给对应厂商。涉及敏感代码的项目，先确认这样做没问题，必要时用项目配置只留 Codex。
 - **API key 可以写在用户配置里，也可以放在环境变量里。** 写在配置里是明文，`~/.claude/foreman/config.json` 不要提交或分享；项目配置里写的 key 不会生效。`config` 命令不显示 key，脚本也不会把 key 写进运行记录。

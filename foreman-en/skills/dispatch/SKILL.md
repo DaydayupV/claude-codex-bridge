@@ -72,7 +72,7 @@ node "<script path>" cancel --run <run_id>
   The overall `ok` only counts Node.js and the agents the levels use; a failure in an unused agent is reported but doesn't block anything. For each failed item, `fix` in the result says what to do; pass it on to the user. When a handoff or discussion fails because of the environment (codex not found, not signed in, a 401 from an API, and so on), run `check` first to confirm the cause.
 
 - Who gets the work, the model, reasoning effort, sandbox, approval policy and time limits come from the config file (see "Configuration"). Anything not configured for Codex comes from its own `~/.codex/config.toml`.
-- `--agent <agent>` picks which entry under `agents` in the config gets this call. Without it, the one configured for that level is used; it's required when a discussion level has several participants. Which tasks an agent can do is in `capabilities.modes` in the `config` output; for now `api` agents can only take part in `discuss`, and `opencode cli` agents can do `review` and `discuss`. Old IDs from before the upgrade (such as `codex`) still work, and the script says what the new ID is. opencode agents also go only through this script; don't run `opencode run` directly to bring one into a discussion.
+- `--agent <agent>` picks which entry under `agents` in the config gets this call. Without it, the one configured for that level is used; it's required when a discussion level has several participants. Which tasks an agent can do is in `capabilities.modes` in the `config` output; for now `api` agents can only take part in `discuss`; `opencode cli` agents can do `review` and `discuss`, and `run` too when the config gives them `run_access`. Old IDs from before the upgrade (such as `codex`) still work, and the script says what the new ID is. opencode agents also go only through this script; don't run `opencode run` directly to bring one into a discussion.
 - If you're unsure of the current settings, run `config --cwd "<project dir>"` first. It shows the settings in effect, the run directory and the path of the watch launcher.
 - When the sandbox isn't `read-only` / `workspace-write` (for example `danger-full-access`), `--cwd` **doesn't limit what Codex can write**. The scope is then held only by the brief and by reviewing the diff afterwards.
 - If the allowed scope includes paths ignored by `.gitignore` (such as `tests/` or a results folder), pass them with `--track "<path>"` (can be given more than once); otherwise change tracking can't see those files. Resume keeps the previous round's `--track`.
@@ -82,7 +82,7 @@ node "<script path>" cancel --run <run_id>
 - **After starting `run`, `discuss` or `resume`, your very next step is the live view** (see "Live view"), even for tests and small tasks. The user relies on it to see what Codex is doing; skipping it leaves them waiting in the dark.
 - The result is printed to stdout as JSON. The main fields:
   - `report`: Codex's structured report.
-  - `changes`: changes inside the working directory, as tracked by the script. Each file has `by`: `agent` means there is evidence the agent doing the work changed it (records from before the rename say `codex`), `unknown` means it isn't known who did.
+  - `changes`: changes inside the working directory, as tracked by the script. Each file has `by`: `agent` means a tool event shows the agent doing the work changed it (records from before the rename say `codex`); `reported` means only its report claims the change, which is common for files written by commands or scripts; `unknown` means it isn't known who did.
   - `notes`: informational messages, such as changes of unknown origin, or files Codex reported but tracking didn't see.
   - `questions` and `needs_decision`: things the agent needs answered; see "When an agent needs an answer".
   - `session_id`, `run_dir`: the full diff is in `run_dir/diff.patch`.
@@ -234,12 +234,16 @@ Before research conclusions go into long-term records, reports or docs, or are h
 1. Look at `status` and `report.status` first. If it isn't `completed`, read `open_issues` first.
 2. Read `run_dir/diff.patch` and compare it with `changes.files`:
    - Any files changed outside the scope? Does `report.files_changed` match the actual changes?
-   - Files with `by` set to `unknown` may have been changed by Claude itself or another session, or written by Codex through commands or scripts. Find out who changed them first; **don't just revert them**.
+   - For files with `by` set to `reported`, check the diff to confirm they are changes this task should have made. Files with `by` set to `unknown` may have been changed by Claude itself or another session, or written by the agent with a command it didn't report. Find out who changed them first; **don't just revert them**.
    - Is the logic right? Any defensive overkill, needless abstraction, redundant tests?
    - **Was it overdone?** The change is clearly bigger than the "Size" section expected (say, more than twice), or it adds options, settings, abstraction layers, compatibility branches or tests nobody asked for. Trim small things yourself; if there's a lot, use resume for a rework and list what to remove in the rework brief.
    - Do names, comments and messages follow the brief, and are they plain and readable (see "Claude owns all text meant for people")?
    - Only changes inside the working directory are tracked; if the task involved paths outside it, check those separately.
-3. **Actually run it**: build, run the tests or the script itself. Don't rely on Codex saying it passed.
+3. **Actually run it**: build, run the tests or the script itself. Don't rely on the agent saying it passed.
+4. **Take a closer look at runs without an OS sandbox** (`isolation` is `tools` in the result; currently opencode):
+   - With `run_access` set to `edit`, it can't run commands: Claude runs every test and script itself, and a report saying "passed" counts for nothing.
+   - With `run_access` set to `shell`, its commands can reach outside the working directory, where change tracking can't see. Go through the diff file by file; if the task touches outside paths, installs dependencies or goes online, check what it actually did (`opencode.jsonl` in `run_dir` has every command it ran).
+   - Write-tool events count as evidence of who changed a file (`by: agent`); files the report merely claims don't.
 4. Report to the user only once you've confirmed it.
 
 ## Rework and failures

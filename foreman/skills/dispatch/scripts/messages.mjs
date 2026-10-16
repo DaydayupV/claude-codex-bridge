@@ -48,6 +48,7 @@ const zh = {
     agentName: '代号只能用字母、数字、.、- 和 _，以字母或数字开头，不能叫 claude 或 claude code',
     agentType: '只能是 codex cli、opencode cli 或 api',
     opencodeModel: '应写成 厂商/模型，例如 opencode-go/glm-5.3',
+    runAccess: '应为 "edit" 或 "shell"',
     modelName: '应为模型名或 null',
     stringOrNull: '应为字符串或 null',
     sandbox: '只能是 read-only、workspace-write、danger-full-access 或 null',
@@ -79,6 +80,13 @@ const zh = {
   apiNoResponseFormat: '接口不接受 response_format，已去掉后重试，只靠提示词要求 JSON 格式',
   apiNoChanges: 'API 协作方不能改动文件，不追踪改动',
   opencodeNoChanges: 'opencode 协作方只能读文件和搜索，不能改动文件，不追踪改动',
+  runAccessRequired: (name) => `${name}（opencode cli）要做执行任务，需要在用户配置里给它写 run_access："edit"（只能改项目里的文件）或 "shell"（还能运行命令，没有系统沙箱）`,
+  unsandboxedRun: (access) => access === 'edit'
+    ? '这次执行没有系统沙箱，只靠工具权限：只能读写项目目录里的文件，不能运行命令'
+    : '这次执行没有系统沙箱：能运行命令，命令以你的账户权限运行、能访问整台机器，改动靠事后的 diff 把关',
+  snapshotRequired: '没有系统沙箱的执行必须先拍改动快照，不能用 --no-snapshot',
+  snapshotFailedNoStart: (err) => `拍改动快照失败（${err}）。没有系统沙箱时不能在追踪不到改动的情况下执行，已取消`,
+  runAccessChanged: (old, now) => `配置里的 run_access 从 ${old} 改成了 ${now}，这一轮按 ${now}`,
   opencodeExportFailed: (err) => `读取 opencode 会话用量失败（${err}），这次没有 token 统计`,
   stepApiWaiting: '已发出请求，等待回复',
   stepApiThinking: (n) => `思考中（已收到 ${n} 字）`,
@@ -129,6 +137,15 @@ ${schema}`,
 JSON schema：
 ${schema}`,
   opencodeResumeFooter: '---\n（调度方提示：前面的讨论规则仍然有效：只读、不迎合、说人话、有依据，运行中没人回答。最后同样只输出符合 schema 的 JSON 对象，不要用代码块包起来。）',
+  opencodeRunFooter: (schema, access) => `---
+## 交付格式（调度方自动附加）
+- ${access === 'edit' ? '你没有运行命令的工具：不要尝试运行测试或脚本。完成标准里要求运行的命令，在报告的 verification 里写明"未运行，由调度方运行"。' : '你可以运行命令，但命令以用户的账户权限运行：只在项目目录里做事；任务说明没有允许的，不要碰项目以外的文件，不要联网下载或安装东西。'}
+- 运行期间没有人能回答你：不要提问后等待，问题写进报告的 decision_requests。
+- 最后只输出一个 JSON 对象，符合下面的 JSON schema。不要输出 JSON 以外的文字，也不要用代码块包起来。
+
+JSON schema：
+${schema}`,
+  opencodeRunResumeFooter: '---\n（调度方提示：前面的固定约束和交付格式仍然有效。完成后同样只输出符合 schema 的 JSON 对象，不要用代码块包起来。）',
 
   // ---------- check ----------
   fixNode: (v) => `Node.js ${v} 太旧，需要 18 或更高版本：https://nodejs.org`,
@@ -197,7 +214,7 @@ ${schema}`,
   trackingUnavailable: (err) => `改动追踪不可用：${err}`,
   trackingFailed: (err) => `改动追踪失败：${err}`,
   readonlyChanged: (kind, n) => `${kind === 'discuss' ? '讨论' : '审查'}本应只读，但 Codex 改动了 ${n} 个文件，请检查 diff.patch`,
-  unattributedChanges: (n) => `任务期间工作目录里另有 ${n} 个文件发生变化，没有证据表明是 Codex 改的，可能来自 Claude 或其他会话；Codex 用命令或脚本写的文件也会归到这里。不要直接还原，先确认是谁改的`,
+  unattributedChanges: (n) => `任务期间工作目录里另有 ${n} 个文件发生变化：没有工具事件证明是协作方改的，它的报告里也没提到，可能来自 Claude 或其他会话，也可能是协作方用命令写了却没报告。不要直接还原，先确认是谁改的`,
   reportedNotTracked: (paths) => `Codex 报告改动了这些文件，但它们不在追踪范围内（可能被忽略规则排除），diff.patch 里没有：${paths.join('、')}。需要追踪时，派活时用 --track 指定`,
   quotaExhausted: (resets) => `Codex 额度已用完${resets ? `，预计 ${resets} 恢复` : ''}。不要重试；会话已保留，额度恢复后可以用 resume 继续`,
   lastMessageTruncated: (file) => `last_message 只保留了前 8000 字，全文见 ${file}`,
@@ -363,6 +380,7 @@ const en = {
     agentName: "IDs may only use letters, digits, ., - and _, must start with a letter or digit, and can't be claude or claude code",
     agentType: 'must be codex cli, opencode cli or api',
     opencodeModel: 'must be provider/model, e.g. opencode-go/glm-5.3',
+    runAccess: 'must be "edit" or "shell"',
     modelName: 'must be a model name or null',
     stringOrNull: 'must be a string or null',
     sandbox: 'must be read-only, workspace-write, danger-full-access or null',
@@ -444,6 +462,22 @@ ${schema}`,
 JSON schema:
 ${schema}`,
   opencodeResumeFooter: "---\n(Note from the dispatcher: the discussion rules above still apply: read-only, don't just agree, speak plainly, back it up; nobody can answer you while you run. Finish with a single JSON object matching the schema, without a code block.)",
+  runAccessRequired: (name) => `${name} (opencode cli) needs run_access in the user config to do hands-on work: "edit" (only change files in the project) or "shell" (can also run commands, with no OS sandbox)`,
+  unsandboxedRun: (access) => access === 'edit'
+    ? "No OS sandbox for this run, only tool permissions: it can read and write files in the project directory and can't run commands"
+    : "No OS sandbox for this run: it can run commands, which run with your account's permissions and can reach the whole machine; the diff afterwards is the check",
+  snapshotRequired: "Runs without an OS sandbox must take a change snapshot first; --no-snapshot isn't allowed",
+  snapshotFailedNoStart: (err) => `Couldn't take the change snapshot (${err}). Without an OS sandbox, a run can't go ahead untracked, so it was cancelled`,
+  runAccessChanged: (old, now) => `run_access in the config changed from ${old} to ${now}; this round uses ${now}`,
+  opencodeRunFooter: (schema, access) => `---
+## Delivery format (added by the dispatcher)
+- ${access === 'edit' ? 'You have no tools for running commands: do not try to run tests or scripts. For commands required by the acceptance criteria, write "Not run; the dispatcher will run them" in the report\'s verification.' : "You may run commands, but they run with the user's account permissions: work only in the project directory; unless the brief allows it, do not touch files outside the project or download or install anything from the network."}
+- Nobody can answer you while you run: do not ask and wait. Put questions in the report's decision_requests.
+- Finish with a single JSON object matching the JSON schema below. Do not write anything outside the JSON or wrap it in a code block.
+
+JSON schema:
+${schema}`,
+  opencodeRunResumeFooter: '---\n(Note from the dispatcher: the standing rules and delivery format above still apply. Finish with a single JSON object matching the schema, without a code block.)',
 
   // ---------- check ----------
   fixNode: (v) => `Node.js ${v} is too old; version 18 or later is needed: https://nodejs.org`,
@@ -512,7 +546,7 @@ ${schema}`,
   trackingUnavailable: (err) => `Change tracking unavailable: ${err}`,
   trackingFailed: (err) => `Change tracking failed: ${err}`,
   readonlyChanged: (kind, n) => `The ${kind === 'discuss' ? 'discussion' : 'review'} should be read-only, but Codex changed ${n} files; check diff.patch`,
-  unattributedChanges: (n) => `${n} other files changed in the working directory during the run, with no evidence that Codex changed them. They may come from Claude or another session; files Codex wrote through commands or scripts also land here. Don't revert them before finding out who changed them`,
+  unattributedChanges: (n) => `${n} other files changed in the working directory during the run: no tool event shows the agent changed them, and its report doesn't mention them. They may come from Claude or another session, or the agent wrote them with a command and didn't report it. Don't revert them before finding out who changed them`,
   reportedNotTracked: (paths) => `Codex reported changing these files, but they are outside tracking (probably excluded by ignore rules) and are not in diff.patch: ${paths.join(', ')}. Pass them with --track to track them`,
   quotaExhausted: (resets) => `The Codex quota is used up${resets ? `; it should reset at ${resets}` : ''}. Don't retry; the session is kept and can be resumed once the quota resets`,
   lastMessageTruncated: (file) => `last_message keeps only the first 8000 characters; the full text is in ${file}`,

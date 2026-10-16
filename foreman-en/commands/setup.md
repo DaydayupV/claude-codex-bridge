@@ -24,7 +24,12 @@ The script is `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/cli.mjs`. The confi
      - Run `opencode models` (read-only) to see which models are available. If the model the user wants isn't listed, ask them to run `opencode` in their own terminal and sign in with `/connect` there (choose OpenCode Go for a Go subscription), then check again.
      - Recommend one or two models for discussions. With OpenCode Go, explain that limits are per model, so premium models with small limits (such as Kimi K3 or Qwen Max) are best kept for the complex level.
      - Once the user chooses, add `{ "type": "opencode cli", "model": "<provider/model>" }` under `agents` in the user config for each model, using the model name (the part after `/`) as the ID, and add it to the chosen levels under `levels.discuss`. Leave effort out unless the user names a variant.
-     - opencode can do reviews and discussions; hands-on work comes in a later version. To have it review, add it to the chosen levels under `levels.review`.
+     - opencode can do reviews and discussions; to have it review, add it to the chosen levels under `levels.review`.
+     - Ask the user whether it should also do hands-on work, explaining the two levels:
+       - `"edit"`: only changes files in the project and can't run commands; Claude runs the tests afterwards;
+       - `"shell"`: can also run commands. opencode has no OS sandbox, so the commands run with the user's account permissions and can reach the whole machine.
+
+       Only after the user clearly agrees and picks a level, write `run_access` into that agent and add it to the chosen levels under `levels.run`. If the user picks `shell`, ask them to explicitly confirm they accept "no OS sandbox".
    - **API keys are there, or the user wants a provider's API**:
      - The generated config already has an agent for each provider whose key was found, just not in any discussion yet. Ask whether to add them, and at which levels.
      - For a provider not in the config yet (such as GLM, Qwen or OpenRouter), confirm the provider, the model name and the API address; if unsure, check the provider's official docs and don't guess. Add `{ "type": "api", "base_url": "...", "model": "..." }` under `agents`, using the model name as the ID.

@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { CLAUDE_SESSION, checkAdmission, isCancelled } from './records.mjs';
 import { makeTracker } from './tracker.mjs';
 import { computeReviewScope } from './review-scope.mjs';
-import { M, die, relativePath, pathKey, whoOf, modelOf, replaceFile, killTree, looksLikeQuestion, looksLikeInputPrompt, looksLikeFinalQuestion, needsDecision } from './util.mjs';
+import { M, die, notice, relativePath, pathKey, whoOf, modelOf, replaceFile, killTree, looksLikeQuestion, looksLikeInputPrompt, looksLikeFinalQuestion, needsDecision } from './util.mjs';
 
 const INPUT_WAIT_MIN = 3;
 
@@ -81,6 +81,7 @@ function startRun(ctx, { started = Date.now(), track = [], modelShown = ctx.mode
   const meta = {
     id, mode, kind, title: ctx.title || null, cwd, model, model_shown: modelShown, model_name: modelName, level, effort,
     agent: agentName, agent_type: agent.type, sandbox, parent: ctx.parent || null,
+    ...(kind === 'exec' && ctx.isolation === 'tools' ? { isolation: ctx.isolation, run_access: agent.run_access } : {}),
     track, group: opts.group ?? null, scope: opts.scope, round: ctx.round ?? null,
     started_at: new Date(started).toISOString(), status: 'running', pid: process.pid, session_id: ctx.sessionId || null,
     claude_session: CLAUDE_SESSION,
@@ -186,8 +187,10 @@ function parseReport(last, schema, validateSchema) {
   } catch { return { report: null, invalid: [last.trim() ? 'Reply is not valid JSON' : 'Reply is empty'] }; }
 }
 
-async function execute(ctx, { run: runAgent, stats: sessionStats, describe, schema, validate }) {
+async function execute(ctx, { run: runAgent, stats: sessionStats = () => null, describe, schema, validate, capabilities }) {
   const { agentName, agent, model, mode, kind, id, dir, cwd, level, effort, args, prompt, opts, expectReport } = ctx;
+  const { isolation } = capabilities;
+  const snapshotRequired = kind === 'exec' && isolation !== 'os';
   const started = Date.now();
   const track = [...new Map(opts.track.map((file) => {
     const rel = relativePath(cwd, file);
@@ -195,65 +198,80 @@ async function execute(ctx, { run: runAgent, stats: sessionStats, describe, sche
     return [pathKey(rel), rel];
   })).values()];
   const { sandbox, modelShown, modelName } = describe(ctx);
-  const run = startRun(ctx, { started, track, sandbox, modelShown, modelName, atomic: false });
+  const run = startRun({ ...ctx, isolation }, { started, track, sandbox, modelShown, modelName, atomic: false });
   const { meta, writeMeta } = run;
   fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
   process.stderr.write(`foreman: ${M.started(mode, whoOf(meta), level, dir)}\n`);
+  if (snapshotRequired) notice(M.unsandboxedRun(agent.run_access));
 
   const warnings = [];
   const notes = [];
+  if (snapshotRequired && ctx.parent && ctx.previousRunAccess !== agent.run_access) notes.push(M.runAccessChanged(ctx.previousRunAccess, agent.run_access));
   let tracker = null;
   let before = null;
+  let snapshotError = null;
   if (!opts['no-snapshot']) {
     try { tracker = makeTracker(dir, cwd, track); before = tracker.snap('before'); }
-    catch (e) { warnings.push(M.trackingUnavailable(e.message)); tracker?.cleanup(); tracker = null; }
+    catch (e) {
+      if (snapshotRequired) snapshotError = M.snapshotFailedNoStart(e.message);
+      else warnings.push(M.trackingUnavailable(e.message));
+      tracker?.cleanup(); tracker = null;
+    }
   }
 
   const baseline = mode === 'resume' ? sessionStats(ctx.sessionId, meta.started_at)?.total_token_usage : {};
-  const r = await runAgent({
-    agent, args, cwd, prompt, runDir: dir,
-    ...runLimits(ctx, started),
-    sessionId: ctx.sessionId,
-    onSession: (sid) => { meta.session_id = sid; writeMeta(); },
-  });
+  const r = snapshotError ? { status: 'failed', code: 1, errors: [snapshotError], warnings: [], fileChanges: new Set(), images: [], commands: 0, usage: null, cost: null }
+    : await runAgent({
+      agent, args, cwd, prompt, runDir: dir,
+      ...runLimits(ctx, started),
+      run,
+      sessionId: ctx.sessionId,
+      onSession: (sid) => { meta.session_id = sid; writeMeta(); },
+    });
 
   const lastFile = path.join(dir, 'last-message.txt');
   const last = fs.existsSync(lastFile) ? fs.readFileSync(lastFile, 'utf8').trim() : '';
-  let report = null;
-  if (expectReport && last) {
+  let report = r.report || null;
+  if (!Object.hasOwn(r, 'report') && expectReport && last) {
     report = parseReport(last, schema, validate).report;
     if (!report && !looksLikeFinalQuestion(last)) warnings.push(M.badReport);
   }
   if (!report && last.length > 8000) notes.push(M.lastMessageTruncated(lastFile));
+  notes.push(...(r.notes || []));
 
   const reported = (report?.files_changed || []).map((f) => relativePath(cwd, f.path));
   const agentPaths = new Set([...r.fileChanges].map((f) => pathKey(relativePath(cwd, f))));
-  for (const file of reported) agentPaths.add(pathKey(file));
-  let changes = { available: false, agent_total: 0, unknown_total: 0 };
+  let changes = { available: false, agent_total: 0, reported_total: 0, unknown_total: 0 };
   if (tracker) {
     try { changes = { available: true, ...tracker.diff(before, tracker.snap('after'), path.join(dir, 'diff.patch')) }; }
     catch (e) { warnings.push(M.trackingFailed(e.message)); }
     finally { tracker.cleanup(); }
   }
   const tracked = [...(changes.files || []), ...(changes.large_files_changed || [])];
-  for (const file of tracked) file.by = agentPaths.has(pathKey(relativePath(cwd, file.path))) ? 'agent' : 'unknown';
+  // 归属分三种：agent 有工具事件作证据；reported 只有协作方在报告里自称改过（比如用脚本写的文件）；unknown 都没有，可能是别人改的。
+  const reportedPaths = new Set(reported.map(pathKey));
+  for (const file of tracked) {
+    const key = pathKey(relativePath(cwd, file.path));
+    file.by = agentPaths.has(key) ? 'agent' : reportedPaths.has(key) ? 'reported' : 'unknown';
+  }
   changes.agent_total = tracked.filter((f) => f.by === 'agent').length;
-  changes.unknown_total = tracked.length - changes.agent_total;
-  if (kind !== 'exec' && changes.agent_total) warnings.push(M.readonlyChanged(kind, changes.agent_total));
+  changes.reported_total = tracked.filter((f) => f.by === 'reported').length;
+  changes.unknown_total = tracked.length - changes.agent_total - changes.reported_total;
+  if (kind !== 'exec' && changes.agent_total + changes.reported_total) warnings.push(M.readonlyChanged(kind, changes.agent_total + changes.reported_total));
   if (changes.unknown_total) notes.push(M.unattributedChanges(changes.unknown_total));
   const trackedPaths = new Set(tracked.map((f) => pathKey(relativePath(cwd, f.path))));
   const untracked = [...new Map(reported.filter((f) => !trackedPaths.has(pathKey(f))).map((f) => [pathKey(f), f])).values()];
   if (untracked.length) notes.push(M.reportedNotTracked(untracked));
 
   // 重连之类的 error 事件不一定致命，成败以退出码为准，errors 照常汇报。
-  const ok = r.code === 0 && !r.timedOut && !r.stalled && !r.needsInput;
+  const ok = r.status ? r.status === 'done' : r.code === 0 && !r.timedOut && !r.stalled && !r.needsInput;
   if (!ok && !r.errors.length) {
     // 参数错误等情况 codex 不产生事件，只在 stderr 留信息，把末尾几行带出来。
     const tail = String(r.stderrTail || '').trim().split('\n').slice(-5).join('\n');
     if (tail) r.errors.push(M.exitCode(r.code, tail));
   }
   const quotaExhausted = !ok && (r.quotaExhausted || r.errors.some((e) => /usage limit|quota/i.test(e)));
-  meta.status = ok ? 'done' : r.cancelled ? 'cancelled' : r.needsInput ? 'needs_input' : quotaExhausted ? 'quota_exhausted' : r.stalled ? 'stalled' : r.timedOut ? 'timeout' : 'failed';
+  meta.status = r.status || (ok ? 'done' : r.cancelled ? 'cancelled' : r.needsInput ? 'needs_input' : quotaExhausted ? 'quota_exhausted' : r.stalled ? 'stalled' : r.timedOut ? 'timeout' : 'failed');
   if (r.cancelled) r.errors = [M.runCancelled(modelOf(meta))];
   meta.session_id = r.sessionId || meta.session_id;
   meta.ended_at = new Date().toISOString();
@@ -265,7 +283,7 @@ async function execute(ctx, { run: runAgent, stats: sessionStats, describe, sche
   ) : total);
   const resetsAt = stats?.rate_limit?.resets_at;
   const quotaResetsAt = resetsAt == null ? null : new Date(resetsAt * 1000).toISOString();
-  if (quotaExhausted) {
+  if (quotaExhausted && !r.status) {
     const date = quotaResetsAt && new Date(quotaResetsAt);
     const pad = (n) => String(n).padStart(2, '0');
     const local = date && `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -274,6 +292,8 @@ async function execute(ctx, { run: runAgent, stats: sessionStats, describe, sche
 
   const result = {
     agent: agentName, agent_type: agent.type,
+    ...(snapshotRequired ? { isolation, run_access: agent.run_access } : {}),
+    ...(r.cost !== undefined ? { cost_usd: r.cost } : {}),
     run_id: id,
     mode,
     kind,
@@ -294,7 +314,7 @@ async function execute(ctx, { run: runAgent, stats: sessionStats, describe, sche
     exit_code: r.code,
     duration_s: Math.round((Date.now() - started) / 1000),
     usage,
-    usage_scope: total ? (baseline ? 'this_run' : 'session_total') : null,
+    usage_scope: r.usage_scope ?? (total ? (baseline ? 'this_run' : 'session_total') : null),
     last_request: stats?.last_request || null,
     rate_limit: stats?.rate_limit || null,
     quota_resets_at: quotaResetsAt,

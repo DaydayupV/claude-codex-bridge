@@ -20,7 +20,7 @@ for (const lang of ['zh', 'en']) test(`opencode 审查注入只读 foreman-revie
       { type: 'assistant', created: 'old', tokens: { input: 1000 }, cost: 1 }] });
   const c = output(await h.bridge(['config']));
   assert.equal(c.effective.levels.review.normal.agent, 'oc');
-  assert.deepEqual(c.agents_status.oc.capabilities.modes, ['review', 'discuss']);
+  assert.deepEqual(c.agents_status.oc.capabilities.modes, ['run', 'review', 'discuss']);
   const r = output(await h.bridge(args(h, ['--brief', '-']), { env: { ...s.env, FOREMAN_LANG: lang }, input: '重点检查重复扣款' }));
   const calls = s.calls().filter((c) => c.operation === 'run'), call = calls[0];
   assert.equal(calls.length, 1); assert.equal(call.args[call.args.indexOf('--agent') + 1], 'foreman-review');

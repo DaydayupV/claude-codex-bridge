@@ -19,7 +19,7 @@ test('多个 Codex、无 Codex 和三类能力表及省略强度的配置', asyn
   c.levels = { run: { complex: { agent: 'second.1' } }, discuss: { normal: [{ agent: 'api' }, { agent: 'oc' }] } };
   h.config(c);
   const out = output(await h.bridge(['config']));
-  for (const [name, isolation, reads, native, supported] of [['codex', 'os', true, true, modes], ['oc', 'tools', true, false, ['review', 'discuss']], ['api', 'none', false, false, ['discuss']]]) {
+  for (const [name, isolation, reads, native, supported] of [['codex', 'os', true, true, modes], ['oc', 'tools', true, false, modes], ['api', 'none', false, false, ['discuss']]]) {
     assert.deepEqual(out.agents_status[name].capabilities, { modes: supported, isolation, reads_code: reads, native_schema: native,
       native_review: native, images: native, resume: true, command_start_events: native });
   }
@@ -70,7 +70,7 @@ for (const mode of modes) test(`${mode} 的 Claude 等级、点名分派与 effo
   failed(await h.bridge(args(h, mode, ['--effort', 'high']), opts), M.noAgentForMode(mode));
 });
 
-test('opencode 不支持执行、API 仅能讨论，Claude 等级点名时不传强度', async (t) => {
+test('opencode 未授权时不能执行、API 仅能讨论，Claude 等级点名时不传强度', async (t) => {
   const h = sandbox(t), api = await apiServer(t, [{ answer: discussion }, { answer: discussion }]), c = baseConfig();
   c.agents = { oc: opencodeAgent(), api: apiAgent(api.url) };
   c.levels = self();
@@ -81,9 +81,10 @@ test('opencode 不支持执行、API 仅能讨论，Claude 等级点名时不传
     const supported = name === 'oc' ? 'review、discuss' : 'discuss';
     for (const mode of name === 'oc' ? ['run'] : ['run', 'review']) {
       h.config(c);
-      failed(await h.bridge(args(h, mode, ['--level', 'simple', '--agent', name])), M.modeNotSupported(name, c.agents[name].type, mode, supported));
+      const error = name === 'oc' ? M.runAccessRequired(name) : M.modeNotSupported(name, c.agents[name].type, mode, supported);
+      failed(await h.bridge(args(h, mode, ['--level', 'simple', '--agent', name])), error);
       h.config({ ...c, levels: { [mode]: { normal: { agent: name } } } });
-      failed(await h.bridge(['config']), M.modeNotSupported(name, c.agents[name].type, mode, supported));
+      failed(await h.bridge(['config']), error);
     }
     h.config({ ...c, levels: { discuss: { normal: [{ agent: name }] } } });
     assert.equal(output(await h.bridge(args(h, 'discuss', ['--level', 'normal']))).effort, null);

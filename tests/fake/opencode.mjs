@@ -16,6 +16,7 @@ else if (operation === 'export') {
   })) }));
 } else if (operation === 'run') {
   if (!['--standalone', '--format', '--agent', '-m'].every((flag) => args.includes(flag))) throw new Error('假 opencode 缺少运行参数');
+  if (s.expected_agent && args[args.indexOf('--agent') + 1] !== s.expected_agent) throw new Error('假 opencode 收到错误的代理');
   const sessionID = args.includes('--session') ? args[args.indexOf('--session') + 1] : s.session_id || 'synthetic-opencode-session';
   console.log(JSON.stringify({ type: 'step_start', sessionID }));
   await replay(s.steps);

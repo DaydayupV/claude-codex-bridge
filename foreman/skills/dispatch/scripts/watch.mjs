@@ -68,7 +68,8 @@ const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
 const liveCapable = () => process.stdout.isTTY && process.env.TERM !== 'dumb';
 // 结果里的改动数只算有证据是 Codex 改的；旧记录没有归属信息，按全部改动算。
 // 改名前的记录里，归属到协作方的改动数叫 codex_total。
-const agentTotal = (c) => c?.agent_total ?? c?.codex_total;
+// 改动数包括有证据的和协作方自报的；改名前的记录里叫 codex_total。
+const agentTotal = (c) => (c?.agent_total == null && c?.codex_total == null ? undefined : (c.agent_total ?? c.codex_total) + (c.reported_total || 0));
 const changedText = (c) => (c?.available ? M.watchChanged(agentTotal(c) ?? c.files_total, agentTotal(c) == null ? 0 : c.unknown_total) : M.watchNotTracked);
 const paint = (code) => (s) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
 // 讨论和审查本来只读，只有真的改了文件才显示改动数（那是越界，要提醒）。
@@ -143,7 +144,7 @@ function verboseRenderer(meta, rel) {
         const lines = String(it.aggregated_output || '').replace(/\r/g, '').split('\n').map((x) => x.trimEnd()).filter(Boolean);
         o(it.exit_code === 0 ? '✓' : '✗', M.watchExit(it.exit_code, lines.length ? clip(lines.slice(-3).join(' ⏎ '), 240) : ''));
       } else if (it.type === 'file_change') {
-        for (const c of it.changes || []) o('✏', `${M.fileKinds[c.kind] || c.kind} ${rel(c.path)}`);
+        for (const c of it.changes || []) o('✎', `${M.fileKinds[c.kind] || c.kind} ${rel(c.path)}`);
       } else if (it.type === 'error') {
         if (!/^Under-development features enabled/.test(it.message)) o('⚠', clip(oneLine(it.message), 300));
       } else if (it.type === 'web_search') {

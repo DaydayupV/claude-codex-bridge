@@ -80,7 +80,8 @@ async function cmdResume(o) {
   // 什么模型都没配置时沿用上一轮记录的模型，同一会话不中途换模型。
   const profile = pickProfile(cfg, o, discuss ? 'discuss' : 'run', adapters, parent.meta.model, parent.meta.agent || 'codex');
   return adapters[profile.agent.type].execute({ cfg, ...profile, mode: 'resume', kind, cwd: parent.meta.cwd, brief,
-    title: o.title || parent.meta.title, parent: parent.id, parentDir: parent.dir, sessionId: parent.meta.session_id, round, opts: o });
+    title: o.title || parent.meta.title, parent: parent.id, parentDir: parent.dir, sessionId: parent.meta.session_id,
+    previousRunAccess: parent.meta.run_access, round, opts: o });
 }
 
 async function cmdReview(o) {

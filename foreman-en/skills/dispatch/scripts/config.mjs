@@ -297,6 +297,7 @@ function validateConfig(cfg, adapters, fail = die) {
         check(!seen.has(item.agent), at, why.duplicate);
         seen.add(item.agent);
         check(adapter.capabilities.modes.includes(mode), `${at}.agent`, M.modeNotSupported(item.agent, agent.type, mode, M.list(adapter.capabilities.modes)));
+        if (mode === 'run' && agent.type === 'opencode cli' && !agent.run_access) fail(M.runAccessRequired(item.agent));
         check(item.model == null || (text(item.model) && item.model !== CLAUDE_CODE), `${at}.model`, why.modelName);
         check(item.effort === undefined || (adapter.efforts ? adapter.efforts.includes(item.effort) : item.effort === null || text(item.effort)), `${at}.effort`, adapter.efforts?.join(' / ') || why.apiEffort);
       }
@@ -492,6 +493,8 @@ function pickProfile(cfg, o, mode, adapters, fallbackModel = null, parentAgent =
   if (!Object.hasOwn(cfg.agents, entry.agent)) die(M.unknownAgent('--agent', entry.agent));
   const agent = cfg.agents[entry.agent], adapter = adapters[agent.type], effort = o.effort ?? entry.effort;
   if (!adapter.capabilities.modes.includes(mode)) die(M.modeNotSupported(entry.agent, agent.type, mode, M.list(adapter.capabilities.modes)));
+  if (mode === 'run' && agent.type === 'opencode cli' && !agent.run_access) die(M.runAccessRequired(entry.agent));
+  if (mode === 'run' && adapter.capabilities.isolation !== 'os' && o['no-snapshot']) die(M.snapshotRequired);
   if (effort !== undefined && adapter.efforts && !adapter.efforts.includes(effort)) die(M.effortChoices(adapter.efforts.join(' / ')));
   return { level, agentName: entry.agent, agent, model: o.model || entry.model || agent.model || fallbackModel, effort: effort ?? null };
 }

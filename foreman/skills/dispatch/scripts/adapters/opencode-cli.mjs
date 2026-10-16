@@ -1,11 +1,11 @@
-// opencode CLI：只读代理与环境、事件翻译、会话导出和检查项。
+// opencode CLI：代理权限与环境、事件翻译、会话导出和检查项。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DISCUSS_SCHEMA } from '../config.mjs';
+import { SCHEMA, DISCUSS_SCHEMA } from '../config.mjs';
 import { MAX_REVIEW_CHARS } from '../review-scope.mjs';
 import { newRunDir, isCancelled } from '../records.mjs';
-import { startRun, finishDiscussion, eventWriter, runLimits, reportWithRepair, spawnCli, validateSchema } from '../runner.mjs';
+import { startRun, finishDiscussion, execute, eventWriter, runLimits, reportWithRepair, spawnCli, validateSchema } from '../runner.mjs';
 import { M, die, isObject, binCommand, pathCommand, npmEntry, killTree, readAttachments, focusFiles, relativePath, whoOf } from '../util.mjs';
 
 function opencodeCommand(agent) {
@@ -15,13 +15,22 @@ function opencodeCommand(agent) {
 }
 
 const OPENCODE_AGENT = 'foreman-discuss';
+const RUN_ACCESS = ['edit', 'shell'];
+const capabilities = { modes: ['run', 'review', 'discuss'], isolation: 'tools', reads_code: true, native_schema: false, native_review: false, images: false, resume: true, command_start_events: false };
 
-function opencodeEnv(agentId = OPENCODE_AGENT) {
+function opencodeEnv(agentId = OPENCODE_AGENT, access) {
   let config;
   try { config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}'); } catch { /* 无效配置由本次注入替代 */ }
   if (!isObject(config)) config = {};
-  const agent = { mode: 'primary', description: agentId === 'foreman-review' ? 'Read-only code review for foreman' : 'Read-only code discussion for foreman',
-    permission: { '*': 'deny', read: 'allow', grep: 'allow', glob: 'allow', list: 'allow' } };
+  const descriptions = { 'foreman-discuss': 'Read-only code discussion for foreman', 'foreman-review': 'Read-only code review for foreman',
+    'foreman-run': 'Hands-on work for foreman', 'foreman-repair': 'Report format repair for foreman' };
+  const permission = { '*': 'deny' };
+  if (agentId !== 'foreman-repair') Object.assign(permission, { read: 'allow', grep: 'allow', glob: 'allow', list: 'allow' });
+  if (agentId === 'foreman-run') {
+    permission.edit = 'allow';
+    if (access === 'shell') permission.shell = 'allow';
+  }
+  const agent = { mode: 'primary', description: descriptions[agentId], permission };
   return { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, agent: { ...(isObject(config.agent) ? config.agent : {}), [agentId]: agent } }) };
 }
 
@@ -62,7 +71,7 @@ function runOpencode({ agent, args, cwd, prompt = '', timeoutMs, stallMin = 0, r
     const out = { code: null, status: null, stdout: '', stderrTail: '', text: '', errors: [], events: 0, messages: [], questions: [] };
     const denied = [], stderrLines = [];
     // opencode 按环境变量 PWD 认工作目录，不看进程真实的 cwd；PWD 是从调用方的 shell 继承来的，可能指向别的目录。
-    const child = spawnCli(file, [...pre, ...args], { cwd, env: { ...opencodeEnv(agentId), PWD: cwd }, windowsHide: true,
+    const child = spawnCli(file, [...pre, ...args], { cwd, env: { ...opencodeEnv(agentId, agent.run_access), PWD: cwd }, windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' }, {
       onStderrLine: (line) => { if (/permission requested:/i.test(line)) stderrLines.push(line); },
       onInput: (line, min) => {
@@ -128,10 +137,11 @@ function runOpencode({ agent, args, cwd, prompt = '', timeoutMs, stallMin = 0, r
 }
 
 async function executeOpencode(ctx) {
-  const { cfg, agentName, agent, model, effort, level, cwd, brief, mode, opts } = ctx;
+  const { model, agent, level, cwd, brief, mode, opts } = ctx;
   if (ctx.parent && !ctx.sessionId) die(M.noSession(ctx.parent));
-  const review = ctx.kind === 'review', agentId = review ? 'foreman-review' : OPENCODE_AGENT;
-  const schemaText = review ? null : fs.readFileSync(DISCUSS_SCHEMA, 'utf8');
+  const review = ctx.kind === 'review', exec = ctx.kind === 'exec';
+  const agentId = review ? 'foreman-review' : exec ? 'foreman-run' : OPENCODE_AGENT;
+  const schemaText = review ? null : fs.readFileSync(exec ? SCHEMA : DISCUSS_SCHEMA, 'utf8');
   const schema = review ? null : JSON.parse(schemaText);
   const files = review ? [] : readAttachments(opts.file, cwd, false);
   let prompt;
@@ -148,19 +158,35 @@ async function executeOpencode(ctx) {
       parts.push(M.reviewMaterial(fileList, scope.patch, '`'.repeat(longest + 1)));
     }
     prompt = [...parts, M.reviewFooter].join('\n\n') + '\n';
-  } else prompt = `${brief}${focusFiles(files)}\n\n${ctx.parent ? M.opencodeResumeFooter : M.opencodeDiscussFooter(cwd, schemaText)}\n`;
+  } else if (exec) prompt = ctx.parent
+    ? `${brief}${focusFiles(files)}\n\n${M.resumeFooter}\n\n${M.opencodeRunResumeFooter}\n`
+    : `${brief}\n\n${M.footer(cwd, ctx.addDirs || [])}\n\n${M.opencodeRunFooter(schemaText, agent.run_access)}\n`;
+  else prompt = `${brief}${focusFiles(files)}\n\n${ctx.parent ? M.opencodeResumeFooter : M.opencodeDiscussFooter(cwd, schemaText)}\n`;
   const { id, dir, release } = await newRunDir();
-  const run = startRun({ ...ctx, id, dir, release });
-  const { started, meta, writeMeta } = run;
-  const { deadline, stallMin } = runLimits(ctx, started);
+  const context = { ...ctx, id, dir, release, prompt };
+  if (exec) return execute(context, {
+    capabilities, describe: () => ({ sandbox: null, modelShown: model, modelName: model }),
+    run: ({ run }) => opencodeSession(run, schema, agentId),
+  });
+  const run = startRun(context);
+  fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
+  process.stderr.write(`foreman: ${M.started(mode, whoOf(run.meta), level, dir)}\n`);
+  return finishDiscussion(run, { ...await opencodeSession(run, schema, agentId), files, changesNote: M.opencodeNoChanges });
+}
+
+async function opencodeSession(run, schema, agentId) {
+  const { ctx, started, meta, writeMeta } = run;
+  const { dir, agentName, agent, model, effort, cwd, prompt } = ctx;
+  const exec = ctx.kind === 'exec';
+  const limits = runLimits(ctx, started), { deadline } = limits;
+  const stallMin = exec && agent.run_access === 'shell' && !capabilities.command_start_events ? 0 : limits.stallMin;
   const event = eventWriter(dir);
   for (const file of ['events.jsonl', 'opencode.jsonl', 'stderr.log']) fs.writeFileSync(path.join(dir, file), '');
-  fs.writeFileSync(path.join(dir, 'brief.md'), prompt);
-  process.stderr.write(`foreman: ${M.started(mode, whoOf(meta), level, dir)}\n`);
   const errors = [], warnings = [], notes = [];
   const observed = { messages: [], questions: [] };
   let repairing = false;
-  let commands = 0, seenSession = false, last = '', report = null;
+  const fileChanges = new Set();
+  let commands = 0, items = 0, seenSession = false, last = '', report = null;
   // 翻译成 Codex 的事件形状，让 watch 和 status 共用现有的时间线、命令和报告显示。
   const translate = (ev) => {
     if (ev.sessionID && !seenSession) {
@@ -175,11 +201,22 @@ async function executeOpencode(ctx) {
     } else if (ev.type === 'tool_use') {
       const { tool, state = {} } = ev.part || {};
       const input = state.input || {};
+      const target = input.filePath || input.path;
+      const category = ['edit', 'write'].includes(tool) || (typeof target === 'string' && /edit|write|patch/i.test(tool)) ? 'edit'
+        : ['shell', 'bash'].includes(tool) ? 'shell' : ['grep', 'glob', 'list', 'search'].includes(tool) ? 'search' : 'read';
+      const item = { id: `opencode-${++items}`, tool, category };
+      if (category === 'edit') {
+        const changes = typeof target === 'string' && state.status === 'completed' ? [{ path: target, kind: tool === 'write' ? 'add' : 'update' }] : [];
+        for (const change of changes) fileChanges.add(change.path);
+        event({ type: 'item.completed', item: { ...item, type: 'file_change', changes } });
+        return;
+      }
       const params = ['filePath', 'path', 'pattern', 'include'].filter((k) => input[k] != null).map((k) => {
         const value = String(input[k]);
         return (k === 'filePath' || k === 'path') && path.isAbsolute(value) ? relativePath(cwd, value) : value;
       });
-      event({ type: 'item.completed', item: { id: `opencode-${++commands}`, type: 'command_execution', command: [tool, ...params].join(' '),
+      if (category === 'shell') commands++;
+      event({ type: 'item.completed', item: { ...item, type: 'command_execution', command: category === 'shell' ? String(input.command || '') : [tool, ...params].join(' '),
         exit_code: state.status === 'completed' ? 0 : 1, aggregated_output: String(state.output || state.error || '').slice(0, 2000) } });
     } else if (ev.type === 'error') event({ type: 'error', message: ev.error?.message || ev.error?.type || JSON.stringify(ev) });
   };
@@ -187,10 +224,11 @@ async function executeOpencode(ctx) {
   const request = async () => {
     if (isCancelled(dir)) { meta.status = 'cancelled'; return null; }
     if (Date.now() >= deadline) { meta.status = 'timeout'; return null; }
-    const args = opencodeArgs(model, effort, agentId);
+    const currentAgent = repairing && exec ? 'foreman-repair' : agentId;
+    const args = opencodeArgs(model, effort, currentAgent);
     if (meta.session_id) args.push('--session', meta.session_id);
     if (meta.title) args.push('--title', meta.title);
-    const out = await runOpencode({ agent, args, cwd, agentId, prompt: nextPrompt, runDir: dir, onEvent: translate,
+    const out = await runOpencode({ agent, args, cwd, agentId: currentAgent, prompt: nextPrompt, runDir: dir, onEvent: translate,
       timeoutMs: deadline - Date.now(), stallMin });
     errors.push(...out.errors);
     observed.questions.push(...out.questions);
@@ -198,7 +236,7 @@ async function executeOpencode(ctx) {
     meta.status = out.status;
     return meta.status === 'done' ? { last, canRepair: !!meta.session_id } : null;
   };
-  if (review) await request();
+  if (ctx.kind === 'review') await request();
   else report = await reportWithRepair({
     schema, validate: validateSchema, request,
     onInvalid: () => warnings.push(M.reportInvalid(agentName, path.join(dir, 'last-message.txt'))),
@@ -226,7 +264,9 @@ async function executeOpencode(ctx) {
     } catch (e) { usage = null; cost = null; notes.push(M.opencodeExportFailed(e.message)); }
   }
   fs.writeFileSync(path.join(dir, 'last-message.txt'), last);
-  return finishDiscussion(run, { usage, cost, commands, errors, notes, warnings, report, last, files, changesNote: M.opencodeNoChanges, observed });
+  return { usage, usage_scope: 'this_run', cost, commands, errors, notes, warnings, report, last, observed,
+    status: meta.status, code: meta.status === 'done' ? 0 : 1, sessionId: meta.session_id,
+    fileChanges, images: [], messages: observed.messages, questions: observed.questions };
 }
 
 async function checkOpencodeAgent(name, agent) {
@@ -252,12 +292,13 @@ function validate(agent, key, check, text) {
   const why = M.invalid;
   check(text(agent.model) && agent.model.includes('/'), `${key}.model`, why.opencodeModel);
   check(agent.bin == null || text(agent.bin), `${key}.bin`, why.stringOrNull);
+  check(agent.run_access === undefined || RUN_ACCESS.includes(agent.run_access), `${key}.run_access`, why.runAccess);
 }
 
 export default {
-  type: 'opencode cli', capabilities: { modes: ['review', 'discuss'], isolation: 'tools', reads_code: true, native_schema: false, native_review: false, images: false, resume: true, command_start_events: false }, channel: M.channel.opencode,
+  type: 'opencode cli', capabilities, channel: M.channel.opencode,
   validate,
-  status: (agent) => ({ bin: agent.bin || opencodeCommand(agent).file }),
+  status: (agent) => ({ bin: agent.bin || opencodeCommand(agent).file, run_access: agent.run_access ?? null }),
   check: checkOpencodeAgent,
   locate: opencodeCommand,
   execute: executeOpencode,

@@ -69,8 +69,15 @@ Example:
 | `model` | Required, written as `provider/model`, for example `opencode-go/glm-5.3`. Anything `opencode models` lists works |
 | `bin` | Optional path to the opencode executable. Found automatically by default |
 | `max_parallel` | Optional; `4` by default |
+| `run_access` | Optional; lets it do hands-on work: `"edit"` reads and writes files in the project directory only, with no commands; `"shell"` can also run commands. Without it, the agent can't be in `levels.run` or be named for hands-on work |
 
 Sign-in and keys are handled by opencode itself (for OpenCode Go, sign in first by running `/connect` in opencode); the plugin doesn't touch them. For discussions and reviews the script gives opencode a read-only agent with only the read, search and list tools: it can look through the project's code itself, but can't run commands or change files. For a review, the script works out the changes with git and attaches them.
+
+For hands-on work, the injected agent can write files, and at the `shell` level run commands too. opencode has **no OS sandbox**:
+- at the `edit` level it can't write outside the project directory and has no tool for running commands;
+- at the `shell` level its commands run with your account's permissions and can reach the whole machine.
+
+Both levels take a change snapshot before starting (`--no-snapshot` isn't allowed), and reviewing the diff afterwards is the check.
 
 **`type: "api"`** (models with an OpenAI-compatible API)
 
@@ -88,7 +95,7 @@ Sign-in and keys are handled by opencode itself (for OpenCode Go, sign in first 
 
 | | codex cli | opencode cli | api |
 |---|---|---|---|
-| Tasks (`modes`) | hands-on work, reviews, discussions | reviews, discussions | discussions |
+| Tasks (`modes`) | hands-on work, reviews, discussions | hands-on work (needs `run_access`), reviews, discussions | discussions |
 | Isolation (`isolation`) | OS sandbox (`os`), per the sandbox setting | tool permissions only (`tools`) | none (`none`); text in and out only |
 | Reads code itself (`reads_code`) | yes | yes | no; relies on attached files |
 | Native report format (`native_schema`) | yes | no; prompt plus one repair | no; same |

@@ -124,7 +124,7 @@ An example with Codex, opencode and DeepSeek:
   | type | What it is | Tasks it can do |
   |---|---|---|
   | `codex cli` | The Codex CLI on this machine | hands-on work, reviews, discussions, images |
-  | `opencode cli` | The opencode CLI on this machine, with any model it can reach | reviews, discussions (hands-on work comes in a later version) |
+  | `opencode cli` | The opencode CLI on this machine, with any model it can reach | hands-on work (when turned on), reviews, discussions |
   | `api` | A model with an OpenAI-compatible API, such as DeepSeek, Kimi or MiMo | discussions |
 
 - You can have several agents of one type, each with a different model. Codex isn't required.
@@ -163,6 +163,12 @@ If you have [opencode](https://opencode.ai) (2.x) installed, any model it can us
 1. **Sign in inside opencode**: run `opencode` in a terminal and sign in with `/connect` (choose OpenCode Go for a Go subscription), then run `opencode models` to see which models you can use. Free models (names ending in `-free`) need no sign-in.
 2. **Add them to the config**: one entry per model, `{ "type": "opencode cli", "model": "opencode-go/glm-5.3" }`, with the model name as its ID, then add it to the discussion levels you want. `/foreman-en:setup` can do this for you.
 
+**Letting opencode do hands-on work**: give it `run_access` in the user config, then put it in `levels.run`. Two levels:
+- `"edit"`: reads and writes files in the project directory only, with no commands. Claude runs the tests afterwards.
+- `"shell"`: can also run commands, such as tests. opencode has no OS sandbox, so its commands run with your account's permissions and can reach the whole machine; use this only for projects and models you trust.
+
+Both levels take a change snapshot first, and Claude reviews the diff file by file afterwards.
+
 For discussions and reviews the plugin gives opencode a read-only agent with only the read, search and list tools: it can't run commands or change files. For a review, the plugin works out the changes with git and attaches them, with the same scope as Codex's native review. Keys and sign-in stay in opencode; the plugin's config file holds none. Results include this round's cost (`cost_usd`), which is what OpenCode Go quota is charged by. Go's limits are per model, so several models in one discussion spread the load; premium models have small limits, so keep them for complex discussions.
 
 ### Project config
@@ -193,7 +199,8 @@ Preference files win over the plugin's built-in rules, and project level wins ov
 ## Safety notes
 
 - **The sandbox is whatever Codex is configured with.** If your Codex config uses `danger-full-access`, Codex can read and write any directory on your machine. The task brief limits what it should touch, and Claude reviews the diff afterwards, but that is not isolation. For real isolation, set `agents.codex.sandbox` to `workspace-write` or `read-only`. Codex's sandbox support on Windows may be incomplete, so test after changing it.
-- **Claude can only call Codex through the plugin.** The plugin includes a hook that blocks Claude's commands that run `codex exec` or `codex review` directly, so every call is recorded, has its changes tracked, and uses an explicit model and effort. Running codex yourself in a terminal isn't affected.
+- **opencode has no OS sandbox when doing hands-on work.** With `run_access` set to `edit` it can't write outside the project or run commands; with `shell` its commands can reach the whole machine. It's off by default; only you can turn it on, in the user config, and a project config can't.
+- **Claude can only call agents through the plugin.** The plugin includes a hook that blocks Claude's commands that run `codex exec`, `codex review` or `opencode run` directly, so every call is recorded, has its changes tracked, and uses an explicit model and effort. Running them yourself in a terminal isn't affected.
 - **Agents don't get stuck waiting for an answer.** Codex needs no approvals by default, and opencode gets no way to ask questions or request confirmable permissions. Anything an agent needs answered (returned questions, actions blocked by permissions, prompts waiting for terminal input) is collected in the result, and Claude decides: within the authority you've already given, it decides and resumes; it only asks you about business trade-offs, wider scope, extra cost and irreversible steps.
 - **Your code and task briefs are sent to OpenAI.** Once API models join discussions, the topic and the attached code are also sent to those providers. Check that this is acceptable for sensitive projects, and use the project config to keep only Codex if needed.
 - **API keys can go in the user config or in environment variables.** In the config they're plain text, so don't commit or share `~/.claude/foreman/config.json`; keys in a project config are ignored. The `config` command never shows keys, and the script never writes them into run records.

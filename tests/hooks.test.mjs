@@ -53,6 +53,10 @@ test('会话提醒列出未正常结束的执行任务，取消后不再列出',
 for (const [label, command] of [
   ['codex exec', 'codex exec "synthetic"'], ['codex review', 'codex review --uncommitted'],
   ['node codex.js exec', 'node "C:/synthetic/bin/codex.js" exec -'], ['npx Codex', 'npx @openai/codex exec -'],
+  ['opencode run', 'opencode run "synthetic"'], ['opencode.exe run', 'opencode.exe run -m fake/model'],
+  ['opencode.cmd run', 'opencode.cmd run -'], ['opencode.ps1 run', '& "C:/synthetic/opencode.ps1" run -'],
+  ['npx opencode-ai', 'npx opencode-ai run -'], ['npx @opencode/cli', 'npx @opencode/cli run -'],
+  ['opencode 全局选项', 'opencode --log-level debug run -'],
 ]) {
   test(`直接调用守卫拦截 ${label}`, async (t) => {
     const h = sandbox(t), r = await h.hook('guard-direct-calls.mjs', { tool_input: { command } });
@@ -67,6 +71,11 @@ for (const [label, command] of [
 for (const [label, command] of [
   ['版本查询', 'codex --version'], ['登录状态', 'codex login status'],
   ['普通文本提及', 'echo "codex exec"'], ['带分隔符的文字', 'node -e "console.log(\'codex exec; codex review\')"'],
+  ['opencode 版本', 'opencode --version'], ['opencode 模型', 'opencode models'],
+  ['opencode 会话', 'opencode session export run'], ['opencode 认证', 'opencode auth list'],
+  ['opencode 调试', 'opencode debug run'], ['opencode 服务', 'opencode service status'],
+  ['opencode 帮助', 'opencode run --help'], ['opencode 总帮助', 'opencode --help'],
+  ['opencode 文字提及', 'echo "opencode run"'], ['opencode 带分隔符的文字', 'node -e "console.log(\'opencode run; codex exec\')"'],
 ]) {
   test(`直接调用守卫放行${label}`, async (t) => {
     const h = sandbox(t), r = await h.hook('guard-direct-calls.mjs', { tool_input: { command } });
