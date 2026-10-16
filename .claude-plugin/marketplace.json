@@ -1,16 +1,18 @@
 {
-  "name": "claude-codex-bridge",
-  "owner": { "name": "DaydayupV" },
+  "name": "claude-foreman",
+  "owner": {
+    "name": "DaydayupV"
+  },
   "plugins": [
     {
-      "name": "codex-bridge",
-      "source": "./codex-bridge",
-      "description": "把执行类编码工作派给 OpenAI Codex，按规则验收，并按需让 Codex 独立审查代码。（中文版）"
+      "name": "foreman",
+      "source": "./foreman",
+      "description": "Claude 主导的多模型协作：执行类编码工作按配置派给 Codex 等 CLI 工具并验收，请它们独立审查代码，复杂方案让 Codex、opencode 和 API 模型一起讨论。（中文版）"
     },
     {
-      "name": "codex-bridge-en",
-      "source": "./codex-bridge-en",
-      "description": "Hand off hands-on coding work to OpenAI Codex, check the results, and ask Codex for independent code reviews when it's worth it. (English)"
+      "name": "foreman-en",
+      "source": "./foreman-en",
+      "description": "Claude-led multi-model teamwork: hand off hands-on coding work to CLI agents such as Codex and check the results, get independent code reviews, and have Codex, opencode and API models weigh in on complex designs. (English)"
     }
   ]
 }

@@ -1,0 +1,14 @@
+---
+description: Watch a run live in a terminal
+argument-hint: [run_id | last | group name]
+---
+
+Open the live progress view. The argument is `$ARGUMENTS`.
+
+Run the watch launcher as described in the "Live view" section of the `foreman-en:dispatch` skill: if the `run_in_terminal` tool is available, use it to open the view in the terminal panel; otherwise send the user the command and ask them to run it in another terminal. Arguments:
+- No argument: if this conversation has a discussion or task group in progress, follow the whole group with `--group <name>`; otherwise follow the run in progress, or show the most recent one if none is running
+- A run_id or `last`: add `--run <argument>` to the command
+- A group name: add `--group <argument>` to follow the whole group at once: one window split into a block per model, each showing its latest few lines
+- If the user wants every detail (reasoning, each command and its output, token usage), also add `--verbose`. The default view is a timeline of what the model says, folded commands, file changes and the final result, with a bottom line that keeps showing elapsed time and progress. While the run is going, the view re-flows when the window is resized; scroll back with ↑↓, PgUp/PgDn or the mouse wheel, press End to jump to the latest, and q to stop watching; when a model is queued because its service is busy, press x to stop it. When it ends, the full timeline stays in the terminal.
+
+If it was opened in the terminal panel, send the user the tab link.

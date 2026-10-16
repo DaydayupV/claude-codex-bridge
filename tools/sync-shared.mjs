@@ -4,7 +4,7 @@
 //   node tools/sync-shared.mjs          同步
 //   node tools/sync-shared.mjs --check  只检查，不一致时退出码为 1（适合提交前或 CI 里跑）
 //
-// 共用文件以 codex-bridge/ 为准，改脚本时只改那一份。各插件自己的 language.json、hooks.json、
+// 共用文件以 foreman/ 为准，改脚本时只改那一份。各插件自己的 language.json、hooks.json、
 // SKILL.md、命令说明和 schema 不同步。
 
 import fs from 'node:fs';
@@ -12,13 +12,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SOURCE = path.join(ROOT, 'codex-bridge');
-const TARGET = path.join(ROOT, 'codex-bridge-en');
+const SOURCE = path.join(ROOT, 'foreman');
+const TARGET = path.join(ROOT, 'foreman-en');
 const SHARED = [
   'skills/dispatch/scripts/bridge.mjs',
   'skills/dispatch/scripts/messages.mjs',
   'skills/dispatch/scripts/api-chat.mjs',
-  'hooks/guard-codex.mjs',
+  'hooks/guard-direct-calls.mjs',
   'hooks/session-reminder.mjs',
 ];
 
@@ -42,7 +42,7 @@ for (const rel of SHARED) {
 
 const version = (dir) => JSON.parse(fs.readFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), 'utf8')).version;
 if (version(SOURCE) !== version(TARGET)) {
-  console.log(`版本号不一致：codex-bridge ${version(SOURCE)}，codex-bridge-en ${version(TARGET)}`);
+  console.log(`版本号不一致：foreman ${version(SOURCE)}，foreman-en ${version(TARGET)}`);
   problems++;
 }
 

@@ -1,4 +1,4 @@
-# claude-codex-bridge
+# claude-foreman
 
 [中文](README.md)
 
@@ -10,13 +10,13 @@ The idea is a split of roles: Claude does the planning, key decisions, design an
 
 | Command | What it does |
 |---|---|
-| `/codex-bridge-en:rescue <task>` | Hands a task to Codex. When it finishes, Claude reviews the diff, runs it to verify, and sends it back for rework if needed |
-| `/codex-bridge-en:discuss <topic>` | Discusses a complex design with Codex (and any other configured models): rounds of critiquing each other's proposals (the limit is configurable, 2 by default), then Claude rules on each point and writes up a decision record |
-| `/codex-bridge-en:review` | Has Codex review uncommitted changes, a branch or a commit. Claude checks each finding and filters out false positives |
-| `/codex-bridge-en:status` | Lists recent runs, or shows the details of one, with each run's token use, the size of its latest request and how much of the Codex quota is used |
-| `/codex-bridge-en:watch` | Shows what each model is doing, live. The default view is a timeline: times down the left, with what the model says, folded commands and file changes in order, a bottom line that keeps showing elapsed time, command count and progress, and the result at the end; while the run is going the view re-flows when the window is resized, and you can scroll back with the arrow keys, PgUp/PgDn or the mouse wheel; add `--verbose` for every detail. When following a group (such as a discussion with several models), one window is split into a block per model, with its status and elapsed time on the right of each block's title line and its latest few lines below |
-| `/codex-bridge-en:config` | Shows or changes the plugin's settings |
-| `/codex-bridge-en:setup` | First-time setup: checks that Codex and the rest of the environment work, explains the current settings, and optionally adds other models to discussions |
+| `/foreman-en:run <task>` | Hands a task to Codex. When it finishes, Claude reviews the diff, runs it to verify, and sends it back for rework if needed |
+| `/foreman-en:discuss <topic>` | Discusses a complex design with Codex (and any other configured models): rounds of critiquing each other's proposals (the limit is configurable, 2 by default), then Claude rules on each point and writes up a decision record |
+| `/foreman-en:review` | Has Codex review uncommitted changes, a branch or a commit. Claude checks each finding and filters out false positives |
+| `/foreman-en:status` | Lists recent runs, or shows the details of one, with each run's token use, the size of its latest request and how much of the Codex quota is used |
+| `/foreman-en:watch` | Shows what each model is doing, live. The default view is a timeline: times down the left, with what the model says, folded commands and file changes in order, a bottom line that keeps showing elapsed time, command count and progress, and the result at the end; while the run is going the view re-flows when the window is resized, and you can scroll back with the arrow keys, PgUp/PgDn or the mouse wheel; add `--verbose` for every detail. When following a group (such as a discussion with several models), one window is split into a block per model, with its status and elapsed time on the right of each block's title line and its latest few lines below |
+| `/foreman-en:config` | Shows or changes the plugin's settings |
+| `/foreman-en:setup` | First-time setup: checks that Codex and the rest of the environment work, explains the current settings, and optionally adds other models to discussions |
 
 You don't have to use the commands. The bundled skill lets Claude decide on its own: hand off hands-on tasks that are big enough, discuss complex and uncertain designs with Codex and other models first, and ask Codex to review risky changes before delivering them. When a big task splits into parts that don't touch each other, Claude hands them to several Codex sessions at once to cut the wait (see `agents.<name>.max_parallel` below). You can turn this off with `dispatch.auto` (see below). So that Claude doesn't forget (easy when a project has its own skills), the plugin reminds it once at the start of every session and includes your preference files.
 
@@ -35,25 +35,40 @@ Every time Claude hands something off, it tells you in the chat who got it and w
 In Claude Code, run:
 
 ```
-/plugin marketplace add DaydayupV/claude-codex-bridge
-/plugin install codex-bridge-en@claude-codex-bridge
+/plugin marketplace add DaydayupV/claude-foreman
+/plugin install foreman-en@claude-foreman
 ```
 
-Then run `/codex-bridge-en:setup`. It checks that Node.js, Git and Codex work, explains who gets each kind of task by default, and asks whether you want other models to join discussions. Later, use `/codex-bridge-en:config` to see or change the settings.
+Then run `/foreman-en:setup`. It checks that Node.js, Git and Codex work, explains who gets each kind of task by default, and asks whether you want other models to join discussions. Later, use `/foreman-en:config` to see or change the settings.
+
+### Upgrading from codex-bridge
+
+This plugin used to be called codex-bridge and is now foreman. Claude Code doesn't upgrade a plugin to a new name on its own, so switch over once by hand:
+
+1. Uninstall the old plugin: `/plugin uninstall codex-bridge-en@claude-codex-bridge`. With both installed, their hooks block and remind twice.
+2. Add the new marketplace and install `foreman-en` as above.
+3. If you installed the old plugin through "My Uploads" in the desktop app, delete it there.
+
+Your settings move over automatically the first time the new plugin runs:
+- the config `~/.claude/codex-bridge.json` is copied to `~/.claude/foreman/config.json`;
+- the preferences `~/.claude/codex-bridge.md` are copied to `~/.claude/foreman/preferences.md`;
+- the run directory `~/.claude/codex-runs` is moved to `~/.claude/foreman/runs`. If runs are still in progress there, it waits and moves on a later run.
+
+The old config and preferences files are kept; delete them yourself once everything works. A project's `.claude/codex-bridge.json` and `.claude/codex-bridge.md` are still read, with a suggestion to rename them to `.claude/foreman.json` and `.claude/foreman.md`. The environment variables `CODEX_BRIDGE_CONFIG`, `CODEX_RUNS_DIR` and `CODEX_BRIDGE_LANG` are now `FOREMAN_CONFIG`, `FOREMAN_RUNS_DIR` and `FOREMAN_LANG`; the old names still work for now. `/codex-bridge-en:rescue` is now `/foreman-en:run`.
 
 ## Configuration
 
-On first use, the plugin creates a user config at `~/.claude/codex-bridge.json`: Claude does simple and normal hands-on tasks itself, complex ones go to Codex with `gpt-6.1-sol`, and complex reviews and discussions use `gpt-6-astra`. It doesn't set the sandbox or approval policy; those still come from Codex's own `~/.codex/config.toml`.
+On first use, the plugin creates a user config at `~/.claude/foreman/config.json`: Claude does simple and normal hands-on tasks itself, complex ones go to Codex with `gpt-6.1-sol`, and complex reviews and discussions use `gpt-6-astra`. It doesn't set the sandbox or approval policy; those still come from Codex's own `~/.codex/config.toml`.
 
-To change things, edit that file, or tell Claude something like "use `/codex-bridge-en:config` to switch complex tasks to ultra".
+To change things, edit that file, or tell Claude something like "use `/foreman-en:config` to switch complex tasks to ultra".
 
 Config files are JSON. Later ones override earlier ones:
 
 1. The plugin's built-in defaults
-2. User config: `~/.claude/codex-bridge.json` (change the path with the `CODEX_BRIDGE_CONFIG` environment variable)
-3. Project config: `<project>/.claude/codex-bridge.json`
+2. User config: `~/.claude/foreman/config.json` (change the path with the `FOREMAN_CONFIG` environment variable)
+3. Project config: `<project>/.claude/foreman.json`
 
-When you upgrade from a version before 0.10, a user config in the old layout is rewritten into the layout below on first run, and the original is saved as `codex-bridge.json.bak`.
+When you upgrade from a version before 0.10, a user config in the old layout is rewritten into the layout below on first run, and the original is saved as `config.json.bak`.
 
 ### How the config is laid out
 
@@ -166,9 +181,9 @@ Each `discuss` level is a list of participants: Codex alone, or Codex plus model
    ```
 
    DeepSeek's `effort` can be `low`, `high` or `max`. Xiaomi MiMo has no adjustable effort, only a thinking on/off switch (on by default), so write `{ "agent": "mimo", "effort": null }`.
-3. Run `/codex-bridge-en:setup` to check that the model connects and that each level has the right participants.
+3. Run `/foreman-en:setup` to check that the model connects and that each level has the right participants.
 
-For providers without an example in the config (Kimi, GLM, Qwen, OpenRouter and so on), as long as they have an OpenAI-compatible API, add an agent under `agents` in the same format as the examples, with a name of your choice, then follow the steps above; provider-specific parameters go in `extra_body` and are merged into the request as is. You can also leave these steps to `/codex-bridge-en:setup`, for example `/codex-bridge-en:setup add DeepSeek`: it updates the config for you and tells you where the key goes. You fill in the key yourself; there's no need to paste it into the chat.
+For providers without an example in the config (Kimi, GLM, Qwen, OpenRouter and so on), as long as they have an OpenAI-compatible API, add an agent under `agents` in the same format as the examples, with a name of your choice, then follow the steps above; provider-specific parameters go in `extra_body` and are merged into the request as is. You can also leave these steps to `/foreman-en:setup`, for example `/foreman-en:setup add DeepSeek`: it updates the config for you and tells you where the key goes. You fill in the key yourself; there's no need to paste it into the chat.
 
 API models can't look through your code themselves, so Claude sends the relevant files along with the topic (up to about 300,000 characters each time) and checks what they say about the code against the source. For now, API models can only take part in discussions, not do hands-on work or reviews.
 
@@ -196,7 +211,7 @@ If you have [opencode](https://opencode.ai) (2.x) installed, any model it can us
    ```
 
    `effort` is opencode's variant (for example `high`); `null` means the model's default. Each model has its own variants.
-3. Run `/codex-bridge-en:setup` to confirm each model works.
+3. Run `/foreman-en:setup` to confirm each model works.
 
 For discussions the plugin gives opencode a read-only agent with only the read, search and list tools: it can't run commands or change files. Keys and sign-in stay in opencode; the plugin's config file holds none. Results include this round's cost (`cost_usd`), which is what OpenCode Go quota is charged by. Go's limits are per model, so several models in one discussion spread the load; premium models have small limits, so keep them for complex discussions.
 
@@ -210,7 +225,7 @@ For discussions the plugin gives opencode a read-only agent with only the read, 
 | `dispatch.timeout_min` | Total time limit per run, in minutes | `480` |
 | `dispatch.stall_min` | Stop a run after this many minutes without activity: for Codex, no activity and no command running; for API models, no data at all in the stream. `0` turns it off | `40` |
 | `dispatch.busy_ask_min` | Once an API model has been queued this many minutes because its service is busy, Claude asks whether to stop it and go ahead with the other participants' results. `0` means never ask | `2` |
-| `dispatch.runs_dir` | Where run records go (or set `CODEX_RUNS_DIR`) | `~/.claude/codex-runs` |
+| `dispatch.runs_dir` | Where run records go (or set `FOREMAN_RUNS_DIR`) | `~/.claude/foreman/runs` |
 | `agents.codex.bin` | Path to the codex executable or `codex.js` (or set `CODEX_BIN`) | Found automatically |
 | `agents.codex.model` | Codex's default model | `null` (use Codex config) |
 | `agents.<name>.max_parallel` | How many runs this agent may have going at once, counted across all groups and sessions (providers rate-limit and bill per account). New runs beyond it are refused. For Codex, splitting a task into more parts means a shorter wait but more tokens in total; `1` turns parallel runs off | `4` |
@@ -226,13 +241,13 @@ Project config only accepts `dispatch.timeout_min`, `dispatch.stall_min`, `dispa
 
 Some habits don't fit in JSON, such as which code in your project counts as high-risk, or what you never want handed to Codex. Write those in plain text in a preference file. Claude reads it the first time it uses the plugin in a session:
 
-- User level: `~/.claude/codex-bridge.md`
-- Project level: `<project>/.claude/codex-bridge.md`
+- User level: `~/.claude/foreman/preferences.md`
+- Project level: `<project>/.claude/foreman.md`
 
 Preference files win over the plugin's built-in rules, and project level wins over user level. For example:
 
 ```markdown
-# codex-bridge preferences
+# foreman preferences
 
 - Treat billing and reconciliation code in this project as high-risk: hand it off as complex, and always have Codex review the changes.
 - Don't hand database migration scripts to Codex; Claude writes them.
@@ -245,12 +260,12 @@ Preference files win over the plugin's built-in rules, and project level wins ov
 - **Claude can only call Codex through the plugin.** The plugin includes a hook that blocks Claude's commands that run `codex exec` or `codex review` directly, so every call is recorded, has its changes tracked, and uses an explicit model and effort. Running codex yourself in a terminal isn't affected.
 - **Background runs need the approval policy set to `never`**, or Codex will hang waiting for a confirmation.
 - **Your code and task briefs are sent to OpenAI.** Once API models join discussions, the topic and the attached code are also sent to those providers. Check that this is acceptable for sensitive projects, and use the project config to keep only Codex if needed.
-- **API keys can go in the user config or in environment variables.** In the config they're plain text, so don't commit or share `~/.claude/codex-bridge.json`; keys in a project config are ignored. The `config` command never shows keys, and the script never writes them into run records.
+- **API keys can go in the user config or in environment variables.** In the config they're plain text, so don't commit or share `~/.claude/foreman/config.json`; keys in a project config are ignored. The `config` command never shows keys, and the script never writes them into run records.
 - **Pay-as-you-go means real costs.** With API-key billing, every Codex handoff costs money, and every discussion with an API model draws on that account's balance. Set `dispatch.auto` to `false` if you don't want Claude handing off work on its own.
 
 ## Run records
 
-Each call is recorded in `~/.claude/codex-runs/<run_id>/`: the brief, the event stream, the diff and the final report. Runs by API models have no diff, but add the conversation history `messages.json`, which a resume continues from. `/codex-bridge-en:status` reads them. Change tracking uses a separate git repository inside that record folder and never touches your project's `.git`.
+Each call is recorded in `~/.claude/foreman/runs/<run_id>/`: the brief, the event stream, the diff and the final report. Runs by API models have no diff, but add the conversation history `messages.json`, which a resume continues from. `/foreman-en:status` reads them. Change tracking uses a separate git repository inside that record folder and never touches your project's `.git`.
 
 Change tracking compares the whole working directory at the start and end of a run, so files that you, Claude or another session change at the same time are seen too. The script marks files with evidence that Codex changed them (Codex's file-change events and the files listed in its report) separately from files of unknown origin, and Claude won't simply revert changes of unknown origin. Paths ignored by `.gitignore` aren't tracked unless you pass them with `--track` when handing off.
 
@@ -261,7 +276,7 @@ When the Codex quota runs out or an API model's balance is too low, the run is m
 Tested on Windows, in both the CLI and the desktop app (including the Microsoft Store version). The macOS and Linux code paths are written but not yet tested in practice; issue reports are welcome.
 
 A few things to know:
-- **The live view in the desktop app** opens in the terminal panel, which only accepts ASCII commands. If the run directory (`~/.claude/codex-runs` by default) has non-English characters in its path (for example a Windows user name in Chinese), `/codex-bridge-en:setup` will point it out; set `dispatch.runs_dir` in the config to a plain-English path. The CLI isn't affected.
+- **The live view in the desktop app** opens in the terminal panel, which only accepts ASCII commands. If the run directory (`~/.claude/foreman/runs` by default) has non-English characters in its path (for example a Windows user name in Chinese), `/foreman-en:setup` will point it out; set `dispatch.runs_dir` in the config to a plain-English path. The CLI isn't affected.
 - **Programs started from a graphical app** (such as the macOS desktop app) may have a PATH without Homebrew, nvm and similar directories. If the script can't find `codex`, it also looks in the directory node runs from, `/opt/homebrew/bin`, `/usr/local/bin` and other common places; if it's still not found, put the full path to `codex` in `agents.codex.bin` in the config. The plugin's hooks run `node`, so it also needs to be on the PATH.
 - The live view redraws the whole screen. Windows Terminal, macOS Terminal and iTerm2, the VS Code terminal and common Linux terminals all support this; simple terminals such as `TERM=dumb` get line-by-line output instead.
 
@@ -269,14 +284,14 @@ A few things to know:
 
 The marketplace has two plugins that differ only in the language of their rules and output:
 
-- `codex-bridge-en`: English, commands are `/codex-bridge-en:…`
-- `codex-bridge`: Chinese, commands are `/codex-bridge:…`
+- `foreman-en`: English, commands are `/foreman-en:…`
+- `foreman`: Chinese, commands are `/foreman:…`
 
 Install just one. Both share the same config file, preference files and run records, so switching doesn't mean setting things up again.
 
 ## Development
 
-Both plugins use the same scripts (`bridge.mjs`, `api-chat.mjs`, `messages.mjs` and the hooks `hooks/guard-codex.mjs` and `hooks/session-reminder.mjs`). Only edit the copy in `codex-bridge/`, then run the sync tool to copy it into the English plugin:
+Both plugins use the same scripts (`bridge.mjs`, `api-chat.mjs`, `messages.mjs` and the hooks `hooks/guard-direct-calls.mjs` and `hooks/session-reminder.mjs`). Only edit the copy in `foreman/`, then run the sync tool to copy it into the English plugin:
 
 ```bash
 node tools/sync-shared.mjs
