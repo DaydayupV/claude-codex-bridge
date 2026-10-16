@@ -182,4 +182,16 @@ const isAscii = (s) => /^[ -~]*$/.test(s);
 const modelOf = (m) => m?.model || m?.model_name || m?.model_shown || '?';
 const whoOf = (m) => M.who(modelOf(m), m?.agent_type === 'openai-compatible' ? M.channel.api : m?.agent_type === 'opencode' ? M.channel.opencode : M.channel.codex, m?.effort, !m?.model && !!m?.model_name && !['openai-compatible', 'opencode'].includes(m?.agent_type));
 
-export { HERE, LANGUAGE, M, notice, isObject, readJson, die, need, resolveDir, readBrief, MAX_MATERIAL_CHARS, readAttachments, focusFiles, binCommand, pathCommand, npmEntry, isGitRepo, pidAlive, killTree, relativePath, pathKey, RECONNECT, isReconnect, sleep, clip, oneLine, plainCommand, isAscii, modelOf, whoOf };
+// 用改名替换文件。Windows 上目标文件正被别的进程读取时（watch、status、并发登记都会读 meta.json），
+// 改名会报 EPERM / EACCES / EBUSY，稍等再试；最多等约 2 秒。
+function replaceFile(from, to) {
+  for (let i = 0; ; i++) {
+    try { return fs.renameSync(from, to); }
+    catch (e) {
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(e.code) || i >= 80) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+}
+
+export { replaceFile, HERE, LANGUAGE, M, notice, isObject, readJson, die, need, resolveDir, readBrief, MAX_MATERIAL_CHARS, readAttachments, focusFiles, binCommand, pathCommand, npmEntry, isGitRepo, pidAlive, killTree, relativePath, pathKey, RECONNECT, isReconnect, sleep, clip, oneLine, plainCommand, isAscii, modelOf, whoOf };

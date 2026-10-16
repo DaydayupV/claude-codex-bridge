@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CLAUDE_SESSION, checkAdmission, isCancelled } from './records.mjs';
 import { makeTracker } from './tracker.mjs';
-import { M, die, relativePath, pathKey, whoOf, modelOf } from './util.mjs';
+import { M, die, relativePath, pathKey, whoOf, modelOf, replaceFile } from './util.mjs';
 
 function startRun(ctx, { started = Date.now(), track = [], modelShown = ctx.model, modelName = modelShown, sandbox = null, atomic = true } = {}) {
   const { id, dir, cwd, model, mode, kind, level, effort, agentName, agent, opts } = ctx;
@@ -19,7 +19,7 @@ function startRun(ctx, { started = Date.now(), track = [], modelShown = ctx.mode
     // 同组任务会并发读取元数据，替换完整文件，避免把半份 JSON 当成没有记录。
     const target = atomic || meta.group != null ? `${file}.tmp` : file;
     fs.writeFileSync(target, JSON.stringify(meta, null, 2));
-    if (target !== file) fs.renameSync(target, file);
+    if (target !== file) replaceFile(target, file);
   };
   let rejection;
   try {

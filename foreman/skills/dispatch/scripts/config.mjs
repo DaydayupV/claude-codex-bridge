@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { HERE, M, notice, isObject, readJson, die, pidAlive } from './util.mjs';
+import { HERE, M, notice, isObject, readJson, die, pidAlive, replaceFile } from './util.mjs';
 
 const ENTRY = path.join(HERE, 'cli.mjs');
 const SCHEMA = path.join(HERE, '..', 'schemas', 'report.schema.json');
@@ -173,7 +173,7 @@ function migrateConfig(config, file, base, project, validateAgent) {
     try {
       fs.copyFileSync(file, bak, fs.constants.COPYFILE_EXCL);
       fs.writeFileSync(tmp, JSON.stringify(result, null, 2) + '\n', { flag: 'wx' });
-      fs.renameSync(tmp, file);
+      replaceFile(tmp, file);
       process.stderr.write(`foreman: ${M.configMigrated(file, bak)}\n`);
     } catch (e) {
       fs.rmSync(tmp, { force: true });
