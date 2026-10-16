@@ -144,8 +144,24 @@ async function cmdCheck(o) {
     watch: { ok: isAscii(path.join(RUNS_ROOT, 'watch.mjs')), launcher: path.join(RUNS_ROOT, 'watch.mjs'), fix: isAscii(path.join(RUNS_ROOT, 'watch.mjs')) ? null : M.fixLauncherNotAscii },
     agents: {},
   };
+  const variants = new Map();
+  for (const [mode, levels] of Object.entries(cfg.levels)) {
+    for (const [level, entry] of Object.entries(levels)) {
+      const items = Array.isArray(entry) ? entry : [entry];
+      for (const [index, item] of items.entries()) {
+        if (item === CLAUDE_CODE || item.effort == null) continue;
+        const model = item.model || cfg.agents[item.agent].model;
+        const usedAt = `levels.${mode}.${level}${Array.isArray(entry) ? `[${index}]` : ''}`;
+        if (!variants.has(item.agent)) variants.set(item.agent, []);
+        const list = variants.get(item.agent);
+        const existing = list.find((v) => v.model === model && v.variant === item.effort);
+        if (existing) existing.used_at.push(usedAt);
+        else list.push({ model, variant: item.effort, used_at: [usedAt] });
+      }
+    }
+  }
   for (const [name, agent] of Object.entries(cfg.agents)) {
-    if (!o.agent || o.agent === name) result.agents[name] = { ...await adapters[agent.type].check(name, agent), type: agent.type };
+    if (!o.agent || o.agent === name) result.agents[name] = { ...await adapters[agent.type].check(name, agent, variants.get(name) || []), type: agent.type };
   }
   const referenced = new Set(Object.values(cfg.levels).flatMap((levels) => Object.values(levels).flatMap((entry) => entry === CLAUDE_CODE ? [] : (Array.isArray(entry) ? entry : [entry]).map((item) => item.agent))));
   result.ok = nodeOk && Object.entries(result.agents).every(([name, agent]) => !referenced.has(name) || agent.ok);

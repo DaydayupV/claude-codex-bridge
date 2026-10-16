@@ -112,7 +112,7 @@
 `effort` 可以不写，不写就用工具或模型自己的默认值。各类型的写法：
 - `codex cli`：`low`、`medium`、`high`、`xhigh`、`max`、`ultra`。
 - `api`：原样作为 `reasoning_effort` 发出（DeepSeek 接受 `low` / `high` / `max`）；写 `null` 表示不发。没有推理强度参数的模型写 `null`，比如小米 MiMo（只有思考开关，默认开启）。
-- `opencode cli`：模型的 variant（比如 `high`），拼成 `-m 模型#variant` 传给 opencode；`null` 表示用模型的默认设置。各模型有哪些 variant 不一样，写错了 opencode 会报错。
+- `opencode cli`：模型的 variant（比如 `high`），拼成 `-m 模型#variant` 传给 opencode；`null` 表示用模型的默认设置。各模型有哪些 variant 不一样（比如免费的 DeepSeek 模型接受 `low`、`high`、`max`，不接受 `medium`），写错了 opencode 会报错。改完运行 `check`，它会把各等级配置的 variant 逐个试一遍。
 
 向用户汇报时，不写和 `null` 都说成"推理强度：默认"。
 

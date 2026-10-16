@@ -15,6 +15,12 @@ else if (operation === 'export') {
     ...m, time: { created: m.created === 'old' ? 1 : Date.now() },
   })) }));
 } else if (operation === 'run') {
+  const model = args[args.indexOf('-m') + 1];
+  const rejected = s.reject_variants?.find((variant) => model.endsWith(`#${variant}`));
+  if (rejected) {
+    console.log(JSON.stringify({ type: 'error', error: { type: 'provider.no-route', message: `Variant unavailable for ${model.slice(0, -(rejected.length + 1))}: ${rejected}` } }));
+    process.exit(1);
+  }
   if (!['--standalone', '--format', '--agent', '-m'].every((flag) => args.includes(flag))) throw new Error('假 opencode 缺少运行参数');
   if (s.expected_agent && args[args.indexOf('--agent') + 1] !== s.expected_agent) throw new Error('假 opencode 收到错误的代理');
   const sessionID = args.includes('--session') ? args[args.indexOf('--session') + 1] : s.session_id || 'synthetic-opencode-session';

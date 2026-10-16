@@ -112,7 +112,7 @@ Three task types, `run` / `review` / `discuss`, each with three levels, `simple`
 `effort` can be left out, which means the tool's or model's own default. What it takes depends on the type:
 - `codex cli`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`.
 - `api`: sent as is as `reasoning_effort` (DeepSeek takes `low` / `high` / `max`), and `null` means don't send it. Use `null` for models with no reasoning effort parameter, such as Xiaomi MiMo (only a thinking on/off switch, on by default).
-- `opencode cli`: the model's variant (for example `high`), passed to opencode as `-m model#variant`; `null` means the model's default. Each model has its own variants, and opencode reports an error for a wrong one.
+- `opencode cli`: the model's variant (for example `high`), passed to opencode as `-m model#variant`; `null` means the model's default. Each model has its own variants (the free DeepSeek model, for example, takes `low`, `high` and `max` but not `medium`), and opencode reports an error for a wrong one. After a change, run `check`, which tries each variant the levels configure.
 
 When reporting to the user, describe a missing or `null` effort as "effort: default".
 

@@ -75,7 +75,7 @@
 | 7 取消已结束任务 | status-watch.test.mjs | cancel 对已完成任务不改结果，对未正常结束任务标记已处理 |
 | 8 Codex 检查 | check.test.mjs | check 识别 Codex 已登录状态；check 识别 Codex 未登录状态；check 找不到指定 Codex 时提示安装且不调用真实 CLI |
 | 8 API 检查 | check.test.mjs | check 报告 API 可连通且不改变 Codex 总体结果；check 报告 API 认证失败且不改变 Codex 总体结果 |
-| 8 opencode 检查 | check.test.mjs | check 检查 opencode 模型存在于 models；check 检查 opencode 模型不存在于 models |
+| 8 opencode 检查 | check.test.mjs | check 检查 opencode 模型存在于 models；check 检查 opencode 模型不存在于 models；check 按各等级配置的 variant 逐个试，不支持的档位列出位置并给出修正提示，同一档位只试一次，默认请求失败时不再试 |
 | 9 首次会话提醒 | hooks.test.mjs | 会话提醒首次使用并且不创建配置或迁移目录 |
 | 9 偏好位置兼容 | hooks.test.mjs | 会话提醒带上新位置用户和项目偏好；会话提醒带上旧位置用户和项目偏好 |
 | 9 未完成任务与取消 | hooks.test.mjs | 会话提醒列出未正常结束的执行任务，取消后不再列出 |

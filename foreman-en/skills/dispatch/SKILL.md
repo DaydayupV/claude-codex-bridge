@@ -67,7 +67,7 @@ node "<script path>" cancel --run <run_id>
 - `check` tests whether the environment works: Node.js, Git, and every agent in the config, with results under `agents.<ID>`.
   - Codex CLI: whether it starts and is signed in;
   - API: whether the key is set, plus a tiny request to confirm it connects;
-  - opencode: whether it starts, whether `opencode models` lists the model, plus a tiny request to confirm it works.
+  - opencode: whether it starts, whether `opencode models` lists the model, plus a tiny request to confirm it works; for each reasoning effort (variant) the levels configure for it, one more tiny request, with any the model doesn't support listed under `variants`.
 
   The overall `ok` only counts Node.js and the agents the levels use; a failure in an unused agent is reported but doesn't block anything. For each failed item, `fix` in the result says what to do; pass it on to the user. When a handoff or discussion fails because of the environment (codex not found, not signed in, a 401 from an API, and so on), run `check` first to confirm the cause.
 

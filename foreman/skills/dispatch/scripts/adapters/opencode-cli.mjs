@@ -6,7 +6,7 @@ import { SCHEMA, DISCUSS_SCHEMA } from '../config.mjs';
 import { MAX_REVIEW_CHARS } from '../review-scope.mjs';
 import { newRunDir, isCancelled } from '../records.mjs';
 import { startRun, finishDiscussion, execute, eventWriter, runLimits, reportWithRepair, spawnCli, validateSchema } from '../runner.mjs';
-import { M, die, isObject, binCommand, pathCommand, npmEntry, killTree, readAttachments, focusFiles, relativePath, whoOf } from '../util.mjs';
+import { M, LANGUAGE, die, isObject, binCommand, pathCommand, npmEntry, killTree, readAttachments, focusFiles, relativePath, whoOf } from '../util.mjs';
 
 function opencodeCommand(agent) {
   if (agent.bin) return binCommand(agent.bin);
@@ -269,9 +269,9 @@ async function opencodeSession(run, schema, agentId) {
     fileChanges, images: [], messages: observed.messages, questions: observed.questions };
 }
 
-async function checkOpencodeAgent(name, agent) {
+async function checkOpencodeAgent(name, agent, variants = []) {
   const started = Date.now();
-  const out = { ok: false, type: 'opencode cli', model: agent.model, version: null, model_listed: false, seconds: null, reply: null, error: null, fix: null };
+  const out = { ok: false, type: 'opencode cli', model: agent.model, version: null, model_listed: false, seconds: null, reply: null, error: null, fix: null, variants: [] };
   const call = (args, timeoutMs = 60000, prompt = '') => runOpencode({ agent, args, cwd: process.cwd(), timeoutMs, prompt });
   const failed = (result) => result.errors.join('; ') || result.stderrTail.trim() || result.status;
   const finish = () => ({ ...out, seconds: Number(((Date.now() - started) / 1000).toFixed(1)) });
@@ -284,7 +284,20 @@ async function checkOpencodeAgent(name, agent) {
   const reply = await call(opencodeArgs(agent.model, null), 120000, 'Reply with the single word OK.');
   out.ok = reply.status === 'done';
   out.reply = reply.text.trim().slice(0, 40);
-  if (!out.ok) { out.error = failed(reply); out.fix = M.fixOpencodeRun(name, out.error); }
+  if (!out.ok) { out.error = failed(reply); out.fix = M.fixOpencodeRun(name, out.error); return finish(); }
+  for (const variant of variants) {
+    const result = await call(opencodeArgs(variant.model, variant.variant), 120000, 'Reply with the single word OK.');
+    const ok = result.status === 'done';
+    out.variants.push({ ...variant, ok, error: ok ? null : failed(result) });
+  }
+  const unavailable = out.variants.filter((v) => !v.ok);
+  if (unavailable.length) {
+    out.ok = false;
+    out.error = unavailable[0].error;
+    const list = M.list(unavailable.map((v) => LANGUAGE === 'en'
+      ? `${v.variant} (${M.list(v.used_at)})` : `${v.variant}（${M.list(v.used_at)}）`));
+    out.fix = M.fixOpencodeVariant(name, list);
+  }
   return finish();
 }
 

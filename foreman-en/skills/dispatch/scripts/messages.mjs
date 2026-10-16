@@ -163,6 +163,7 @@ ${schema}`,
   fixOpencodeMissing: (name) => `没有找到 opencode。在终端运行 npm install -g @opencode/cli 安装；装在别的位置时，在配置的 agents.${name}.bin 里写上路径`,
   fixOpencodeModel: (name, model) => `opencode 里找不到模型 ${model}。在终端运行 opencode models 查看可用的模型，改好 agents.${name}.model；OpenCode Go 的模型要先在 opencode 里运行 /connect 登录`,
   fixOpencodeRun: (name, err) => `opencode 调用 ${name} 的模型失败：${err}。先在终端里用 opencode run -m <模型> "hi" 试一下`,
+  fixOpencodeVariant: (name, list) => `${name} 的模型不支持这些推理强度（variant）：${list}。改成模型支持的档位，或者删掉这些 effort、用模型的默认设置；各模型支持哪些档位见厂商文档`,
   fixLauncherNotAscii: '记录目录的路径里有非英文字符，桌面版的终端面板打不开实时查看（它只接受 ASCII 命令）。在 ~/.claude/foreman/config.json 里把 dispatch.runs_dir 设成只含英文字母和数字的路径，比如 "D:/foreman-runs"。命令行版不受影响',
 
   // ---------- 参数 ----------
@@ -495,6 +496,7 @@ ${schema}`,
   fixOpencodeMissing: (name) => `opencode wasn't found. Install it by running npm install -g @opencode/cli in a terminal. If it's installed elsewhere, put its path in agents.${name}.bin in the config`,
   fixOpencodeModel: (name, model) => `opencode doesn't list the model ${model}. Run opencode models in a terminal to see what's available and fix agents.${name}.model. For OpenCode Go models, sign in first by running /connect in opencode`,
   fixOpencodeRun: (name, err) => `opencode failed to call ${name}'s model: ${err}. Try opencode run -m <model> "hi" in a terminal first`,
+  fixOpencodeVariant: (name, list) => `${name}'s model doesn't support these reasoning efforts (variants): ${list}. Change them to ones the model supports, or remove these efforts to use the model's default; see the provider's docs for which ones each model has`,
   fixLauncherNotAscii: "The run directory path has non-English characters, so the desktop app's terminal panel can't open the live view (it only accepts ASCII commands). In ~/.claude/foreman/config.json, set dispatch.runs_dir to a path with only English letters and digits, such as \"D:/foreman-runs\". The CLI isn't affected",
 
   // ---------- arguments ----------
