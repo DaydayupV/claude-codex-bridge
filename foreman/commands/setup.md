@@ -24,7 +24,7 @@ $ARGUMENTS
      - 运行 `opencode models`（只读）看能用哪些模型。要的模型不在列表里时，请用户自己在终端运行 `opencode`，在里面用 `/connect` 登录（OpenCode Go 选 OpenCode Go），登录后再看一次。
      - 推荐一两个模型参加讨论。用 OpenCode Go 时说明：额度按模型分开算，额度少的高档模型（比如 Kimi K3、Qwen Max）建议只放在复杂级。
      - 用户选好后，在用户配置的 `agents` 里每个模型加一项 `{ "type": "opencode cli", "model": "<提供方/模型>" }`，代号用模型名（`/` 后面那段），加进 `levels.discuss` 的对应等级。推理强度不写，用户指定了 variant 再写。
-     - 目前 opencode 只能参加讨论，执行和审查以后的版本才支持。
+     - opencode 能做审查和讨论，执行以后的版本才支持。想让它做审查，加进 `levels.review` 的对应等级。
    - **有 API key，或者用户要接某家的 API**：
      - 自动生成的配置里，检测到 key 的厂商已经有协作方，只是还没加入讨论。问用户要不要加入，加哪几级。
      - 配置里还没有的厂商（比如 GLM、通义千问、OpenRouter）：确认厂商、模型名和接口地址，拿不准时查厂商的官方文档，不要猜。在 `agents` 里加一项 `{ "type": "api", "base_url": "...", "model": "..." }`，代号用模型名。

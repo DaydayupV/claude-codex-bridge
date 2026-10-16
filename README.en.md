@@ -124,7 +124,7 @@ An example with Codex, opencode and DeepSeek:
   | type | What it is | Tasks it can do |
   |---|---|---|
   | `codex cli` | The Codex CLI on this machine | hands-on work, reviews, discussions, images |
-  | `opencode cli` | The opencode CLI on this machine, with any model it can reach | discussions (reviews and hands-on work come in a later version) |
+  | `opencode cli` | The opencode CLI on this machine, with any model it can reach | reviews, discussions (hands-on work comes in a later version) |
   | `api` | A model with an OpenAI-compatible API, such as DeepSeek, Kimi or MiMo | discussions |
 
 - You can have several agents of one type, each with a different model. Codex isn't required.
@@ -163,7 +163,7 @@ If you have [opencode](https://opencode.ai) (2.x) installed, any model it can us
 1. **Sign in inside opencode**: run `opencode` in a terminal and sign in with `/connect` (choose OpenCode Go for a Go subscription), then run `opencode models` to see which models you can use. Free models (names ending in `-free`) need no sign-in.
 2. **Add them to the config**: one entry per model, `{ "type": "opencode cli", "model": "opencode-go/glm-5.3" }`, with the model name as its ID, then add it to the discussion levels you want. `/foreman-en:setup` can do this for you.
 
-For discussions the plugin gives opencode a read-only agent with only the read, search and list tools: it can't run commands or change files. Keys and sign-in stay in opencode; the plugin's config file holds none. Results include this round's cost (`cost_usd`), which is what OpenCode Go quota is charged by. Go's limits are per model, so several models in one discussion spread the load; premium models have small limits, so keep them for complex discussions.
+For discussions and reviews the plugin gives opencode a read-only agent with only the read, search and list tools: it can't run commands or change files. For a review, the plugin works out the changes with git and attaches them, with the same scope as Codex's native review. Keys and sign-in stay in opencode; the plugin's config file holds none. Results include this round's cost (`cost_usd`), which is what OpenCode Go quota is charged by. Go's limits are per model, so several models in one discussion spread the load; premium models have small limits, so keep them for complex discussions.
 
 ### Project config
 

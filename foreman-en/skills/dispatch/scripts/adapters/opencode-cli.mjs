@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DISCUSS_SCHEMA } from '../config.mjs';
+import { MAX_REVIEW_CHARS } from '../review-scope.mjs';
 import { newRunDir, isCancelled } from '../records.mjs';
 import { startRun, finishDiscussion, eventWriter, runLimits, reportWithRepair, spawnCli, validateSchema } from '../runner.mjs';
 import { M, die, isObject, binCommand, pathCommand, npmEntry, killTree, readAttachments, focusFiles, relativePath, whoOf } from '../util.mjs';
@@ -15,17 +16,17 @@ function opencodeCommand(agent) {
 
 const OPENCODE_AGENT = 'foreman-discuss';
 
-function opencodeEnv() {
+function opencodeEnv(agentId = OPENCODE_AGENT) {
   let config;
   try { config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}'); } catch { /* 无效配置由本次注入替代 */ }
   if (!isObject(config)) config = {};
-  const agent = { mode: 'primary', description: 'Read-only code discussion for foreman',
+  const agent = { mode: 'primary', description: agentId === 'foreman-review' ? 'Read-only code review for foreman' : 'Read-only code discussion for foreman',
     permission: { '*': 'deny', read: 'allow', grep: 'allow', glob: 'allow', list: 'allow' } };
-  return { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, agent: { ...(isObject(config.agent) ? config.agent : {}), [OPENCODE_AGENT]: agent } }) };
+  return { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, agent: { ...(isObject(config.agent) ? config.agent : {}), [agentId]: agent } }) };
 }
 
 // 私有服务才会读取本次注入的代理配置，也能随 run 一起终止。
-const opencodeArgs = (model, effort) => ['run', '--standalone', '--format', 'json', '--agent', OPENCODE_AGENT, '-m', `${model}${effort != null ? `#${effort}` : ''}`];
+const opencodeArgs = (model, effort, agentId = OPENCODE_AGENT) => ['run', '--standalone', '--format', 'json', '--agent', agentId, '-m', `${model}${effort != null ? `#${effort}` : ''}`];
 
 function permissionQuestions(actions, lines, cwd) {
   // 路径按工作目录解析：项目里的显示相对路径，项目外的显示绝对路径（模型常给出一长串 ../）。
@@ -55,13 +56,13 @@ function permissionQuestions(actions, lines, cwd) {
   return [...new Map(questions.map((q) => [q.detail, q])).values()];
 }
 
-function runOpencode({ agent, args, cwd, prompt = '', timeoutMs, stallMin = 0, runDir, onEvent }) {
+function runOpencode({ agent, args, cwd, prompt = '', timeoutMs, stallMin = 0, runDir, onEvent, agentId }) {
   return new Promise((resolve) => {
     const { file, pre } = opencodeCommand(agent);
     const out = { code: null, status: null, stdout: '', stderrTail: '', text: '', errors: [], events: 0, messages: [], questions: [] };
     const denied = [], stderrLines = [];
     // opencode 按环境变量 PWD 认工作目录，不看进程真实的 cwd；PWD 是从调用方的 shell 继承来的，可能指向别的目录。
-    const child = spawnCli(file, [...pre, ...args], { cwd, env: { ...opencodeEnv(), PWD: cwd }, windowsHide: true,
+    const child = spawnCli(file, [...pre, ...args], { cwd, env: { ...opencodeEnv(agentId), PWD: cwd }, windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' }, {
       onStderrLine: (line) => { if (/permission requested:/i.test(line)) stderrLines.push(line); },
       onInput: (line, min) => {
@@ -129,12 +130,27 @@ function runOpencode({ agent, args, cwd, prompt = '', timeoutMs, stallMin = 0, r
 async function executeOpencode(ctx) {
   const { cfg, agentName, agent, model, effort, level, cwd, brief, mode, opts } = ctx;
   if (ctx.parent && !ctx.sessionId) die(M.noSession(ctx.parent));
-  const schemaText = fs.readFileSync(DISCUSS_SCHEMA, 'utf8');
-  const schema = JSON.parse(schemaText);
-  const files = readAttachments(opts.file, cwd, false);
-  const prompt = `${brief}${focusFiles(files)}\n\n${ctx.parent ? M.opencodeResumeFooter : M.opencodeDiscussFooter(cwd, schemaText)}\n`;
+  const review = ctx.kind === 'review', agentId = review ? 'foreman-review' : OPENCODE_AGENT;
+  const schemaText = review ? null : fs.readFileSync(DISCUSS_SCHEMA, 'utf8');
+  const schema = review ? null : JSON.parse(schemaText);
+  const files = review ? [] : readAttachments(opts.file, cwd, false);
+  let prompt;
+  if (review) {
+    const scope = ctx.reviewScope;
+    const parts = [scope ? M.opencodeReviewPrompt(cwd, scope.description) : M.reviewPromptPlain(cwd)];
+    if (brief) parts.push(brief);
+    if (scope) {
+      const fileList = scope.files.map((f) => `- ${f.status} ${f.old_path ? `${f.old_path} → ` : ''}${f.path}`
+        + (f.binary ? M.reviewFileBinary : '') + (f.too_large ? M.reviewFileTooLarge : '')).join('\n');
+      const chars = fileList.length + scope.patch.length;
+      if (chars > MAX_REVIEW_CHARS) die(M.reviewTooLarge(chars, MAX_REVIEW_CHARS));
+      const longest = (scope.patch.match(/`+/g) || []).reduce((n, s) => Math.max(n, s.length), 2);
+      parts.push(M.reviewMaterial(fileList, scope.patch, '`'.repeat(longest + 1)));
+    }
+    prompt = [...parts, M.reviewFooter].join('\n\n') + '\n';
+  } else prompt = `${brief}${focusFiles(files)}\n\n${ctx.parent ? M.opencodeResumeFooter : M.opencodeDiscussFooter(cwd, schemaText)}\n`;
   const { id, dir, release } = await newRunDir();
-  const run = startRun({ ...ctx, kind: 'discuss', id, dir, release });
+  const run = startRun({ ...ctx, id, dir, release });
   const { started, meta, writeMeta } = run;
   const { deadline, stallMin } = runLimits(ctx, started);
   const event = eventWriter(dir);
@@ -168,22 +184,23 @@ async function executeOpencode(ctx) {
     } else if (ev.type === 'error') event({ type: 'error', message: ev.error?.message || ev.error?.type || JSON.stringify(ev) });
   };
   let nextPrompt = prompt;
-  report = await reportWithRepair({
-    schema, validate: validateSchema,
-    request: async () => {
-      if (isCancelled(dir)) { meta.status = 'cancelled'; return null; }
-      if (Date.now() >= deadline) { meta.status = 'timeout'; return null; }
-      const args = opencodeArgs(model, effort);
-      if (meta.session_id) args.push('--session', meta.session_id);
-      if (meta.title) args.push('--title', meta.title);
-      const out = await runOpencode({ agent, args, cwd, prompt: nextPrompt, runDir: dir, onEvent: translate,
-        timeoutMs: deadline - Date.now(), stallMin });
-      errors.push(...out.errors);
-      observed.questions.push(...out.questions);
-      if (!repairing) observed.messages = out.messages;
-      meta.status = out.status;
-      return meta.status === 'done' ? { last, canRepair: !!meta.session_id } : null;
-    },
+  const request = async () => {
+    if (isCancelled(dir)) { meta.status = 'cancelled'; return null; }
+    if (Date.now() >= deadline) { meta.status = 'timeout'; return null; }
+    const args = opencodeArgs(model, effort, agentId);
+    if (meta.session_id) args.push('--session', meta.session_id);
+    if (meta.title) args.push('--title', meta.title);
+    const out = await runOpencode({ agent, args, cwd, agentId, prompt: nextPrompt, runDir: dir, onEvent: translate,
+      timeoutMs: deadline - Date.now(), stallMin });
+    errors.push(...out.errors);
+    observed.questions.push(...out.questions);
+    if (!repairing) observed.messages = out.messages;
+    meta.status = out.status;
+    return meta.status === 'done' ? { last, canRepair: !!meta.session_id } : null;
+  };
+  if (review) await request();
+  else report = await reportWithRepair({
+    schema, validate: validateSchema, request,
     onInvalid: () => warnings.push(M.reportInvalid(agentName, path.join(dir, 'last-message.txt'))),
     repair: (invalid) => { repairing = true; nextPrompt = M.reportRepairPrompt(invalid.join('\n')); },
   });
@@ -238,7 +255,7 @@ function validate(agent, key, check, text) {
 }
 
 export default {
-  type: 'opencode cli', capabilities: { modes: ['discuss'], isolation: 'tools', reads_code: true, native_schema: false, native_review: false, images: false, resume: true, command_start_events: false }, channel: M.channel.opencode,
+  type: 'opencode cli', capabilities: { modes: ['review', 'discuss'], isolation: 'tools', reads_code: true, native_schema: false, native_review: false, images: false, resume: true, command_start_events: false }, channel: M.channel.opencode,
   validate,
   status: (agent) => ({ bin: agent.bin || opencodeCommand(agent).file }),
   check: checkOpencodeAgent,

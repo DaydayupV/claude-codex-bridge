@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { CLAUDE_SESSION, checkAdmission, isCancelled } from './records.mjs';
 import { makeTracker } from './tracker.mjs';
+import { computeReviewScope } from './review-scope.mjs';
 import { M, die, relativePath, pathKey, whoOf, modelOf, replaceFile, killTree, looksLikeQuestion, looksLikeInputPrompt, looksLikeFinalQuestion, needsDecision } from './util.mjs';
 
 const INPUT_WAIT_MIN = 3;
@@ -51,7 +52,8 @@ function spawnCli(file, args, options, { onInput, busy = () => false, onStderrLi
   return child;
 }
 
-function collectQuestions({ mode, kind, report, last = '', messages = [], questions = [] }) {
+function collectQuestions({ mode, kind, agent_type, report, last = '', messages = [], questions = [] }) {
+  const review = kind === 'review' && agent_type === 'opencode cli';
   const permissions = new Set();
   const collected = questions.filter((q) => {
     if (q.source !== 'permission_denied') return true;
@@ -66,10 +68,10 @@ function collectQuestions({ mode, kind, report, last = '', messages = [], questi
     for (const q of report?.decision_requests || []) collected.push({ source: 'decision_request', question: q.question,
       options: q.options, recommendation: q.recommendation, detail: q.why_it_matters });
   }
-  for (const text of messages.slice(0, -1)) {
+  for (const text of review ? [] : messages.slice(0, -1)) {
     if (looksLikeQuestion(text)) collected.push({ source: 'asked_mid_run', question: text.slice(0, 500) });
   }
-  if (!report && looksLikeFinalQuestion(last)) collected.push({ source: 'final_question', question: last.slice(0, 2000) });
+  if (!review && !report && looksLikeFinalQuestion(last)) collected.push({ source: 'final_question', question: last.slice(0, 2000) });
   return collected.map((q) => ({ source: q.source, question: q.question ?? null, options: q.options ?? [],
     recommendation: q.recommendation ?? null, detail: q.detail ?? null }));
 }
@@ -97,10 +99,26 @@ function startRun(ctx, { started = Date.now(), track = [], modelShown = ctx.mode
     if (rejection) fs.rmSync(dir, { recursive: true });
   } finally { ctx.release(); }
   if (rejection) die(rejection);
+  if (ctx.reviewScope) {
+    const { patch, ...scope } = ctx.reviewScope;
+    fs.writeFileSync(path.join(dir, 'review.patch'), patch);
+    fs.writeFileSync(path.join(dir, 'review-scope.json'), JSON.stringify(scope, null, 2));
+  }
   return { ctx, started, meta, writeMeta };
 }
 
 function finishRun(run, result, code = result.exit_code, observed = {}) {
+  if (run.ctx.kind === 'review') {
+    const scope = run.ctx.reviewScope;
+    result.review_scope = scope ? { kind: scope.kind, description: scope.description, base: scope.base,
+      merge_base: scope.merge_base, commit: scope.commit, files_total: scope.files.length, fingerprint: scope.fingerprint } : null;
+    if (scope) {
+      let after;
+      try { after = computeReviewScope({ ...run.ctx.opts, cwd: run.ctx.cwd }).fingerprint; }
+      catch (e) { result.warnings.push(e.message); }
+      if (after !== scope.fingerprint) result.warnings.push(M.reviewScopeChanged);
+    }
+  }
   result.questions = collectQuestions({ ...result, ...observed, last: observed.last ?? result.last_message ?? '' });
   const decisions = result.questions.filter(needsDecision).length;
   result.needs_decision = decisions > 0;
@@ -117,7 +135,7 @@ function finishDiscussion(run, { usage, cost, commands = 0, errors, notes, warni
   const { id, dir, mode, cwd, agentName, agent, model, level, effort } = ctx;
   meta.ended_at = new Date().toISOString();
   return finishRun(run, {
-    run_id: id, mode, kind: 'discuss', status: meta.status, title: meta.title, cwd, track: [], group: meta.group, round: meta.round, scope: meta.scope,
+    run_id: id, mode, kind: ctx.kind, status: meta.status, title: meta.title, cwd, track: [], group: meta.group, round: meta.round, scope: meta.scope,
     agent: agentName, agent_type: agent.type, model, model_shown: meta.model_shown, level, effort, sandbox: null, parent: meta.parent, session_id: meta.session_id,
     exit_code: meta.status === 'done' ? 0 : 1, duration_s: Math.round((Date.now() - started) / 1000), usage, usage_scope: 'this_run',
     ...(cost !== undefined ? { cost_usd: cost } : {}),

@@ -247,9 +247,8 @@ async function executeCodex(ctx) {
       prompt = '';
     } else if (git) {
       // 有审查重点时改用普通 exec，让 Codex 自己用 git 查看审查范围。
-      const scope = o.base ? M.reviewScopeBase(o.base) : o.commit ? M.reviewScopeCommit(o.commit) : M.reviewScopeUncommitted;
       args = ['exec', '--json', '--skip-git-repo-check', ...codexOpts, '-C', cwd, '-o', last, '-'];
-      prompt = `${M.reviewPromptGit(cwd, scope)}\n\n${brief}\n\n${M.reviewFooter}\n`;
+      prompt = `${M.reviewPromptGit(cwd, ctx.reviewScope.description)}\n\n${brief}\n\n${M.reviewFooter}\n`;
     } else {
       // 非 git 目录没有"改动"可言，审查范围由任务说明指定。
       args = ['exec', '--json', '--skip-git-repo-check', ...codexOpts, '-C', cwd, '-o', last, '-'];

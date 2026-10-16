@@ -6,6 +6,7 @@ import path from 'node:path';
 import { USER_CONFIG, USER_PREFS, PROJECT_PREFS, LEGACY_PROJECT_PREFS, DEFAULT_AGENT_PARALLEL, CLAUDE_CODE, resolveAgentAlias, detectEnvironment, projectFile, loadConfig, pickProfile } from './config.mjs';
 import { RUNS_ROOT, initializeRecords, findRun, readMeta } from './records.mjs';
 import { adapters } from './adapters/index.mjs';
+import { computeReviewScope } from './review-scope.mjs';
 import { cmdWatch } from './watch.mjs';
 import { cmdStatus, cmdCancel, cmdAwaitBusy } from './status.mjs';
 import { M, die, need, resolveDir, readBrief, isGitRepo, isAscii, agentTypeOf } from './util.mjs';
@@ -55,9 +56,9 @@ async function cmdResume(o) {
   o.track = [...(parent.meta.track || []), ...o.track];
   o.group ??= parent.meta.group ?? null;
   if (!o.scope.length) o.scope = parent.meta.scope || [];
-  adapters[agentTypeOf(parent.meta)].validateResume?.(parent);
   const kind = parent.meta.kind || (parent.meta.mode === 'review' ? 'review' : 'exec');
   if (kind === 'review') die(M.reviewNoResume);
+  adapters[agentTypeOf(parent.meta)].validateResume?.(parent);
   const discuss = kind === 'discuss';
   if (o.group != null && !discuss && !o.scope.length) die(M.groupNeedsScope);
   let round = null;
@@ -88,7 +89,12 @@ async function cmdReview(o) {
   const profile = pickProfile(cfg, o, 'review', adapters);
   const git = isGitRepo(cwd);
   const brief = readBrief(o, !git);
-  return adapters[profile.agent.type].execute({ cfg, ...profile, mode: 'review', kind: 'review', cwd, brief, git, title: o.title, opts: o });
+  let reviewScope = null;
+  if (git) {
+    try { reviewScope = computeReviewScope({ ...o, cwd }); } catch (e) { die(e.message); }
+    if (!reviewScope.files.length) die(M.reviewEmpty(reviewScope.description));
+  }
+  return adapters[profile.agent.type].execute({ cfg, ...profile, mode: 'review', kind: 'review', cwd, brief, git, reviewScope, title: o.title, opts: o });
 }
 
 function cmdConfig(o) {

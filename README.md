@@ -124,7 +124,7 @@
   | type | 是什么 | 能做的任务 |
   |---|---|---|
   | `codex cli` | 本机的 Codex CLI | 执行、审查、讨论、生成图片 |
-  | `opencode cli` | 本机的 opencode CLI，能用它接入的各家模型 | 讨论（以后的版本会开放审查和执行） |
+  | `opencode cli` | 本机的 opencode CLI，能用它接入的各家模型 | 审查、讨论（执行以后的版本开放） |
   | `api` | 兼容 OpenAI 接口的模型，比如 DeepSeek、Kimi、MiMo | 讨论 |
 
 - 同一种可以配多个，各用不同模型。Codex 不是必需的。
@@ -163,7 +163,7 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 1. **在 opencode 里登录**：终端运行 `opencode`，用 `/connect` 登录（OpenCode Go 选 OpenCode Go），再运行 `opencode models` 看能用哪些模型。免费模型（名字带 `-free` 的）不用登录。
 2. **加进配置**：每个模型加一项 `{ "type": "opencode cli", "model": "opencode-go/glm-5.3" }`，代号用模型名，再加进需要的讨论等级。也可以交给 `/foreman:setup`。
 
-讨论时插件给 opencode 注入一个只读代理，只有读文件、搜索和列目录的工具：它不能运行命令，也不能改文件。key 和登录都留在 opencode 里，插件的配置文件里不写。结果里会带上这一轮折算的费用（`cost_usd`），OpenCode Go 的额度就按这个扣。Go 的额度按模型分开算，几个模型一起讨论能把额度摊开；高档模型额度少，建议只放在复杂讨论里。
+讨论和审查时，插件给 opencode 注入一个只读代理，只有读文件、搜索和列目录的工具：它不能运行命令，也不能改文件。审查时要看的改动由插件用 git 算好附给它，范围和 Codex 原生审查一致。key 和登录都留在 opencode 里，插件的配置文件里不写。结果里会带上这一轮折算的费用（`cost_usd`），OpenCode Go 的额度就按这个扣。Go 的额度按模型分开算，几个模型一起讨论能把额度摊开；高档模型额度少，建议只放在复杂讨论里。
 
 ### 项目配置
 

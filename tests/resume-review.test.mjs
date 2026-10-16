@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { sandbox, taskArgs, output, failed, json, MESSAGES } from './helpers.mjs';
+import { sandbox, taskArgs, output, failed, json, read, MESSAGES } from './helpers.mjs';
 import { discussion, usage, sessionStats } from './fixtures/reports.mjs';
 const M = MESSAGES.zh;
 
@@ -44,6 +44,7 @@ test('讨论续接到轮数上限后拒绝再开一轮', async (t) => {
 for (const scope of ['uncommitted', 'base', 'commit']) {
   test(`没有审查重点时使用原生 exec review --${scope}`, async (t) => {
     const h = sandbox(t), sha = h.initGit(), s = h.scenario({ last_message: '合成审查通过' });
+    h.write('source.txt', 'working change\n');
     const value = scope === 'commit' ? sha : 'HEAD';
     const range = scope === 'uncommitted' ? ['--uncommitted'] : [`--${scope}`, value];
     const r = output(await h.bridge(['review', '--cwd', h.cwd, '--level', 'normal', '--title', '合成审查', '--no-snapshot', ...range], { env: s.env }));
@@ -56,28 +57,39 @@ for (const scope of ['uncommitted', 'base', 'commit']) {
     assert.equal(r.kind, 'review');
     assert.equal(r.report, null);
     assert.equal(r.last_message, '合成审查通过');
+    const recorded = json(path.join(r.run_dir, 'review-scope.json'));
+    assert.equal(recorded.kind, scope);
+    assert.equal(recorded.patch, undefined);
+    assert.equal(r.review_scope.fingerprint, recorded.fingerprint);
+    assert.equal(r.review_scope.files_total, recorded.files.length);
+    assert.ok(read(path.join(r.run_dir, 'review.patch')).includes(scope === 'commit' ? '+before' : '+working change'));
   });
 }
 
 for (const scope of ['uncommitted', 'base', 'commit']) {
   test(`有审查重点时普通 exec 提示词包含 ${scope} 范围`, async (t) => {
     const h = sandbox(t), sha = h.initGit();
-    const range = scope === 'uncommitted' ? [] : [`--${scope}`, scope === 'commit' ? sha : 'HEAD'];
-    output(await h.bridge(taskArgs(h, 'review', ['--no-snapshot', ...range]), { input: '检查边界条件' }));
+    h.write('source.txt', 'working change\n');
+    const range = scope === 'uncommitted' ? [] : [`--${scope}`, scope === 'commit' ? sha.slice(0, 8) : 'HEAD'];
+    const r = output(await h.bridge(taskArgs(h, 'review', ['--no-snapshot', ...range]), { input: '检查边界条件' }));
     const call = h.calls()[0];
     assert.equal(call.args[0], 'exec');
     assert.ok(!call.args.includes('review'));
-    const expectedScope = scope === 'uncommitted' ? M.reviewScopeUncommitted : scope === 'base' ? M.reviewScopeBase('HEAD') : M.reviewScopeCommit(sha);
+    const expectedScope = scope === 'uncommitted' ? M.reviewScopeUncommitted : scope === 'base' ? M.reviewScopeBase('HEAD', sha) : M.reviewScopeCommit(sha);
     assert.ok(call.stdin.includes(M.reviewPromptGit(h.cwd, expectedScope)));
     assert.ok(call.stdin.includes('检查边界条件'));
     assert.ok(call.stdin.includes(M.reviewFooter));
+    assert.equal(r.review_scope.description, expectedScope);
+    assert.equal(r.review_scope.fingerprint, json(path.join(r.run_dir, 'review-scope.json')).fingerprint);
+    assert.ok(read(path.join(r.run_dir, 'review.patch')).includes('diff --git'));
   });
 }
 
 test('非 Git 目录审查要求说明并使用普通 exec', async (t) => {
   const h = sandbox(t);
   failed(await h.bridge(['review', '--cwd', h.cwd, '--level', 'normal']), M.missingOpt('brief'));
-  output(await h.bridge(taskArgs(h, 'review', ['--no-snapshot']), { input: '检查 source.txt' }));
+  const r = output(await h.bridge(taskArgs(h, 'review', ['--no-snapshot']), { input: '检查 source.txt' }));
+  assert.equal(r.review_scope, null);
   const call = h.calls()[0];
   assert.ok(!call.args.includes('review'));
   assert.ok(call.stdin.includes(M.reviewPromptPlain(h.cwd)));

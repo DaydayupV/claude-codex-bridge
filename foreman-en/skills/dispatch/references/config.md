@@ -70,7 +70,7 @@ Example:
 | `bin` | Optional path to the opencode executable. Found automatically by default |
 | `max_parallel` | Optional; `4` by default |
 
-Sign-in and keys are handled by opencode itself (for OpenCode Go, sign in first by running `/connect` in opencode); the plugin doesn't touch them. For discussions the script gives opencode a read-only agent with only the read, search and list tools: participants can look through the project's code themselves, but can't run commands or change files.
+Sign-in and keys are handled by opencode itself (for OpenCode Go, sign in first by running `/connect` in opencode); the plugin doesn't touch them. For discussions and reviews the script gives opencode a read-only agent with only the read, search and list tools: it can look through the project's code itself, but can't run commands or change files. For a review, the script works out the changes with git and attaches them.
 
 **`type: "api"`** (models with an OpenAI-compatible API)
 
@@ -88,7 +88,7 @@ Sign-in and keys are handled by opencode itself (for OpenCode Go, sign in first 
 
 | | codex cli | opencode cli | api |
 |---|---|---|---|
-| Tasks (`modes`) | hands-on work, reviews, discussions | discussions | discussions |
+| Tasks (`modes`) | hands-on work, reviews, discussions | reviews, discussions | discussions |
 | Isolation (`isolation`) | OS sandbox (`os`), per the sandbox setting | tool permissions only (`tools`) | none (`none`); text in and out only |
 | Reads code itself (`reads_code`) | yes | yes | no; relies on attached files |
 | Native report format (`native_schema`) | yes | no; prompt plus one repair | no; same |

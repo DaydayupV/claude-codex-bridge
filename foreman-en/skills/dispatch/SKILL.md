@@ -72,7 +72,7 @@ node "<script path>" cancel --run <run_id>
   The overall `ok` only counts Node.js and the agents the levels use; a failure in an unused agent is reported but doesn't block anything. For each failed item, `fix` in the result says what to do; pass it on to the user. When a handoff or discussion fails because of the environment (codex not found, not signed in, a 401 from an API, and so on), run `check` first to confirm the cause.
 
 - Who gets the work, the model, reasoning effort, sandbox, approval policy and time limits come from the config file (see "Configuration"). Anything not configured for Codex comes from its own `~/.codex/config.toml`.
-- `--agent <agent>` picks which entry under `agents` in the config gets this call. Without it, the one configured for that level is used; it's required when a discussion level has several participants. Which tasks an agent can do is in `capabilities.modes` in the `config` output; for now `api` and `opencode cli` agents can only take part in `discuss`. Old IDs from before the upgrade (such as `codex`) still work, and the script says what the new ID is. opencode agents also go only through this script; don't run `opencode run` directly to bring one into a discussion.
+- `--agent <agent>` picks which entry under `agents` in the config gets this call. Without it, the one configured for that level is used; it's required when a discussion level has several participants. Which tasks an agent can do is in `capabilities.modes` in the `config` output; for now `api` agents can only take part in `discuss`, and `opencode cli` agents can do `review` and `discuss`. Old IDs from before the upgrade (such as `codex`) still work, and the script says what the new ID is. opencode agents also go only through this script; don't run `opencode run` directly to bring one into a discussion.
 - If you're unsure of the current settings, run `config --cwd "<project dir>"` first. It shows the settings in effect, the run directory and the path of the watch launcher.
 - When the sandbox isn't `read-only` / `workspace-write` (for example `danger-full-access`), `--cwd` **doesn't limit what Codex can write**. The scope is then held only by the brief and by reviewing the diff afterwards.
 - If the allowed scope includes paths ignored by `.gitignore` (such as `tests/` or a results folder), pass them with `--track "<path>"` (can be given more than once); otherwise change tracking can't see those files. Resume keeps the previous round's `--track`.
@@ -353,9 +353,20 @@ Do it directly when the user asks. Otherwise judge by the task. When `resolved_l
 - One-off scripts and prototypes that have already been run and checked
 - Low-risk changes with test coverage that Claude has already reviewed
 
-Always pass a review brief with `--brief` (intent of the change, risky spots, what to focus on). Without one, Codex's built-in review runs instead, which doesn't follow these review rules.
+Always pass a review brief with `--brief` (intent of the change, risky spots, what to focus on). Without one, Codex runs its built-in review instead, which is in English and doesn't follow these review rules.
 
-Check the review findings too: verify each issue Codex raises and fix only the real ones. Drop false positives and mention them briefly in your report.
+The script works out the review scope with git first:
+- `--uncommitted` (the default): staged and unstaged changes plus untracked new files;
+- `--base <branch>`: from the merge-base with that branch to the current working tree, both committed and uncommitted, without untracked files;
+- `--commit <sha>`: the changes that commit introduced.
+
+This matches what Codex's native review means. With no changes at all, the script stops with an error instead of handing anything off.
+
+- The full patch is saved as `review.patch` in the run directory. `review_scope` in the result gives the scope, file count and fingerprint; if the changes moved while the review ran, `warnings` says so, and the review may not cover the latest changes.
+- Codex reads the changes itself. opencode agents get the patch the script computed, plus read-only tools for context, and can't run commands.
+- If the patch is too large (about 200,000 characters), an opencode review is refused: review commit by commit (`--commit`), or give the review to Codex.
+
+Check the review findings too: verify each issue the reviewer raises and fix only the real ones. Drop false positives and mention them briefly in your report.
 
 ## Reporting to the user
 Say which parts Codex or other agents did (with run_ids, and the agent, model and effort of each call, taken from `agent`, `model_shown` and `effort` in the result), the token use of each call (this call's input and how much was cached, and output; say so when `usage_scope` is `session_total`), what Claude reviewed, how it was verified, whether Codex reviewed it and with what result, and any open issues.
