@@ -119,6 +119,23 @@ test('check opencode 清单里没有的档位不发请求，修正提示列出�
   assert.deepEqual(runCalls(empty).slice(before), ['right/thing']);
 });
 
+test('check opencode 清单里有的档位请求失败时转告真实报错，不说档位不支持', async (t) => {
+  const h = sandbox(t), c = baseConfig();
+  c.agents.oc = opencodeAgent();
+  c.levels.review.simple = { agent: 'oc', effort: 'high' };
+  c.levels.review.normal = { agent: 'oc', effort: 'medium' };
+  h.config(c);
+  const s = h.scenario({ opencode_catalog: opencodeCatalog, reject_variants: ['high'], last_message: 'OK' });
+  const r = output(await h.bridge(['check', '--agent', 'oc'], { env: s.env }), 1);
+  const error = 'Variant unavailable for fake/model: high', supported = ['low', 'high'];
+  assert.equal(r.agents.oc.ok, false);
+  assert.equal(r.agents.oc.error, error);
+  assert.equal(r.agents.oc.fix, [
+    M.fixEffortUnsupported('oc', M.effortAt('medium', 'levels.review.normal', 'fake/model', M.list(supported))),
+    M.fixOpencodeVariantFailed('oc', 'high（levels.review.simple）', error),
+  ].join('；'));
+});
+
 test('check opencode 模型写错提供方前缀时提示最接近的写法', async (t) => {
   const h = sandbox(t), c = baseConfig();
   c.agents.oc = { ...opencodeAgent(), model: 'wrong/model' };

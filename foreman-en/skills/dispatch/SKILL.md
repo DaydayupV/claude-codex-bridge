@@ -309,7 +309,7 @@ Before delivering changes, whether an agent or Claude made them, level the revie
 - Codex reads the changes itself. opencode and pi get the patch the script computed, plus read-only tools for context, and can't run commands. If the patch is too large (about 200,000 characters), an opencode or pi review is refused: review commit by commit (`--commit`), or give the review to Codex.
 
 ### After the review
-1. **Verify each finding**: only issues that really exist count; drop false positives and say briefly in the report why they don't hold.
+1. **Verify each finding**: the findings are in the result's `last_message` (reviews have no structured `report`). Only issues that really exist count; drop false positives and say briefly in the report why they don't hold.
 2. **Who fixes them**:
    - A review Claude asked for on its own: Claude fixes small issues itself; if there are many, or they touch the logic, put the verified issues in a rework brief and `resume` the agent that did the work, which counts as one rework (see "Rework and failures"). If Claude made the change, Claude fixes it.
    - A review the user started with `/foreman-en:review`: the user only asked for a review, so first tell them the verified issues and how you plan to fix them, and fix once they agree (or if they already said to fix them).

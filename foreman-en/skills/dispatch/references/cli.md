@@ -18,7 +18,8 @@ Lists the model lists built into the local Codex, opencode and pi (with the effo
 
 ## Result fields
 The results of `run`, `resume`, `discuss` and `review` are printed to stdout as JSON. The main fields:
-- `report`: the agent's structured report.
+- `report`: the agent's structured report. Reviews have no structured report: `report` is `null` and the findings are the text in `last_message`. When the report from hands-on work or a discussion isn't valid JSON, there's only `last_message` too.
+- `last_message`: when there's no `report`, the text of the agent's last reply, cut to the first 8000 characters; the full text is in `run_dir/last-message.txt`.
 - `changes`: changes inside the working directory, as tracked by the script. Each file has `by`: `agent` means a tool event shows the agent doing the work changed it (records from before the rename say `codex`); `reported` means only its report claims the change, which is common for files written by commands or scripts; `unknown` means it isn't known who did. Files marked `group_run` are inside the write scope of another run in the same group.
 - `notes`: informational messages, such as changes of unknown origin, files the agent reported but tracking didn't see, or Codex's sandbox being unable to start commands.
 - `warnings`: problems to look at, such as files changed during a discussion or review, or changes that moved while a review ran.

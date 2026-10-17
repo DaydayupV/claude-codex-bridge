@@ -18,7 +18,8 @@ SKILL.md 里只留了决策流程和常用命令。排查环境、帮用户选�
 
 ## 结果字段
 `run`、`resume`、`discuss`、`review` 的结果以 JSON 打印到 stdout，主要字段：
-- `report`：协作方的结构化报告。
+- `report`：协作方的结构化报告。审查没有结构化报告：`report` 为 `null`，审查意见是 `last_message` 里的文字。执行和讨论的报告不是合法 JSON 时，也只有 `last_message`。
+- `last_message`：没有 `report` 时，协作方最后一条回复的原文，只保留前 8000 字，全文在 `run_dir/last-message.txt`。
 - `changes`：脚本追踪到的工作目录内改动。每个文件标有 `by`：`agent` 表示有工具事件证明是执行的协作方改的（改名前的记录里写作 `codex`）；`reported` 表示只有它在报告里自称改过，常见于用命令或脚本写的文件；`unknown` 表示两样都没有。标了 `group_run` 的落在同组另一个任务的写入范围里。
 - `notes`：提示信息，比如归属未知的改动、协作方报告了但没追踪到的文件、Codex 的沙箱启动不了命令。
 - `warnings`：要注意的问题，比如讨论或审查时文件被改了、审查期间改动又变了。

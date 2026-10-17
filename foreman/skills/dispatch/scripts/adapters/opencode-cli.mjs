@@ -330,11 +330,17 @@ async function checkOpencodeAgent(name, agent, variants = [], catalog = () => op
   if (unavailable.length) {
     out.ok = false;
     out.error = unavailable[0].error;
-    // 清单里查得到支持的档位时，直接告诉用户能写哪些。
-    out.fix = unavailable.every((v) => v.supported)
-      ? M.fixEffortUnsupported(name, M.list(unavailable.map((v) => M.effortAt(v.variant, M.list(v.used_at), v.model, v.supported.length ? M.list(v.supported) : M.noEfforts))))
-      : M.fixOpencodeVariant(name, M.list(unavailable.map((v) => LANGUAGE === 'en'
-        ? `${v.variant} (${M.list(v.used_at)})` : `${v.variant}（${M.list(v.used_at)}）`)));
+    const where = (v) => LANGUAGE === 'en' ? `${v.variant} (${M.list(v.used_at)})` : `${v.variant}（${M.list(v.used_at)}）`;
+    // 清单里没有的档位：告诉用户能写哪些。清单里有、请求却失败的：档位没写错，转告真实的报错。
+    // 读不到清单的：默认请求能通、只有带档位的失败，多半是档位不支持。
+    const notListed = unavailable.filter((v) => v.supported && !v.supported.includes(v.variant));
+    const listedFailed = unavailable.filter((v) => v.supported?.includes(v.variant));
+    const unknown = unavailable.filter((v) => !v.supported);
+    out.fix = [
+      notListed.length && M.fixEffortUnsupported(name, M.list(notListed.map((v) => M.effortAt(v.variant, M.list(v.used_at), v.model, v.supported.length ? M.list(v.supported) : M.noEfforts)))),
+      listedFailed.length && M.fixOpencodeVariantFailed(name, M.list(listedFailed.map(where)), listedFailed[0].error),
+      unknown.length && M.fixOpencodeVariant(name, M.list(unknown.map(where))),
+    ].filter(Boolean).join(LANGUAGE === 'en' ? '; ' : '；');
   }
   return finish();
 }
