@@ -82,7 +82,7 @@ node "<脚本路径>" cancel --run <run_id>
 - 任务说明先写成 UTF-8 文件（有 scratchpad 目录就放在那里，否则放在系统临时目录），脚本会自动附加固定约束：不越界、开工前预检、什么情况下停下来提问、只写必要测试、不 commit/push、不碰密钥、按 schema 汇报。
 - **一律用后台方式运行**（Bash 的 `run_in_background`），跑完会自动通知。等待期间可以做别的，不要轮询。
 - **每次调用（`run`、`resume`、`discuss`、`review`）都必须在对话里明确告诉用户用的是哪个模型、推理强度多少**，例如"已派出：gpt-6-astra（Codex CLI，effort max），等级 complex"；多方讨论时逐个写出，例如"已发起讨论：gpt-6-astra（Codex CLI，effort max）、deepseek-v4-pro（API，effort max）"。以脚本启动时输出的第一行（"<模式> 开始｜<模型>（<接入方式>，effort …）｜等级 …｜记录目录 …"）为准，不要凭配置自己推断；模型来自 Codex 配置时照实说明。最终汇报里再写一次。
-- **启动 `run`、`discuss`、`resume` 后，下一步必须立即处理实时查看**（见"实时查看"一节），测试和小任务也不例外。用户要靠它看到 Codex 在做什么，漏掉就等于让用户干等。
+- **启动 `run`、`resume`、`discuss`、`review` 后，下一步必须立即处理实时查看**（见"实时查看"一节），测试、小任务和审查也不例外。用户要靠它看到协作方在做什么，漏掉就等于让用户干等。
 - 结果以 JSON 打印到 stdout，主要字段：
   - `report`：Codex 的结构化报告。
   - `changes`：脚本追踪到的工作目录内改动。每个文件标有 `by`：`agent` 表示有工具事件证明是执行的协作方改的（改名前的记录里写作 `codex`）；`reported` 表示只有它在报告里自称改过，常见于用命令或脚本写的文件；`unknown` 表示两样都没有。
@@ -101,7 +101,7 @@ node "<脚本路径>" cancel --run <run_id>
 - 用户要改配置时，直接编辑对应的 JSON 文件，改完运行 `config` 确认生效。
 
 ## 实时查看（每次派活都做）
-用后台方式启动 `run`、`discuss` 或 `resume` 之后，立即让用户能看到实时进度。`dispatch.watch` 为 `off` 时跳过本节，只告诉用户可以用 `/foreman:watch` 查看。
+只要派给了其他模型，也就是用后台方式启动 `run`、`resume`、`discuss` 或 `review` 之后，立即让用户能看到实时进度。`dispatch.watch` 为 `off` 时跳过本节，只告诉用户可以用 `/foreman:watch` 查看。
 
 - **有 `run_in_terminal` 工具时**（Claude 桌面版），在用户的终端面板里打开：用 `run_in_terminal` 运行 `node <记录目录>/watch.mjs --run <run_id>`，标题写"<模型>：<短标题>"，比如"gpt-6-astra：<短标题>"。多方讨论用同一个组，只开一个标签页：`node <记录目录>/watch.mjs --group <组名>`，标题写"讨论：<短标题>"。记录目录默认是 `~/.claude/foreman/runs`，在 Windows 上写成 `C:\Users\<用户名>\.claude\foreman\runs`，以 `config` 的输出为准。这个启动器由脚本自动生成，插件路径含非 ASCII 字符时也能满足 `run_in_terminal` 只接受 ASCII 的要求。`config` 输出里 `watch_launcher_ascii` 为 `false` 时（记录目录路径含中文等非 ASCII 字符），`run_in_terminal` 会拒绝这条命令：改为把命令放在代码块里发给用户，请用户在自己的终端里运行，并转告 `check` 输出里 `watch.fix` 的处理办法。
 - run_id 在启动后后台输出的第一行（"记录目录 …/<run_id>"）里。不加 `--run` 时它会跟踪正在运行的任务，但其他会话可能也在跑任务，所以尽量指定。
@@ -112,7 +112,7 @@ node "<脚本路径>" cancel --run <run_id>
 - 任务结束后 watch 会自动退出，标签页保留，供用户回看。不要关闭它。
 - 退出后的标签页不会再显示新任务。所以每次续接（讨论的下一轮、返工）都要按上面的做法新开一个标签页，不要让用户回上一轮的标签页去看。讨论的下一轮照样用 `--group <组名>`，标题写"讨论：<短标题>（第 N 轮）"，画面里只显示这一轮的参与方。
 - 默认是简洁显示。用户要看完整细节时，加 `--verbose`。
-- `review` 只在用户要求时才打开实时查看。
+- 审查的标签页标题写"<模型>：审查 <范围>"，比如"gpt-6-astra：审查未提交的改动"。
 
 ## 任务等级与推理强度
 `run`、`resume`、`discuss`、`review` 每次都必须显式给出 `--level`，没有默认值，漏写脚本会直接报错。Claude 只判断任务属于哪一级，具体用哪个模型和推理强度由用户在配置的 `levels` 里决定，启动时的第一行会打印实际用的模型和推理强度。用户没写等级或推理强度时，不管是 Claude 主动派活，还是用户用 `/foreman:run`、`/foreman:review`、`/foreman:discuss` 发起，都按下面的标准判断，没有默认等级。

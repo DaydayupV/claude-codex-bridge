@@ -38,7 +38,7 @@ Example:
 | Setting | What it does | Default |
 |---|---|---|
 | `auto` | Whether to hand off work on its own (see "Permission" in the skill) | `true` |
-| `watch` | `auto`: open the live view after a handoff; `off`: don't | `auto` |
+| `watch` | `auto`: open the live view whenever work goes to another model (hands-on work, resumes, discussions, reviews); `off`: don't, and use `/foreman-en:watch` when you want to look | `auto` |
 | `discuss_max_rounds` | The most rounds one discussion can have (round 1 plus later resumes), counted per participant; the script refuses resumes beyond it | `2` |
 | `timeout_min` | Total time limit for one run, in minutes | `480` |
 | `stall_min` | How long without activity counts as stuck, in minutes (0 turns it off). Codex: no events and no command running; API: no data at all in the stream; opencode: no events at all | `40` |
