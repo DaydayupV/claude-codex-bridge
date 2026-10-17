@@ -3,6 +3,9 @@
   "owner": {
     "name": "DaydayupV"
   },
+  "metadata": {
+    "description": "Claude Code-led multi-model teamwork: foreman (中文) and foreman-en (English)"
+  },
   "plugins": [
     {
       "name": "foreman",

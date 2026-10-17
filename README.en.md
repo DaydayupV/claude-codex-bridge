@@ -61,6 +61,8 @@ So that Claude Code doesn't forget (easy when a project has its own skills), the
 
 ## Install and setup
 
+**We recommend the Code tab of the Claude desktop app.** The plugin is mainly developed and tested there: after each handoff the live view opens in the terminal panel and comes to the front by itself, and the intro is tuned for the desktop app's terminal. The CLI works too, with the same handoffs, reviews and discussions; the only difference is that you run the live-view command Claude Code gives you in another terminal yourself.
+
 In Claude Code, run:
 
 ```
@@ -312,11 +314,11 @@ Each call is recorded in `~/.claude/foreman/runs/<run_id>/`: the brief, the even
 
 ## Platforms
 
-Tested on Windows, in both the CLI and the desktop app (including the Microsoft Store version). The macOS and Linux code paths are written but not yet tested in practice; issue reports are welcome.
+Mainly developed and tested in the Claude desktop app on Windows (including the Microsoft Store version); the CLI has been tested too, and loads the plugin, commands and hooks the same way. The macOS and Linux code paths are written but not yet tested in practice; issue reports are welcome.
 
 - **The live view in the desktop app** opens in the terminal panel, which only accepts ASCII commands. If the run directory (`~/.claude/foreman/runs` by default) has non-English characters in its path (for example a Windows user name in Chinese), `/foreman-en:setup` will point it out; set `dispatch.runs_dir` in the config to a plain-English path. The CLI isn't affected.
 - **Programs started from a graphical app** (such as the macOS desktop app) may have a PATH without Homebrew, nvm and similar directories. If the script can't find a command, it also looks in the directory node runs from, `/opt/homebrew/bin`, `/usr/local/bin` and other common places; if it's still not found, set `bin` on that agent to the executable's full path. The plugin's hooks run `node`, so it also needs to be on the PATH.
-- **The live view** redraws the whole screen. Windows Terminal, macOS Terminal and iTerm2, the VS Code terminal and common Linux terminals all support this; simple terminals such as `TERM=dumb` get line-by-line output instead. The intro uses 24-bit color and has only been seen in the Claude desktop app's terminal; if its colors look wrong, turn it off with `dispatch.intro: false`.
+- **The live view** redraws the whole screen. Windows Terminal, macOS Terminal and iTerm2, the VS Code terminal and common Linux terminals all support this; simple terminals such as `TERM=dumb` get line-by-line output instead. The intro uses 24-bit color and switches to 256 colors in macOS's built-in Terminal; it has mainly been seen in the Claude desktop app's terminal, so if it looks wrong elsewhere, turn it off with `dispatch.intro: false`.
 
 ## Upgrading from codex-bridge
 

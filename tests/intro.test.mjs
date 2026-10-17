@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sandbox, output, failed, baseConfig, MESSAGES } from './helpers.mjs';
-import { avatarFor, LOOKS, INTRO_MS, introScene, introLayout, introFrame, introState, playIntro } from '../foreman/skills/dispatch/scripts/watch-intro.mjs';
+import { avatarFor, LOOKS, INTRO_MS, introScene, introLayout, introFrame, introState, playIntro, supportsTruecolor } from '../foreman/skills/dispatch/scripts/watch-intro.mjs';
 import { AVATARS, AVATAR_ALPHABET } from '../foreman/skills/dispatch/scripts/watch-avatars.mjs';
 import { textWidth } from '../foreman/skills/dispatch/scripts/util.mjs';
 const M = MESSAGES.zh;
@@ -76,6 +76,18 @@ test('每一帧都不超出终端：行数等于高度，每行最多占宽度�
   // 40 列时名单折成几行，一个模型名都不截断
   const wider = introFrame(introState(scenes[2], fixed), 2600, 40, 30).map(visible);
   for (const model of scenes[2].participants.map((p) => p.model)) assert.ok(wider.some((l) => l.includes(model)), model);
+});
+
+test('macOS 自带终端没声明支持 24 位色时改用 256 色，其他终端用 24 位色', () => {
+  assert.equal(supportsTruecolor({ TERM_PROGRAM: 'Apple_Terminal' }), false);
+  assert.equal(supportsTruecolor({ TERM_PROGRAM: 'Apple_Terminal', COLORTERM: 'truecolor' }), true);
+  for (const env of [{ TERM_PROGRAM: 'iTerm.app' }, { TERM_PROGRAM: 'vscode' }, { WT_SESSION: 'x' }, {}]) assert.equal(supportsTruecolor(env), true, JSON.stringify(env));
+  const scene = introScene({ mode: 'run', kind: 'exec', participants: [one('chatgpt', 'gpt-6-astra')], random: fixed });
+  const deep = introFrame(introState(scene, fixed, true), 2600, 120, 30).join('');
+  const flat = introFrame(introState(scene, fixed, false), 2600, 120, 30).join('');
+  assert.ok(deep.includes('38;2;') && !deep.includes('38;5;'));
+  assert.ok(flat.includes('38;5;') && flat.includes('48;5;') && !/[34]8;2;/.test(flat));
+  assert.equal(visible(deep), visible(flat)); // 只换颜色，字一样
 });
 
 test('文案：中英文都有三类任务和每个头像的笑话，占位符都被换掉', () => {

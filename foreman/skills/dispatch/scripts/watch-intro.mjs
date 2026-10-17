@@ -71,7 +71,17 @@ function introScene({ mode, kind, participants, group = false, random = Math.ran
 
 // ---- 屏幕缓冲：每格 { ch, fg, bold }，底色统一 ----
 const BG = [16, 16, 22], GRAY = [200, 200, 200], DIM = [110, 110, 110], TRACK = [60, 60, 60];
-const BG_SGR = `\x1b[0;48;2;${BG.join(';')}m`;
+// 颜色默认用 24 位色。macOS 自带的终端旧版不支持 24 位色，它没声明支持（COLORTERM）时改用最接近的 256 色
+const supportsTruecolor = (env = process.env) => env.TERM_PROGRAM !== 'Apple_Terminal' || /truecolor|24bit/i.test(env.COLORTERM || '');
+const CUBE = [0, 95, 135, 175, 215, 255];
+function to256([r, g, b]) {
+  const q = (v) => (v < 48 ? 0 : v < 115 ? 1 : Math.min(5, Math.floor((v - 35) / 40)));
+  const cube = [q(r), q(g), q(b)], gi = Math.max(0, Math.min(23, Math.round(((r + g + b) / 3 - 8) / 10))), gv = 8 + gi * 10;
+  const dist = (c) => (r - c[0]) ** 2 + (g - c[1]) ** 2 + (b - c[2]) ** 2;
+  return dist(cube.map((i) => CUBE[i])) <= dist([gv, gv, gv]) ? 16 + 36 * cube[0] + 6 * cube[1] + cube[2] : 232 + gi; // 6×6×6 色块和 24 级灰里挑近的
+}
+const color = (layer, c, deep) => (deep ? `${layer};2;${c.join(';')}` : `${layer};5;${to256(c)}`);
+const bgSgr = (deep) => `\x1b[0;${color(48, BG, deep)}m`;
 const SPIN = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
 const mix = (a, b, k) => a.map((v, i) => Math.round(v + (b[i] - v) * k));
 const dim = (c, f) => c.map((v) => Math.round(v * f));
@@ -84,15 +94,15 @@ function put(buf, x, y, text, fg, bold = false) {
     x += w;
   }
 }
-function serialize(row) {
+function serialize(row, deep) {
   let s = '', cur = '';
   for (const c of row) {
     if (c.ch === '') continue;
-    const sgr = `0;${c.bold ? '1;' : ''}${c.fg ? `38;2;${c.fg.join(';')}` : '39'};48;2;${(c.bg || BG).join(';')}`;
+    const sgr = `0;${c.bold ? '1;' : ''}${c.fg ? color(38, c.fg, deep) : '39'};${color(48, c.bg || BG, deep)}`;
     if (sgr !== cur) { s += `\x1b[${sgr}m`; cur = sgr; }
     s += c.ch;
   }
-  return `${s}${BG_SGR}\x1b[K\x1b[0m`; // 用深色擦到行尾：最后一列不写字，也就不会触发换行
+  return `${s}${bgSgr(deep)}\x1b[K\x1b[0m`; // 用深色擦到行尾：最后一列不写字，也就不会触发换行
 }
 const rowsOf = (g) => Math.ceil(g.length / 2);
 // reveal：已经扫出来的像素行数，正在扫的那一行加亮；bob：整体下移 1 像素（底边一行被裁掉）
@@ -140,7 +150,8 @@ function badgeRows(keys, Wd) {
 // ---- 画一帧：返回每一行（带颜色控制符）。state 里有场景、是否已结束、星星；W、H 是终端大小 ----
 const JOKE_AT = 800;
 function introFrame(state, t, W, H) {
-  if (W < 12 || H < 6) return Array.from({ length: H }, () => `${BG_SGR}\x1b[K\x1b[0m`); // 窄得画不下任何东西：只铺底色
+  const deep = state.truecolor !== false;
+  if (W < 12 || H < 6) return Array.from({ length: H }, () => `${bgSgr(deep)}\x1b[K\x1b[0m`); // 窄得画不下任何东西：只铺底色
   const { scene } = state, D = scene.duration, Wd = W - 1; // 最后一列不画
   const fade = t > state.end - 600 ? Math.max(0, (state.end - t) / 600) : 1;
   const main = scene.participants[0], theme = LOOKS[main.key].color, accent = scene.host ? LOOKS.claude.color : theme;
@@ -243,9 +254,9 @@ function introFrame(state, t, W, H) {
   for (let k = 0; k < bw; k++) put(buf, bx + k, y, k < filled ? '━' : '─', dim(k < filled ? mix(accent, theme, k / bw) : TRACK, fade));
   if (barOne) put(buf, bx + bw + 2, y, tail, dim(DIM, fade));
   else wrapWidth(tail, tw).forEach((l, i) => put(buf, center(l), y + 1 + i, l, dim(DIM, fade)));
-  return buf.map(serialize);
+  return buf.map((row) => serialize(row, deep));
 }
-const introState = (scene, random = Math.random) => ({ scene, random, end: scene.duration, finished: false, sparks: [], lastSpark: 0 });
+const introState = (scene, random = Math.random, truecolor = supportsTruecolor()) => ({ scene, random, truecolor, end: scene.duration, finished: false, sparks: [], lastSpark: 0 });
 
 // ---- 播放：画在备用屏幕里，任意键跳过，任务提前结束就马上收尾 ----
 // isOver()：任务是不是已经结束；refresh()：组里有新登记的任务时返回新的出场名单。
@@ -274,7 +285,7 @@ function playIntro(scene, { out = process.stdout, input = process.stdin, isOver 
     process.on('exit', restore);
     process.on('SIGINT', quit);
     process.on('SIGTERM', quit);
-    out.write(`\x1b[?1049h\x1b[?25l\x1b[?7l${BG_SGR}\x1b[2J`);
+    out.write(`\x1b[?1049h\x1b[?25l\x1b[?7l${bgSgr(state.truecolor)}\x1b[2J`);
     let timer = null;
     function cleanup() {
       clearInterval(timer);
@@ -291,7 +302,7 @@ function playIntro(scene, { out = process.stdout, input = process.stdin, isOver 
         const next = refresh?.();
         if (next?.length && lineup(next) !== lineup(scene.participants)) scene.participants = next;
       }
-      if (prev.length !== H || prev.w !== W) { prev = []; out.write(`${BG_SGR}\x1b[2J`); }
+      if (prev.length !== H || prev.w !== W) { prev = []; out.write(`${bgSgr(state.truecolor)}\x1b[2J`); }
       // 平时只写变了的行；每 8 帧整屏重画一次，终端自己弄乱的地方最多留 0.3 秒
       if (frame++ % 8 === 0 || Date.now() < repaintUntil || !prev.length) prev = Object.assign(new Array(H).fill(null), { w: W });
       let text = '';
@@ -309,4 +320,4 @@ function playIntro(scene, { out = process.stdout, input = process.stdin, isOver 
   });
 }
 
-export { avatarFor, LOOKS, INTRO_MS, introScene, introLayout, introFrame, introState, playIntro };
+export { avatarFor, LOOKS, INTRO_MS, introScene, introLayout, introFrame, introState, playIntro, supportsTruecolor };

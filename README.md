@@ -61,6 +61,8 @@
 
 ## 安装和设置
 
+**推荐在 Claude 桌面版的 Code 页里用。** 插件主要在桌面版上开发和测试：派活后实时画面会自动在终端面板里打开、切到前台，启动动画也是按桌面版的终端调的。命令行版同样能用，派活、审查、讨论都一样，区别只是实时查看要你自己在另一个终端里运行 Claude Code 给出的命令。
+
 在 Claude Code 里运行：
 
 ```
@@ -312,11 +314,11 @@ Claude Code 只判断任务属于哪一级，交给谁、用什么推理强度�
 
 ## 平台支持
 
-Windows 上已经实际测试过，包括命令行版和桌面版（含 Microsoft Store 版）。macOS 和 Linux 的代码路径已经写好，但还没有实际测试，欢迎反馈问题。
+主要在 Windows 的 Claude 桌面版（含 Microsoft Store 版）上开发和测试；命令行版也测过，插件、命令和钩子的加载和桌面版一样。macOS 和 Linux 的代码路径已经写好，但还没有实际测试，欢迎反馈问题。
 
 - **桌面版的实时查看**开在终端面板里，终端面板只接受 ASCII 命令。记录目录（默认 `~/.claude/foreman/runs`）的路径里有中文等字符时（比如 Windows 用户名是中文），`/foreman:setup` 会提示；在配置里把 `dispatch.runs_dir` 设成纯英文路径就行。命令行版不受影响。
 - **从图形界面启动的程序**（比如 macOS 桌面版）PATH 里可能没有 Homebrew、nvm 等目录。脚本找不到命令时，会再到 node 所在的目录、`/opt/homebrew/bin`、`/usr/local/bin` 等常见位置找；仍然找不到，就在这个协作方里写上 `bin`（可执行文件的完整路径）。插件的钩子要用 `node`，也需要能在 PATH 里找到它。
-- **实时查看**用到全屏重画，Windows Terminal、macOS 的终端和 iTerm2、VS Code 的终端以及常见的 Linux 终端都支持；`TERM=dumb` 这类简单终端会改成逐行输出。启动动画用 24 位色，只在 Claude 桌面版的终端里看过；颜色不对时用 `dispatch.intro: false` 关掉。
+- **实时查看**用到全屏重画，Windows Terminal、macOS 的终端和 iTerm2、VS Code 的终端以及常见的 Linux 终端都支持；`TERM=dumb` 这类简单终端会改成逐行输出。启动动画用 24 位色，macOS 自带的终端会自动改用 256 色；它主要在 Claude 桌面版的终端里看过，别的终端里显示不对时，用 `dispatch.intro: false` 关掉。
 
 ## 从 codex-bridge 升级
 
