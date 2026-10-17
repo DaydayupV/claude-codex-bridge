@@ -60,7 +60,11 @@ The script is `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/cli.mjs`. The confi
 
 7. **Overview of the whole config**: from `summary` in the `check` output of step 6 (or step 1 if nothing changed), give:
    - **Level table**: the three levels of hands-on work, reviews and discussions. Each cell gives the agent, model, effort (say "default" when it's left out or `null`) and the check result; for `ok: false`, give the `problem`. Describe `"claude code"` as "Claude does it itself" for hands-on work and "no outside model" for reviews and discussions.
-   - **Agent table**: ID, type, model, the cells it's used in, `run_access` and the check result.
+   - **Agent table**: ID, type, model, the cells it's used in, hands-on access and the check result. For the hands-on access column:
+     - `opencode cli` with `run_access`: write `edit` (only changes files in the project, can't run commands) or `shell` (can also run commands, no OS sandbox);
+     - `opencode cli` without `run_access`: write "not enabled (edit or shell can be turned on)". Don't write "can't do hands-on work": opencode can, the user just has to turn it on first;
+     - `codex cli`: write "no need to enable";
+     - `api`: write "—", since API agents only join discussions.
    - **Warnings**: pass on each of `summary.warnings` in plain words, skipping ones already handled in step 4.
    - Finish in two or three sentences: what works now and what's still missing; day to day, just ask Claude to do things: larger tasks go out per the config, complex designs get discussed first, and `/foreman-en:run`, `/foreman-en:discuss` and `/foreman-en:review` name a task type directly.
 
