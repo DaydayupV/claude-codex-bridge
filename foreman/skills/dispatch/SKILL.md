@@ -104,9 +104,10 @@ node "<脚本路径>" cancel --run <run_id>
 ## 实时查看（每次派活都做）
 只要派给了其他模型，也就是用后台方式启动 `run`、`resume`、`discuss` 或 `review` 之后，立即让用户能看到实时进度。`dispatch.watch` 为 `off` 时跳过本节，只告诉用户可以用 `/foreman:watch` 查看。
 
+- **先打开终端面板，再开标签页**（Claude 桌面版）：先调用显示面板的工具（名字带 `show_pane`，和 `run_in_terminal` 一起用一次 ToolSearch 加载），`pane` 填 `terminal`，不填 `tab_id`；等它返回后再用 `run_in_terminal` 开标签页。面板开着时，新开的标签页会自动切到前台，watch 开头几秒的启动动画用户能从头看到；反过来先开标签页再显示面板，两次调用之间常常隔十几秒，面板出来时动画已经放完了。没有显示面板的工具就直接开标签页。
 - **有 `run_in_terminal` 工具时**（Claude 桌面版），在用户的终端面板里打开：用 `run_in_terminal` 运行 `node <记录目录>/watch.mjs --run <run_id>`，标题写"<模型>：<短标题>"，比如"gpt-6-astra：<短标题>"。多方讨论用同一个组，只开一个标签页：`node <记录目录>/watch.mjs --group <组名>`，标题写"讨论：<短标题>"。记录目录默认是 `~/.claude/foreman/runs`，在 Windows 上写成 `C:\Users\<用户名>\.claude\foreman\runs`，以 `config` 的输出为准。这个启动器由脚本自动生成，插件路径含非 ASCII 字符时也能满足 `run_in_terminal` 只接受 ASCII 的要求。`config` 输出里 `watch_launcher_ascii` 为 `false` 时（记录目录路径含中文等非 ASCII 字符），`run_in_terminal` 会拒绝这条命令：改为把命令放在代码块里发给用户，请用户在自己的终端里运行，并转告 `check` 输出里 `watch.fix` 的处理办法。
 - run_id 在启动后后台输出的第一行（"记录目录 …/<run_id>"）里。不加 `--run` 时它会跟踪正在运行的任务，但其他会话可能也在跑任务，所以尽量指定。
-- 打开后紧接着把终端面板切到这个标签页，让用户直接看到：调用显示面板的工具（Claude 桌面版里名字带 `show_pane`，可能要先用 ToolSearch 加载），`pane` 填 `terminal`，`tab_id` 填刚才的 tab_id。只开标签页的话，终端面板可能藏在别的面板后面，用户看不到。没有这个工具就跳过。
+- 标签页开好后，再调用一次显示面板的工具，`pane` 填 `terminal`、`tab_id` 填刚才的 tab_id，确保面板停在这个标签页上（中途用户切走了面板，或者面板被别的面板挡住时，这一下能切回来）。没有这个工具就跳过。
 - 再把标签页链接 `[<标题>](#terminal/<tab_id>)` 发给用户。
 - 讨论里有 API 参与方时，同时在后台启动排队检查 `await-busy`（每个组一次；opencode 和 pi 参与方不需要）。脚本启动时输出的"排队检查"一行给出了完整命令，照着运行即可；它退出后怎么处理见讨论模式里"API 参与方繁忙时"一节。
 - **没有 `run_in_terminal` 时**（比如命令行版 Claude Code），把完整的 watch 命令放在 bash 代码块里发给用户，请用户在另一个终端里运行。
