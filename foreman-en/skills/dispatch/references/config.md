@@ -110,11 +110,13 @@ Three task types, `run` / `review` / `discuss`, each with three levels, `simple`
 - `discuss`: an array of participants, one or more, for example `[{ "agent": "gpt-6-astra", "effort": "max" }, { "agent": "deepseek-v4-pro", "effort": "max" }]`. Each agent can appear only once per level.
 
 `effort` can be left out, which means the tool's or model's own default. What it takes depends on the type:
-- `codex cli`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`.
+- `codex cli`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. Which ones a model supports comes from Codex's own model list (gpt-5.5, for example, goes up to `xhigh`); `check` checks against that list.
 - `api`: sent as is as `reasoning_effort` (DeepSeek takes `low` / `high` / `max`), and `null` means don't send it. Use `null` for models with no reasoning effort parameter, such as Xiaomi MiMo (only a thinking on/off switch, on by default).
-- `opencode cli`: the model's variant (for example `high`), passed to opencode as `-m model#variant`; `null` means the model's default. Each model has its own variants (the free DeepSeek model, for example, takes `low`, `high` and `max` but not `medium`), and opencode reports an error for a wrong one. After a change, run `check`, which tries each variant the levels configure.
+- `opencode cli`: the model's variant (for example `high`), passed to opencode as `-m model#variant`; `null` means the model's default. Each model has its own variants (the free DeepSeek model, for example, takes `low`, `high` and `max` but not `medium`), and opencode reports an error for a wrong one. `default` is the same as leaving it out. After a change, run `check`: variants missing from opencode's model list are reported at once, and the rest are tried one by one.
 
 When reporting to the user, describe a missing or `null` effort as "effort: default".
+
+Run `models` to see which efforts each model takes: for Codex and opencode it reads their built-in model lists; for API agents it can only list model names, so efforts come from the provider's official docs.
 
 A level can also set `model` to override the agent's model; old configs that do this still work. It isn't recommended for new configs, because the ID and the model actually used drift apart. To use another model, add another agent.
 
@@ -162,4 +164,5 @@ Choices that cost money or affect safety (which opencode model to use, letting A
 - When the sandbox isn't `read-only` / `workspace-write` (for example `danger-full-access`), Codex can write to any directory: `--cwd` only sets where it starts and **doesn't limit what it can write**. The scope is then held only by the brief and by reviewing the diff afterwards.
 - After the user changes settings, run `config` to confirm:
   - `resolved_levels` shows who each level finally goes to, with model and effort;
-  - `agents_status` shows each agent's type and capabilities, whether its key is set, and the executable it uses.
+  - `agents_status` shows each agent's type and capabilities, whether its key is set, and the executable it uses;
+  - `summary` is the overview of the whole config: who each cell goes to, the cells each agent is used in, and warnings (unused agents, plaintext keys, shell access for hands-on work, old IDs in `agent-aliases.json` that point to IDs no longer there). `check` outputs it too, with check results.

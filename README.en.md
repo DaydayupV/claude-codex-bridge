@@ -16,7 +16,7 @@ The idea is a split of roles: Claude does the planning, key decisions, design an
 | `/foreman-en:status` | Lists recent runs, or shows the details of one, with each run's token use, the size of its latest request and how much of the Codex quota is used |
 | `/foreman-en:watch` | Shows what each model is doing, live. The default view is a timeline: times down the left, with what the model says, folded commands and file changes in order, a bottom line that keeps showing elapsed time, command count and progress, and the result at the end; while the run is going the view re-flows when the window is resized, and you can scroll back with the arrow keys, PgUp/PgDn or the mouse wheel; add `--verbose` for every detail. When following a group (such as a discussion with several models), one window is split into a block per model, with its status and elapsed time on the right of each block's title line and its latest few lines below |
 | `/foreman-en:config` | Shows or changes the plugin's settings |
-| `/foreman-en:setup` | First-time setup: checks that Codex and the rest of the environment work, explains the current settings, and optionally adds other models to discussions |
+| `/foreman-en:setup` | Setup guide: detects this machine's tools, lists the models and efforts available, gives one complete recommendation, changes the config after you adjust it item by item, and finishes with an overview of the whole config. Run it again after installing a new tool or to change models |
 
 You don't have to use the commands. The bundled skill lets Claude decide on its own: hand off hands-on tasks that are big enough, discuss complex and uncertain designs with Codex and other models first, and ask Codex to review risky changes before delivering them. When a big task splits into parts that don't touch each other, Claude hands them to several Codex sessions at once to cut the wait (see `agents.<name>.max_parallel` below). You can turn this off with `dispatch.auto` (see below). So that Claude doesn't forget (easy when a project has its own skills), the plugin reminds it once at the start of every session and includes your preference files.
 
@@ -39,7 +39,7 @@ In Claude Code, run:
 /plugin install foreman-en@claude-foreman
 ```
 
-Then run `/foreman-en:setup`. It detects which tools this machine has (Codex, opencode, API keys), explains who gets each kind of task now, and suggests models to add for your situation. Later, use `/foreman-en:config` to see or change the settings.
+Then run `/foreman-en:setup`. It detects which tools this machine has (Codex, opencode, API keys), lists the models available and the efforts each supports, and gives one complete recommendation for your situation; after you adjust it item by item, it changes the config and shows an overview: who gets each level of each kind of task, which agents aren't used, and anything to watch out for. Later, use `/foreman-en:config` to see or change the settings.
 
 ### Upgrading from codex-bridge
 
@@ -71,7 +71,9 @@ On first run, the plugin checks what this machine has, then generates a config:
 | API key environment variables (DeepSeek, Kimi, MiMo) | Added to the config, but not to any discussion yet |
 | opencode | Not added automatically; you pick the model |
 
-Choices that cost money or affect safety are never made automatically. Run `/foreman-en:setup` and Claude suggests a setup for your machine, then changes the config once you confirm. Running setup again later picks up newly installed tools.
+Choices that cost money or affect safety are never made automatically. Run `/foreman-en:setup` and Claude suggests a setup for your machine, then changes the config once you confirm. The models and efforts to choose from come from the model lists built into Codex and opencode; when you add an API model, Claude checks the provider's official docs. Running setup again later picks up newly installed tools.
+
+When Claude checks the environment (`check`), it confirms each agent works and that each level's effort is supported by its model, and also finishes with the overview.
 
 ### How the config is laid out
 

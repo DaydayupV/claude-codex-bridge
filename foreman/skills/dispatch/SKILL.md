@@ -58,16 +58,21 @@ node "<脚本路径>" status [--run <run_id|last> | --group <组名>] [--limit n
 node "<脚本路径>" watch  [--run <run_id|last> | --group <组名>]
 node "<脚本路径>" config [--cwd "<项目目录>"]
 node "<脚本路径>" check  [--agent <协作方>]
+node "<脚本路径>" models
 node "<脚本路径>" await-busy (--group <组名> | --run <run_id>) [--after 分钟]
 node "<脚本路径>" cancel --run <run_id>
 ```
 
 - `check` 检查环境能不能用：Node.js、Git，以及配置里的每个协作方，结果在 `agents.<代号>` 里。
-  - Codex CLI：能否启动、是否已登录；
+  - Codex CLI：能否启动、是否已登录；再按 Codex 自带的模型清单核对各等级配置的推理强度（不发请求），结果列在 `efforts` 里；
   - API：key 是否设置，并发一个很小的请求确认能连通；
-  - opencode：能否启动、`opencode models` 里有没有这个模型，并发一个很小的请求确认能用；各等级给它配置了推理强度（variant）的，每个档位再各发一个小请求，模型不支持的档位会列在 `variants` 里。
+  - opencode：能否启动、`opencode models` 里有没有这个模型，并发一个很小的请求确认能用；各等级给它配置了推理强度（variant）的，先按 opencode 的模型清单核对，清单里没有的直接判不通过，其余每个档位再各发一个小请求，结果列在 `variants` 里。
 
   总体 `ok` 只看 Node.js 和被等级引用到的协作方；没被引用的不通过只是报告出来，不影响使用。每项不通过时，结果里的 `fix` 写明该怎么处理，转告用户即可。派活或讨论因为环境问题失败（找不到 codex、没登录、API 报 401 等）时，先跑 `check` 确认原因。
+
+  结果里的 `summary` 是总配置情况：`levels` 是每一格交给谁、什么模型和推理强度、检查是否通过（不通过的写了 `problem`），`agents` 是每个协作方用在哪几格，`warnings` 是值得注意的地方（没用到的协作方、明文写在配置里的 key、shell 权限用于执行、失效的旧代号）。跑完 `check` 后，用一张等级表和一份提醒把它告诉用户，写法同 `/foreman:setup` 的最后一步。`config` 的输出里也有 `summary`，只是不带检查结果。
+
+- `models` 列出本机 Codex、opencode 自带的模型清单（含每个模型支持的推理强度），以及每个 API 协作方的接口列出的模型名（不含推理强度），并核对配置里的模型在不在清单里、不在时给出最接近的写法。只读，不发模型请求。用户问有哪些模型可选、或者要换模型和推理强度时用。
 
 - 交给谁、模型、推理强度、沙箱、审批、超时由配置文件决定（见"配置"一节）；Codex 没有配置的项沿用它自己的 `~/.codex/config.toml`。
 - `--agent <协作方>` 指定这次交给配置 `agents` 里的哪一方。不写时用这一级配置的那一方；讨论的某一级有多个参与方时必须写。每个协作方能做哪些任务，看 `config` 输出的 `capabilities.modes`；目前 `api` 协作方只能参加 `discuss`；`opencode cli` 协作方能做 `review` 和 `discuss`，配置里写了 `run_access` 的还能做 `run`。升级前的旧代号（比如 `codex`）照样认，脚本会提示新代号。opencode 协作方也只能通过本脚本调用，不要直接运行 `opencode run` 让它参加讨论。

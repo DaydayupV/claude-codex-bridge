@@ -60,16 +60,21 @@ node "<script path>" status [--run <run_id|last> | --group <name>] [--limit n]
 node "<script path>" watch  [--run <run_id|last> | --group <name>]
 node "<script path>" config [--cwd "<project dir>"]
 node "<script path>" check  [--agent <agent>]
+node "<script path>" models
 node "<script path>" await-busy (--group <name> | --run <run_id>) [--after minutes]
 node "<script path>" cancel --run <run_id>
 ```
 
 - `check` tests whether the environment works: Node.js, Git, and every agent in the config, with results under `agents.<ID>`.
-  - Codex CLI: whether it starts and is signed in;
+  - Codex CLI: whether it starts and is signed in; then the efforts the levels configure are checked against Codex's own model list (no requests sent), with results under `efforts`;
   - API: whether the key is set, plus a tiny request to confirm it connects;
-  - opencode: whether it starts, whether `opencode models` lists the model, plus a tiny request to confirm it works; for each reasoning effort (variant) the levels configure for it, one more tiny request, with any the model doesn't support listed under `variants`.
+  - opencode: whether it starts, whether `opencode models` lists the model, plus a tiny request to confirm it works; each reasoning effort (variant) the levels configure for it is first checked against opencode's model list, failing at once if it isn't there, and every other one gets one more tiny request; results are under `variants`.
 
   The overall `ok` only counts Node.js and the agents the levels use; a failure in an unused agent is reported but doesn't block anything. For each failed item, `fix` in the result says what to do; pass it on to the user. When a handoff or discussion fails because of the environment (codex not found, not signed in, a 401 from an API, and so on), run `check` first to confirm the cause.
+
+  `summary` in the result is the overview of the whole config: `levels` gives each cell's agent, model, effort and whether it passed (with a `problem` if not), `agents` gives the cells each agent is used in, and `warnings` lists things worth noting (unused agents, keys written in plain text in the config, shell access for hands-on work, stale old IDs). After `check`, tell the user with a level table and the warnings, as in the last step of `/foreman-en:setup`. `config` also outputs `summary`, without check results.
+
+- `models` lists the model lists built into the local Codex and opencode (with the efforts each model supports) and the model names each API agent's endpoint lists (without efforts), and checks whether the configured models are listed, suggesting the closest names when not. Read-only; it sends no model requests. Use it when the user asks which models are available, or wants to change a model or effort.
 
 - Who gets the work, the model, reasoning effort, sandbox, approval policy and time limits come from the config file (see "Configuration"). Anything not configured for Codex comes from its own `~/.codex/config.toml`.
 - `--agent <agent>` picks which entry under `agents` in the config gets this call. Without it, the one configured for that level is used; it's required when a discussion level has several participants. Which tasks an agent can do is in `capabilities.modes` in the `config` output; for now `api` agents can only take part in `discuss`; `opencode cli` agents can do `review` and `discuss`, and `run` too when the config gives them `run_access`. Old IDs from before the upgrade (such as `codex`) still work, and the script says what the new ID is. opencode agents also go only through this script; don't run `opencode run` directly to bring one into a discussion.

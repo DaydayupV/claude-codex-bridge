@@ -110,11 +110,13 @@
 - `discuss`：参与方数组，可以一方也可以多方，例如 `[{ "agent": "gpt-6-astra", "effort": "max" }, { "agent": "deepseek-v4-pro", "effort": "max" }]`。同一个协作方在一级里只能出现一次。
 
 `effort` 可以不写，不写就用工具或模型自己的默认值。各类型的写法：
-- `codex cli`：`low`、`medium`、`high`、`xhigh`、`max`、`ultra`。
+- `codex cli`：`low`、`medium`、`high`、`xhigh`、`max`、`ultra`。每个模型支持哪些以 Codex 自带的模型清单为准（比如 gpt-5.5 最高到 `xhigh`），`check` 会按清单核对。
 - `api`：原样作为 `reasoning_effort` 发出（DeepSeek 接受 `low` / `high` / `max`）；写 `null` 表示不发。没有推理强度参数的模型写 `null`，比如小米 MiMo（只有思考开关，默认开启）。
-- `opencode cli`：模型的 variant（比如 `high`），拼成 `-m 模型#variant` 传给 opencode；`null` 表示用模型的默认设置。各模型有哪些 variant 不一样（比如免费的 DeepSeek 模型接受 `low`、`high`、`max`，不接受 `medium`），写错了 opencode 会报错。改完运行 `check`，它会把各等级配置的 variant 逐个试一遍。
+- `opencode cli`：模型的 variant（比如 `high`），拼成 `-m 模型#variant` 传给 opencode；`null` 表示用模型的默认设置。各模型有哪些 variant 不一样（比如免费的 DeepSeek 模型接受 `low`、`high`、`max`，不接受 `medium`），写错了 opencode 会报错。写 `default` 和不写一样。改完运行 `check`：opencode 的模型清单里没有的 variant 直接报出，其余逐个试一遍。
 
 向用户汇报时，不写和 `null` 都说成"推理强度：默认"。
+
+各模型能选哪些推理强度，运行 `models` 查看：Codex 和 opencode 读它们自带的模型清单；API 只能列出模型名，推理强度要查厂商的官方文档。
 
 等级里还可以写 `model` 覆盖协作方的模型，旧配置里有这种写法照常能用。新配置不推荐：代号和实际模型会对不上。想换模型，就新加一个协作方。
 
@@ -162,4 +164,5 @@
 - 沙箱不是 `read-only` / `workspace-write` 时（比如 `danger-full-access`），Codex 能写任何目录，`--cwd` 只决定它从哪里开始工作，**不限制写入范围**。这时范围只能靠任务说明约束，再靠事后审查 diff 把关。
 - 用户改了配置，改完运行 `config` 确认：
   - `resolved_levels` 列出每一级最终用谁、什么模型和推理强度；
-  - `agents_status` 列出每个协作方的类型、能力、key 是否已设置、实际用的可执行文件。
+  - `agents_status` 列出每个协作方的类型、能力、key 是否已设置、实际用的可执行文件；
+  - `summary` 是总配置情况：每一格交给谁，每个协作方用在哪几格，以及提醒（没用到的协作方、明文 key、shell 权限用于执行、`agent-aliases.json` 里指向已不存在代号的旧代号）。`check` 的输出里也有，并带上检查结果。
