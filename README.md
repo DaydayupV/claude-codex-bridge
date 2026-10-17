@@ -200,7 +200,7 @@ flowchart TD
 
 装了 opencode 2.x 的话，它里面能用的模型都可以参加讨论和审查，比如 [OpenCode Go](https://opencode.ai/docs/go/) 订阅里的 GLM、Kimi、Qwen、MiniMax、DeepSeek。它们能自己读项目里的代码，代价是每读一次文件多一次请求，更费额度。
 
-1. **登录**：终端运行 `opencode`，用 `/connect` 登录（OpenCode Go 选 OpenCode Go），再运行 `opencode models` 看能用哪些模型。名字带 `-free` 的免费模型不用登录。
+1. **登录**：终端运行 `opencode`，用 `/connect` 登录（OpenCode Go 选 OpenCode Go），再运行 `opencode models` 看能用哪些模型。名字带 `-free` 的免费模型不要配：OpenCode 现在只允许在它自己的界面里用免费模型，从命令行调用会被拒绝（报错 "OpenCode's free tier can only be used from within OpenCode"）。
 2. **加进配置**：每个模型加一项 `{ "type": "opencode cli", "model": "opencode-go/glm-5.3" }`，再加进需要的等级。也可以交给 `/foreman:setup`。
 
 讨论和审查时，插件给它注入一个只读代理，只有读文件、搜索和列目录的工具；审查要看的改动由插件用 git 算好附给它。key 和登录都留在 opencode 里。结果里带上这一轮折算的费用（`cost_usd`），OpenCode Go 的额度就按这个扣；Go 的额度按模型分开算，高档模型额度少，建议只放在复杂讨论里。
@@ -244,7 +244,7 @@ flowchart TD
     "gpt-6-astra":        { "type": "codex cli", "model": "gpt-6-astra" },
     "gpt-6.1-sol":        { "type": "codex cli", "model": "gpt-6.1-sol" },
     "deepseek-flash":     { "type": "opencode cli", "model": "deepseek/deepseek-flash" },
-    "glm-5.3-flash-free": { "type": "opencode cli", "model": "opencode/glm-5.3-flash-free" },
+    "glm-5.3":            { "type": "opencode cli", "model": "opencode-go/glm-5.3" },
     "mimo-v2.6-pro":      { "type": "pi cli", "model": "xiaomi/mimo-v2.6-pro" },
     "kimi-k2.6":          { "type": "api", "base_url": "https://api.moonshot.cn/v1", "api_key_env": "KIMI_API_KEY", "model": "kimi-k2.6" }
   },
@@ -262,19 +262,19 @@ flowchart TD
     "discuss": {
       "simple": [
         { "agent": "gpt-6-astra", "effort": "medium" },
-        { "agent": "glm-5.3-flash-free" }
+        { "agent": "glm-5.3" }
       ],
       "normal": [
         { "agent": "gpt-6-astra", "effort": "high" },
         { "agent": "deepseek-flash", "effort": "high" },
-        { "agent": "glm-5.3-flash-free", "effort": "high" }
+        { "agent": "glm-5.3" }
       ],
       "complex": [
         { "agent": "gpt-6-astra", "effort": "max" },
         { "agent": "deepseek-flash", "effort": "max" },
         { "agent": "kimi-k2.6" },
         { "agent": "mimo-v2.6-pro", "effort": "high" },
-        { "agent": "glm-5.3-flash-free", "effort": "max" }
+        { "agent": "glm-5.3" }
       ]
     }
   }
@@ -285,7 +285,7 @@ flowchart TD
 |---|---|---|
 | `gpt-6.1-sol` | Codex CLI | 复杂的执行 |
 | `gpt-6-astra` | Codex CLI | 所有审查，三级讨论都参加 |
-| `glm-5.3-flash-free` | opencode（免费模型） | 三级讨论都参加 |
+| `glm-5.3` | opencode（OpenCode Go 订阅） | 三级讨论都参加 |
 | `deepseek-flash` | opencode | 常规和复杂的讨论 |
 | `mimo-v2.6-pro` | pi | 复杂的讨论 |
 | `kimi-k2.6` | API，key 在环境变量 `KIMI_API_KEY` 里 | 复杂的讨论 |
@@ -296,7 +296,7 @@ flowchart TD
 
 ```json
 "gpt-6.1-sol":        { "type": "codex cli", "model": "gpt-6.1-sol", "sandbox": { "run": "workspace-write" }, "max_parallel": 2 },
-"glm-5.3-flash-free": { "type": "opencode cli", "model": "opencode/glm-5.3-flash-free", "run_access": "edit" },
+"glm-5.3":            { "type": "opencode cli", "model": "opencode-go/glm-5.3", "run_access": "edit" },
 "deepseek-v4-pro":    { "type": "api", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-v4-pro", "extra_body": { "temperature": 0.3 } }
 ```
 

@@ -200,7 +200,7 @@ You can also leave this to `/foreman-en:setup`, for example `/foreman-en:setup a
 
 With opencode 2.x installed, any model it can use can join discussions and do reviews, for example GLM, Kimi, Qwen, MiniMax or DeepSeek from an [OpenCode Go](https://opencode.ai/docs/go/) subscription. They read your project's code themselves; the trade-off is that every file they read is another request, which uses more quota.
 
-1. **Sign in**: run `opencode` in a terminal and sign in with `/connect` (choose OpenCode Go for a Go subscription), then run `opencode models` to see which models you can use. Free models (names ending in `-free`) need no sign-in.
+1. **Sign in**: run `opencode` in a terminal and sign in with `/connect` (choose OpenCode Go for a Go subscription), then run `opencode models` to see which models you can use. Don't configure the free models (names ending in `-free`): OpenCode now only allows them inside its own app, and calls from the command line are refused with "OpenCode's free tier can only be used from within OpenCode".
 2. **Add them to the config**: one entry per model, `{ "type": "opencode cli", "model": "opencode-go/glm-5.3" }`, then add it to the levels you want. `/foreman-en:setup` can do this for you.
 
 For discussions and reviews, the plugin gives opencode a read-only agent with only the read, search and list tools; for a review, the plugin works out the changes with git and attaches them. Keys and sign-in stay in opencode. Results include this round's cost (`cost_usd`), which is what OpenCode Go quota is charged by; Go's limits are per model, and premium models have small limits, so keep them for complex discussions.
@@ -244,7 +244,7 @@ Both take a change snapshot first, and Claude Code reviews the diff file by file
     "gpt-6-astra":        { "type": "codex cli", "model": "gpt-6-astra" },
     "gpt-6.1-sol":        { "type": "codex cli", "model": "gpt-6.1-sol" },
     "deepseek-flash":     { "type": "opencode cli", "model": "deepseek/deepseek-flash" },
-    "glm-5.3-flash-free": { "type": "opencode cli", "model": "opencode/glm-5.3-flash-free" },
+    "glm-5.3":            { "type": "opencode cli", "model": "opencode-go/glm-5.3" },
     "mimo-v2.6-pro":      { "type": "pi cli", "model": "xiaomi/mimo-v2.6-pro" },
     "kimi-k2.6":          { "type": "api", "base_url": "https://api.moonshot.cn/v1", "api_key_env": "KIMI_API_KEY", "model": "kimi-k2.6" }
   },
@@ -262,19 +262,19 @@ Both take a change snapshot first, and Claude Code reviews the diff file by file
     "discuss": {
       "simple": [
         { "agent": "gpt-6-astra", "effort": "medium" },
-        { "agent": "glm-5.3-flash-free" }
+        { "agent": "glm-5.3" }
       ],
       "normal": [
         { "agent": "gpt-6-astra", "effort": "high" },
         { "agent": "deepseek-flash", "effort": "high" },
-        { "agent": "glm-5.3-flash-free", "effort": "high" }
+        { "agent": "glm-5.3" }
       ],
       "complex": [
         { "agent": "gpt-6-astra", "effort": "max" },
         { "agent": "deepseek-flash", "effort": "max" },
         { "agent": "kimi-k2.6" },
         { "agent": "mimo-v2.6-pro", "effort": "high" },
-        { "agent": "glm-5.3-flash-free", "effort": "max" }
+        { "agent": "glm-5.3" }
       ]
     }
   }
@@ -285,7 +285,7 @@ Both take a change snapshot first, and Claude Code reviews the diff file by file
 |---|---|---|
 | `gpt-6.1-sol` | Codex CLI | Complex hands-on work |
 | `gpt-6-astra` | Codex CLI | Every review; joins discussions at all three levels |
-| `glm-5.3-flash-free` | opencode (free model) | Joins discussions at all three levels |
+| `glm-5.3` | opencode (OpenCode Go subscription) | Joins discussions at all three levels |
 | `deepseek-flash` | opencode | Normal and complex discussions |
 | `mimo-v2.6-pro` | pi | Complex discussions |
 | `kimi-k2.6` | API, with the key in the `KIMI_API_KEY` environment variable | Complex discussions |
@@ -296,7 +296,7 @@ Fields this config doesn't use but that are often adjusted:
 
 ```json
 "gpt-6.1-sol":        { "type": "codex cli", "model": "gpt-6.1-sol", "sandbox": { "run": "workspace-write" }, "max_parallel": 2 },
-"glm-5.3-flash-free": { "type": "opencode cli", "model": "opencode/glm-5.3-flash-free", "run_access": "edit" },
+"glm-5.3":            { "type": "opencode cli", "model": "opencode-go/glm-5.3", "run_access": "edit" },
 "deepseek-v4-pro":    { "type": "api", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-v4-pro", "extra_body": { "temperature": 0.3 } }
 ```
 

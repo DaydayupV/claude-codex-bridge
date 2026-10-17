@@ -56,7 +56,7 @@
 | 注入 opencode 的代理名 | `codex-bridge-discuss` | `foreman-discuss`，另加 `foreman-run`、`foreman-repair` |
 | 打包产物 | `dist/codex-bridge.zip` 等 | `dist/foreman.zip`、`dist/foreman-en.zip` 等 |
 | 同步工具 | `tools/sync-shared.mjs` 的共用清单 | 改成新目录和新文件名；共用范围扩到 `scripts/` 整个目录和 `hooks/*.mjs` |
-| 版本号 | 0.10.6 | 1.0.0（待确认） |
+| 版本号 | 0.10.6 | 1.0.0 |
 
 ### 2.3 第 0 步：纯改名
 - 按对照表做机械改名：目录、文件、插件和 marketplace 清单、命令文件、钩子配置、脚本里的路径和常量、提示文字、README 和 SKILL.md 里的名字。
