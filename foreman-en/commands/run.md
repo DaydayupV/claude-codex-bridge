@@ -1,5 +1,5 @@
 ---
-description: Hand a task off to Codex (pick a level by task complexity; model and effort come from the config)
+description: Hand a task off to the configured agent (pick a level by task complexity; who gets it, the model and effort come from the config)
 argument-hint: <task> [--level simple|normal|complex | --effort <effort>] [--model <model>]
 ---
 

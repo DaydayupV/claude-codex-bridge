@@ -1,5 +1,5 @@
 ---
-description: 查看最近的 Codex 任务记录，或某次任务的详细结果
+description: 查看最近的任务记录，或某次任务的详细结果
 argument-hint: [run_id | last | 组名]
 ---
 

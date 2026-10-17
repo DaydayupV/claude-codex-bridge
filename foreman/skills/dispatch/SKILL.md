@@ -1,6 +1,6 @@
 ---
 name: dispatch
-description: 把执行类编码工作派给 OpenAI Codex并验收，让 Codex 独立审查代码，或在复杂方案上与 Codex 及配置的其他模型（如 DeepSeek）讨论。在开始实现功能、批量修改、写脚本、迁移重构、修 bug 等执行类工作前加载；要生成或编辑图片（照片、插画、贴图等位图）时加载；面对复杂、不确定、有多种选择的方案设计或计划时加载；用户提到 Codex、要求和其他模型讨论、/foreman:run、/foreman:discuss、/foreman:review，或要决定是否请 Codex 审查时也加载。
+description: 把执行类编码工作按配置派给 Codex、opencode、pi 等协作方并验收，请它们独立审查代码，或在复杂方案上与 Codex 及配置的其他模型（如 DeepSeek）讨论。在开始实现功能、批量修改、写脚本、迁移重构、修 bug 等执行类工作前加载；要生成或编辑图片（照片、插画、贴图等位图）时加载；面对复杂、不确定、有多种选择的方案设计或计划时加载；用户提到 Codex、要求和其他模型讨论、/foreman:run、/foreman:discuss、/foreman:review，或要决定是否请 Codex 审查时也加载。
 ---
 
 # foreman 调度

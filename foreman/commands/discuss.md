@@ -1,5 +1,5 @@
 ---
-description: 就复杂的计划、方案或想法与 Codex 及配置的其他模型讨论（只讨论不执行，由 Claude 主导结论）
+description: 就复杂的计划、方案或想法与 Codex 及配置的其他模型讨论（只讨论不执行，由 Claude Code 主导结论）
 argument-hint: <议题> [--level simple|normal|complex | --effort <推理强度>] [--model <模型>] [--agent <协作方>]
 ---
 

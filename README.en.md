@@ -2,43 +2,43 @@
 
 [中文](README.md)
 
-A Claude Code plugin that makes Claude the foreman: it plans, decides and checks the results, and hands off hands-on coding work to CLI agents such as Codex, opencode and pi according to your config. It can also ask them for independent code reviews, or gather several models to weigh in on a complex design before Claude decides.
+A Claude Code plugin that makes Claude Code the foreman: it plans, decides and checks the results, and hands off hands-on coding work to CLI agents such as Codex, opencode and pi according to your config. It can also ask them for independent code reviews, or gather several models to weigh in on a complex design before Claude Code decides.
 
-- **Claude checks the work**: Claude reviews every diff an agent hands back, runs it to verify, and sends it back for rework if needed. In discussions, the other models' views are input only; Claude accepts or rejects each point on its merits.
-- **Your own quota**: agents run on your Codex plan, opencode subscription or API credit, not on your Claude quota.
+- **Claude Code checks the work**: Claude Code reviews every diff an agent hands back, runs it to verify, and sends it back for rework if needed. In discussions, the other models' views are input only; Claude Code accepts or rejects each point on its merits.
+- **Your own quota**: agents run on your Codex plan, opencode subscription or API credit, not on your Claude Code quota.
 - **Visible all the way**: every handoff says who got it, with which model and reasoning effort, and a terminal view shows each model's progress live.
 
 ## How it works
 
-1. **Pick a level**: Claude decides whether the task is simple, normal or complex (`simple` / `normal` / `complex`).
-2. **Hand it off as configured**: who gets each level of each task type, and with what effort, is up to you in the config; a level set to `"claude code"` is done by Claude itself.
+1. **Pick a level**: Claude Code decides whether the task is simple, normal or complex (`simple` / `normal` / `complex`).
+2. **Hand it off as configured**: who gets each level of each task type, and with what effort, is up to you in the config; a level set to `"claude code"` is done by Claude Code itself.
 3. **Watch live**: once it's handed off, a live view opens in the terminal and shows each step the model takes.
-4. **Check the result**: Claude reviews the changes, runs them to verify, and reports which model did the work and how many tokens it used.
+4. **Check the result**: Claude Code reviews the changes, runs them to verify, and reports which model did the work and how many tokens it used.
 
 ## What it does
 
 | Command | What it does |
 |---|---|
-| `/foreman-en:run <task>` | Hands a task to the configured agent. When it finishes, Claude reviews the diff, runs it to verify, and sends it back for rework if needed |
-| `/foreman-en:review` | Has an agent review uncommitted changes, a branch or a commit. Claude checks each finding and filters out false positives |
-| `/foreman-en:discuss <topic>` | Several models each propose an approach to a complex design and critique each other's; Claude rules on each point and writes up a decision record |
+| `/foreman-en:run <task>` | Hands a task to the configured agent. When it finishes, Claude Code reviews the diff, runs it to verify, and sends it back for rework if needed |
+| `/foreman-en:review` | Has an agent review uncommitted changes, a branch or a commit. Claude Code checks each finding and filters out false positives |
+| `/foreman-en:discuss <topic>` | Several models each propose an approach to a complex design and critique each other's; Claude Code rules on each point and writes up a decision record |
 | `/foreman-en:watch` | Shows what each model is doing, live, in a terminal; see below |
 | `/foreman-en:status` | Lists recent runs, or shows the details of one, including token use and Codex quota |
 | `/foreman-en:setup` | Setup guide: detects this machine's tools, lists the models available, gives one complete recommendation, and changes the config the way you choose |
 | `/foreman-en:config` | Shows or changes the config |
 
-You can also just ask Claude to "check the environment" (`check`: whether each agent works, whether its model supports the configured efforts, and whether Codex's sandbox can start) or to "list the available models" (`models`).
+You can also just ask Claude Code to "check the environment" (`check`: whether each agent works, whether its model supports the configured efforts, and whether Codex's sandbox can start) or to "list the available models" (`models`).
 
 ### Without commands
 
-The bundled skill lets Claude decide on its own:
+The bundled skill lets Claude Code decide on its own:
 
-- Hand off hands-on work as the levels and config say. If you'd rather it didn't, set `dispatch.auto` to `false` and Claude asks you first.
+- Hand off hands-on work as the levels and config say. If you'd rather it didn't, set `dispatch.auto` to `false` and Claude Code asks you first.
 - Discuss complex, uncertain designs that would be costly to get wrong with other models first.
 - Ask another model to review risky or large changes before delivering them.
 - When a big task splits into parts that don't touch each other, hand them to several sessions at once to cut the wait (each agent's limit is `max_parallel`).
 
-So that Claude doesn't forget (easy when a project has its own skills), the plugin reminds it once at the start of every session and includes your preference files.
+So that Claude Code doesn't forget (easy when a project has its own skills), the plugin reminds it once at the start of every session and includes your preference files.
 
 ### The live view
 
@@ -47,14 +47,14 @@ So that Claude doesn't forget (easy when a project has its own skills), the plug
 - A discussion or task group is shown in one window with a block per model: its status, elapsed time and latest few lines. When an API model is queued because its service is busy, press x to stop it.
 - Add `--verbose` for every detail: reasoning, each command and its output, token use.
 - The first time it opens for a newly dispatched conversation, a few seconds of intro play first: the model's pixel avatar, "Starting …" and a few jokes (5 seconds for one model, 10 for a discussion). Any key skips it, and setting `dispatch.intro` to `false` turns it off. The avatar is picked by the model name, with a ??? avatar for anything it doesn't recognize.
-- In the Claude desktop app, the live view opens in the terminal panel by itself after each handoff; in the CLI, Claude sends you the command to run in another terminal.
+- In the Claude desktop app, the live view opens in the terminal panel by itself after each handoff; in the CLI, Claude Code sends you the command to run in another terminal.
 
 ## Requirements
 
 - [Claude Code](https://claude.com/claude-code)
 - Node.js 18 or later. If you run Claude Code inside WSL, Node.js must be installed inside WSL too, or the plugin's hooks will error before every command
 - Git 2.25 or later, used to track which files the agents changed
-- Agents, as many as you like (with none, the plugin still installs and Claude does all the work itself):
+- Agents, as many as you like (with none, the plugin still installs and Claude Code does all the work itself):
   - The [Codex CLI](https://github.com/openai/codex), installed and signed in. Recommended; image generation can only go to Codex
   - [opencode](https://opencode.ai) 2.x or [pi](https://github.com/earendil-works/pi), to reach models from many providers
   - API keys for models with an OpenAI-compatible API (such as DeepSeek, Kimi or MiMo); these can only join discussions
@@ -74,7 +74,7 @@ Upgrading from codex-bridge? See [below](#upgrading-from-codex-bridge).
 
 ## Configuration
 
-The user config is `~/.claude/foreman/config.json`, and a project config is `<project dir>/.claude/foreman.json`. Edit the file directly, or tell Claude something like "use `/foreman-en:config` to switch complex tasks to ultra". Every setting is described in [references/config.md](foreman-en/skills/dispatch/references/config.md).
+The user config is `~/.claude/foreman/config.json`, and a project config is `<project dir>/.claude/foreman.json`. Edit the file directly, or tell Claude Code something like "use `/foreman-en:config` to switch complex tasks to ultra". Every setting is described in [references/config.md](foreman-en/skills/dispatch/references/config.md).
 
 ### First run
 
@@ -82,8 +82,8 @@ On first run, the plugin checks what this machine has, then generates a config:
 
 | Found | Resulting setup |
 |---|---|
-| A usable Codex (installed and signed in) | Claude does simple and normal hands-on tasks itself, and complex ones go to Codex's `gpt-6.1-sol`. Reviews and discussions go to Codex, with `gpt-6-astra` for complex ones |
-| No Codex | Claude does every task itself for now |
+| A usable Codex (installed and signed in) | Claude Code does simple and normal hands-on tasks itself, and complex ones go to Codex's `gpt-6.1-sol`. Reviews and discussions go to Codex, with `gpt-6-astra` for complex ones |
+| No Codex | Claude Code does every task itself for now |
 | API key environment variables (DeepSeek, Kimi, MiMo) | Added to the config, but not to any discussion yet |
 | opencode, pi | Not added automatically; you pick the models |
 
@@ -118,7 +118,7 @@ A minimal example: Codex does complex hands-on work and every review, and comple
 
 - Each key under `agents` is the agent's **ID**, which `levels` and `--agent` refer to. Naming it after its model works best; IDs may use letters, digits, `.`, `-` and `_`.
 - Each of the three task types (`run` for hands-on work, `review`, `discuss`) has three levels. Hands-on work and reviews name one agent; discussions name a set of participants.
-- `"claude code"` means Claude does it itself; for reviews and discussions, that level uses no outside model.
+- `"claude code"` means Claude Code does it itself; for reviews and discussions, that level uses no outside model.
 - `effort` is the reasoning effort; leave it out for the default. For Codex it's `low` to `ultra`; for opencode, the model's variant; for pi, its thinking level; for API models it's sent as `reasoning_effort` as is.
 
 ### The four kinds of agents
@@ -128,17 +128,17 @@ A minimal example: Codex does complex hands-on work and every review, and comple
 | `codex cli` | The Codex CLI on this machine | Hands-on work, reviews, discussions, images | Yes | Codex's own sandbox | Your Codex plan or OpenAI API |
 | `opencode cli` | opencode on this machine, with the models it can reach | Reviews and discussions; hands-on work once `run_access` is set | Yes | Limited tools only, no OS sandbox | Providers you signed in to in opencode, or an OpenCode Go subscription |
 | `pi cli` | pi on this machine, with the models it can reach | Same as opencode | Yes | Same as opencode, with file paths checked by a guard the plugin injects | Providers you signed in to in pi |
-| `api` | A model with an OpenAI-compatible API | Discussions | No; Claude attaches the relevant files | Not applicable | The provider's API balance |
+| `api` | A model with an OpenAI-compatible API | Discussions | No; Claude Code attaches the relevant files | Not applicable | The provider's API balance |
 
 You can have several agents of one type, each with a different model. Codex isn't required.
 
 ### Task levels
 
-Claude only decides which level a task is; who gets it, and with what effort, is up to you in `levels`. The level depends on how much judgement it takes and how costly a mistake would be, not on how much changes: renaming across 20 files from a list is simple, while changing an interface between modules is complex. Claude must give a level every time; if it's missing, the script errors out rather than quietly picking one.
+Claude Code only decides which level a task is; who gets it, and with what effort, is up to you in `levels`. The level depends on how much judgement it takes and how costly a mistake would be, not on how much changes: renaming across 20 files from a list is simple, while changing an interface between modules is complex. Claude Code must give a level every time; if it's missing, the script errors out rather than quietly picking one.
 
-- To choose on the spot, tell Claude "run it with ultra" or "use such-and-such model"; Claude switches to `--effort` or `--model`.
-- When a level is `"claude code"`, you can still explicitly ask for a task to be handed off, and Claude names an agent with `--agent`.
-- Small tasks follow the levels too. By default Claude does `simple` itself; give `simple` to Codex and even tiny changes get handed off.
+- To choose on the spot, tell Claude Code "run it with ultra" or "use such-and-such model"; Claude Code switches to `--effort` or `--model`.
+- When a level is `"claude code"`, you can still explicitly ask for a task to be handed off, and Claude Code names an agent with `--agent`.
+- Small tasks follow the levels too. By default Claude Code does `simple` itself; give `simple` to Codex and even tiny changes get handed off.
 
 ### Adding API models
 
@@ -148,7 +148,7 @@ Claude only decides which level a task is; who gets it, and with what effort, is
    - Config file: write `"api_key": "sk-..."`. It takes effect immediately but is stored in plain text, so don't commit or share the file. If both are set, the one in the config file wins.
 3. **Add it to discussions**: list it at the levels you want under `levels.discuss`.
 
-You can also leave this to `/foreman-en:setup`, for example `/foreman-en:setup add DeepSeek`; you fill in the key yourself, with no need to paste it into the chat. API models can't look through your code themselves, so Claude sends the relevant files along with the topic (up to about 300,000 characters each time) and checks what they say about the code against the source.
+You can also leave this to `/foreman-en:setup`, for example `/foreman-en:setup add DeepSeek`; you fill in the key yourself, with no need to paste it into the chat. API models can't look through your code themselves, so Claude Code sends the relevant files along with the topic (up to about 300,000 characters each time) and checks what they say about the code against the source.
 
 ### Adding opencode
 
@@ -173,10 +173,10 @@ With pi installed (`npm install -g @earendil-works/pi-coding-agent`), it works l
 
 Give the agent `run_access` in the user config, then put it in `levels.run` (a project config can't turn this on):
 
-- `"edit"`: reads and writes files in the project directory only, with no commands. Claude runs the tests afterwards.
+- `"edit"`: reads and writes files in the project directory only, with no commands. Claude Code runs the tests afterwards.
 - `"shell"`: can also run commands, such as tests. There's no OS sandbox: its commands run with your account's permissions and can reach the whole machine, so use this only for projects and models you trust.
 
-Both take a change snapshot first, and Claude reviews the diff file by file afterwards.
+Both take a change snapshot first, and Claude Code reviews the diff file by file afterwards.
 
 ### A complete example
 
@@ -244,7 +244,7 @@ Both take a change snapshot first, and Claude reviews the diff file by file afte
 | `mimo-v2.6-pro` | pi | Complex discussions |
 | `kimi-k2.6` | API, with the key in the `KIMI_API_KEY` environment variable | Complex discussions |
 
-Claude does simple and normal hands-on work itself, and discussions get more participants as the level rises.
+Claude Code does simple and normal hands-on work itself, and discussions get more participants as the level rises.
 
 Fields this config doesn't use but that are often adjusted:
 
@@ -273,7 +273,7 @@ This way a repository you cloned can't use its project config to swap the agent 
 
 ### Preference files
 
-Some habits don't fit in JSON, such as which code in your project counts as high-risk, or what you never want handed off. Write those in plain text in a preference file. Claude reads it the first time it uses the plugin in a session:
+Some habits don't fit in JSON, such as which code in your project counts as high-risk, or what you never want handed off. Write those in plain text in a preference file. Claude Code reads it the first time it uses the plugin in a session:
 
 - User level: `~/.claude/foreman/preferences.md`
 - Project level: `<project>/.claude/foreman.md`
@@ -284,31 +284,31 @@ Preference files win over the plugin's built-in rules, and project level wins ov
 # foreman preferences
 
 - Treat billing and reconciliation code in this project as high-risk: hand it off as complex, and always have Codex review the changes.
-- Don't hand off database migration scripts; Claude writes them.
+- Don't hand off database migration scripts; Claude Code writes them.
 - Ask Codex for a review when a change is over 200 lines.
 ```
 
 ## Safety notes
 
-- **Claude can only call agents through the plugin.** The plugin includes a hook that blocks Claude's commands that run `codex exec`, `codex review`, `opencode run` or a pi task directly, so every call is recorded, has its changes tracked, and uses an explicit model and effort. Running them yourself in a terminal isn't affected.
+- **Claude Code can only call agents through the plugin.** The plugin includes a hook that blocks Claude Code's commands that run `codex exec`, `codex review`, `opencode run` or a pi task directly, so every call is recorded, has its changes tracked, and uses an explicit model and effort. Running them yourself in a terminal isn't affected.
 - **Codex is isolated by its own sandbox.**
-  - The sandbox is whatever Codex is configured with. With `danger-full-access`, Codex can read and write any directory on your machine; the task brief limits what it should touch and Claude reviews the diff afterwards, but that is not isolation. For isolation, set `agents.<ID>.sandbox` to `workspace-write` or `read-only`.
-  - Codex's default elevated sandbox on Windows needs a one-time setup with administrator rights, and if that setup is broken, every command fails (with `windows sandbox failed`). After changing the sandbox, have Claude run `check`: it tests the sandbox without calling a model and lists fixes if it's broken, such as switching to `[windows] sandbox = "unelevated"`.
+  - The sandbox is whatever Codex is configured with. With `danger-full-access`, Codex can read and write any directory on your machine; the task brief limits what it should touch and Claude Code reviews the diff afterwards, but that is not isolation. For isolation, set `agents.<ID>.sandbox` to `workspace-write` or `read-only`.
+  - Codex's default elevated sandbox on Windows needs a one-time setup with administrator rights, and if that setup is broken, every command fails (with `windows sandbox failed`). After changing the sandbox, have Claude Code run `check`: it tests the sandbox without calling a model and lists fixes if it's broken, such as switching to `[windows] sandbox = "unelevated"`.
   - Leave `approval` at the default `never`: nobody can approve in a handed-off task, and a broken sandbox needs fixing at the sandbox.
 - **opencode and pi have no OS sandbox when doing hands-on work.** At `edit` they can't write outside the project or run commands; at `shell` their commands can reach the whole machine. It's off by default; only you can turn it on, in the user config, and a project config can't.
-- **Your code goes to the providers behind your agents.** Work handed to Codex goes to OpenAI; opencode, pi and API models send it to their providers, and API models also receive the files Claude attaches. Check that this is acceptable for sensitive projects, and tighten things with a project config if needed.
+- **Your code goes to the providers behind your agents.** Work handed to Codex goes to OpenAI; opencode, pi and API models send it to their providers, and API models also receive the files Claude Code attaches. Check that this is acceptable for sensitive projects, and tighten things with a project config if needed.
 - **API keys can go in the user config or in environment variables.** In the config they're plain text, so don't commit or share `~/.claude/foreman/config.json`; keys in a project config are ignored. The `config` command never shows keys, and the script never writes them into run records.
-- **Pay-as-you-go means real costs.** Codex with API-key billing, API models, and pay-as-you-go providers reached through opencode or pi all cost money for each handoff or discussion. Set `dispatch.auto` to `false` if you don't want Claude handing off work on its own.
-- **Agents don't get stuck waiting for an answer.** Codex needs no approvals by default, opencode gets no way to ask questions or request confirmable permissions, and pi has no question tool. Anything they need answered is collected in the result, and Claude decides: within the authority you've already given, it decides and resumes; it only asks you about business trade-offs, wider scope, extra cost and irreversible steps.
+- **Pay-as-you-go means real costs.** Codex with API-key billing, API models, and pay-as-you-go providers reached through opencode or pi all cost money for each handoff or discussion. Set `dispatch.auto` to `false` if you don't want Claude Code handing off work on its own.
+- **Agents don't get stuck waiting for an answer.** Codex needs no approvals by default, opencode gets no way to ask questions or request confirmable permissions, and pi has no question tool. Anything they need answered is collected in the result, and Claude Code decides: within the authority you've already given, it decides and resumes; it only asks you about business trade-offs, wider scope, extra cost and irreversible steps.
 
 ## Run records
 
 Each call is recorded in `~/.claude/foreman/runs/<run_id>/`: the brief, the event stream, the diff and the final report. Runs by API models have no diff, but add the conversation history `messages.json`, which a resume continues from. `/foreman-en:status` reads them.
 
-- Change tracking uses a separate git repository inside the record folder and never touches your project's `.git`. It compares the whole working directory at the start and end of a run, so files that you, Claude or another session change at the same time are seen too: files with evidence that the agent changed them are marked separately from files of unknown origin, and Claude won't simply revert changes of unknown origin.
+- Change tracking uses a separate git repository inside the record folder and never touches your project's `.git`. It compares the whole working directory at the start and end of a run, so files that you, Claude Code or another session change at the same time are seen too: files with evidence that the agent changed them are marked separately from files of unknown origin, and Claude Code won't simply revert changes of unknown origin.
 - Paths ignored by `.gitignore` aren't tracked unless you pass them with `--track` when handing off.
 - When the Codex quota runs out or an API balance is too low, the run is marked `quota_exhausted` and isn't retried automatically; for Codex it includes the expected reset time.
-- Runs whose dispatcher exited unexpectedly, got stuck or timed out are flagged to Claude the next time you start a session in that project.
+- Runs whose dispatcher exited unexpectedly, got stuck or timed out are flagged to Claude Code the next time you start a session in that project.
 
 ## Platforms
 

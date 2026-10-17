@@ -1,5 +1,5 @@
 ---
-description: 让 Codex 对代码改动做一次独立审查
+description: 请配置的协作方（比如 Codex）对代码改动做一次独立审查
 argument-hint: [--base <分支> | --commit <sha>] [--level simple|normal|complex | --effort <推理强度>] [--model <模型>] [审查重点]
 ---
 

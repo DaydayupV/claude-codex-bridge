@@ -1,5 +1,5 @@
 ---
-description: Have Codex review code changes independently
+description: Have a configured agent (such as Codex) review code changes independently
 argument-hint: [--base <branch> | --commit <sha>] [--level simple|normal|complex | --effort <effort>] [--model <model>] [focus]
 ---
 

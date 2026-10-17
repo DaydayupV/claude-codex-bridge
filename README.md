@@ -2,43 +2,43 @@
 
 [English](README.en.md)
 
-一个 Claude Code 插件，让 Claude 当"工头"：它负责规划、决策和验收，把动手的编码工作按你的配置派给 Codex、opencode、pi 等 CLI 工具，也能请它们独立审查代码，或者在复杂方案上召集几个模型一起讨论，最后由 Claude 裁决。
+一个 Claude Code 插件，让 Claude Code 当"工头"：它负责规划、决策和验收，把动手的编码工作按你的配置派给 Codex、opencode、pi 等 CLI 工具，也能请它们独立审查代码，或者在复杂方案上召集几个模型一起讨论，最后由 Claude Code 裁决。
 
-- **Claude 把关**：协作方交回的改动，Claude 逐个看 diff、实际运行验证，不合格就返工；讨论里各方的意见只作参考，接受还是拒绝由 Claude 按论据决定。
-- **用你自己的额度**：协作方用的是你的 Codex 订阅、opencode 订阅或 API 余额，不占 Claude 的额度。
+- **Claude Code 把关**：协作方交回的改动，Claude Code 逐个看 diff、实际运行验证，不合格就返工；讨论里各方的意见只作参考，接受还是拒绝由 Claude Code 按论据决定。
+- **用你自己的额度**：协作方用的是你的 Codex 订阅、opencode 订阅或 API 余额，不占 Claude Code 的额度。
 - **全程看得见**：每次派活都写明交给了谁、什么模型和推理强度；终端里能实时看到每个模型在做什么。
 
 ## 工作方式
 
-1. **定等级**：Claude 判断这件事是简单、常规还是复杂（`simple` / `normal` / `complex`）。
-2. **按配置派出**：每类任务的每一级交给谁、用什么推理强度，由你在配置里决定；写成 `"claude code"` 的那一级由 Claude 自己做。
+1. **定等级**：Claude Code 判断这件事是简单、常规还是复杂（`simple` / `normal` / `complex`）。
+2. **按配置派出**：每类任务的每一级交给谁、用什么推理强度，由你在配置里决定；写成 `"claude code"` 的那一级由 Claude Code 自己做。
 3. **实时查看**：派出后终端里打开实时画面，能看到模型的每一步。
-4. **验收**：Claude 审查改动、运行验证，再向你汇报用了哪个模型、花了多少 token。
+4. **验收**：Claude Code 审查改动、运行验证，再向你汇报用了哪个模型、花了多少 token。
 
 ## 能做什么
 
 | 命令 | 作用 |
 |---|---|
-| `/foreman:run <任务>` | 把一个执行任务派给配置的协作方，完成后 Claude 审查改动、实际运行验证，不合格就返工 |
-| `/foreman:review` | 请协作方审查未提交的改动、某个分支或某次提交，Claude 逐条核实，排除误报 |
-| `/foreman:discuss <议题>` | 几个模型就复杂方案各出方案、互相挑错，Claude 逐条裁决，给出决策记录 |
+| `/foreman:run <任务>` | 把一个执行任务派给配置的协作方，完成后 Claude Code 审查改动、实际运行验证，不合格就返工 |
+| `/foreman:review` | 请协作方审查未提交的改动、某个分支或某次提交，Claude Code 逐条核实，排除误报 |
+| `/foreman:discuss <议题>` | 几个模型就复杂方案各出方案、互相挑错，Claude Code 逐条裁决，给出决策记录 |
 | `/foreman:watch` | 在终端里实时查看各个模型正在做什么，见下文 |
 | `/foreman:status` | 查看最近的任务或某次任务的详细结果，包括 token 消耗和 Codex 额度 |
 | `/foreman:setup` | 设置引导：检测本机的工具，列出能用的模型，给出一份完整推荐，按你的选择改好配置 |
 | `/foreman:config` | 查看或修改配置 |
 
-也可以直接对 Claude 说"检查一下环境"（`check`：每个协作方能不能用、配置的推理强度模型支不支持、Codex 的沙箱能不能启动），或者"列出能用的模型"（`models`）。
+也可以直接对 Claude Code 说"检查一下环境"（`check`：每个协作方能不能用、配置的推理强度模型支不支持、Codex 的沙箱能不能启动），或者"列出能用的模型"（`models`）。
 
 ### 不用命令也行
 
-插件自带的 skill 会让 Claude 自己判断：
+插件自带的 skill 会让 Claude Code 自己判断：
 
-- 执行类工作按等级和配置主动派出。不想这样，把 `dispatch.auto` 设成 `false`，Claude 会先问你。
+- 执行类工作按等级和配置主动派出。不想这样，把 `dispatch.auto` 设成 `false`，Claude Code 会先问你。
 - 遇到复杂、不确定、选错代价又高的方案，先找其他模型讨论。
 - 高风险或改动大的工作交付前，请另一个模型审查。
 - 大任务能拆成互不相干的几份时，同时派给几个会话，缩短等待（每个协作方的并发上限见 `max_parallel`）。
 
-为了不让 Claude 忘了这些（项目里有自己的 skill 时尤其容易漏），插件会在每个会话开始时提醒它一次，并附上你的偏好文件。
+为了不让 Claude Code 忘了这些（项目里有自己的 skill 时尤其容易漏），插件会在每个会话开始时提醒它一次，并附上你的偏好文件。
 
 ### 实时查看
 
@@ -47,14 +47,14 @@
 - 多方讨论或任务组在一个窗口里按模型分块，每块显示状态、用时和最新几行。某个 API 模型因为服务繁忙在排队时，按 x 可以终止它。
 - 加 `--verbose` 看全部细节：思考过程、每条命令和输出、token 用量。
 - 新派出的对话第一次打开时，先放几秒启动动画：模型的像素头像、"正在启动"和几句玩笑（单个模型 5 秒，讨论 10 秒），按任意键跳过，`dispatch.intro` 设成 `false` 可以关掉。头像按模型名认，认不出的用 ??? 头像。
-- Claude 桌面版里，实时画面开在终端面板里，派活后自动打开；命令行版里，Claude 会把命令发给你，在另一个终端里运行。
+- Claude 桌面版里，实时画面开在终端面板里，派活后自动打开；命令行版里，Claude Code 会把命令发给你，在另一个终端里运行。
 
 ## 前提
 
 - [Claude Code](https://claude.com/claude-code)
 - Node.js 18 或更高版本。在 WSL 里运行 Claude Code 时，WSL 里也要装 Node.js，否则插件的钩子会在每条命令前报错
 - Git 2.25 或更高版本，用来追踪协作方改了哪些文件
-- 协作方，有几个配几个（一个都没有也能装，那样所有工作由 Claude 自己做）：
+- 协作方，有几个配几个（一个都没有也能装，那样所有工作由 Claude Code 自己做）：
   - [Codex CLI](https://github.com/openai/codex)，已安装并登录。推荐，生成图片只能交给它
   - [opencode](https://opencode.ai) 2.x 或 [pi](https://github.com/earendil-works/pi)，用来接入各家模型
   - 兼容 OpenAI 接口的模型 API key（比如 DeepSeek、Kimi、MiMo），只能参加讨论
@@ -74,7 +74,7 @@
 
 ## 配置
 
-用户配置在 `~/.claude/foreman/config.json`，项目配置在 `<项目目录>/.claude/foreman.json`。可以直接编辑文件，也可以对 Claude 说"用 `/foreman:config` 把复杂任务改成 ultra"。字段的完整说明见 [references/config.md](foreman/skills/dispatch/references/config.md)。
+用户配置在 `~/.claude/foreman/config.json`，项目配置在 `<项目目录>/.claude/foreman.json`。可以直接编辑文件，也可以对 Claude Code 说"用 `/foreman:config` 把复杂任务改成 ultra"。字段的完整说明见 [references/config.md](foreman/skills/dispatch/references/config.md)。
 
 ### 第一次使用
 
@@ -82,8 +82,8 @@
 
 | 检测到 | 生成的安排 |
 |---|---|
-| 能用的 Codex（已安装、已登录） | 简单和常规的执行由 Claude 自己做，复杂的执行交给 Codex 的 `gpt-6.1-sol`；审查和讨论交给 Codex，复杂的用 `gpt-6-astra` |
-| 没有 Codex | 所有任务暂时由 Claude 自己做 |
+| 能用的 Codex（已安装、已登录） | 简单和常规的执行由 Claude Code 自己做，复杂的执行交给 Codex 的 `gpt-6.1-sol`；审查和讨论交给 Codex，复杂的用 `gpt-6-astra` |
+| 没有 Codex | 所有任务暂时由 Claude Code 自己做 |
 | API key 环境变量（DeepSeek、Kimi、MiMo） | 写进配置，先不加入讨论 |
 | opencode、pi | 不自动加，用哪个模型由你选 |
 
@@ -118,7 +118,7 @@
 
 - `agents` 的键是协作方的**代号**，`levels` 和 `--agent` 用它引用。建议直接用模型名，可以用字母、数字、`.`、`-`、`_`。
 - 三种任务（`run` 执行、`review` 审查、`discuss` 讨论）各分三级。执行和审查写一个协作方，讨论写一组参与方。
-- 写成 `"claude code"` 表示 Claude 自己做；对审查和讨论来说，就是这一级不找外部模型。
+- 写成 `"claude code"` 表示 Claude Code 自己做；对审查和讨论来说，就是这一级不找外部模型。
 - `effort` 是推理强度，不写就用默认值。Codex 是 `low` 到 `ultra`；opencode 是模型的 variant；pi 是 thinking 档位；API 原样作为 `reasoning_effort` 发出。
 
 ### 四种协作方
@@ -128,17 +128,17 @@
 | `codex cli` | 本机的 Codex CLI | 执行、审查、讨论、生成图片 | 能 | Codex 自己的沙箱 | Codex 订阅或 OpenAI API |
 | `opencode cli` | 本机的 opencode，接入它支持的各家模型 | 审查、讨论；写了 `run_access` 还能执行 | 能 | 只限定工具，没有系统沙箱 | 在 opencode 里登录的厂商，或 OpenCode Go 订阅 |
 | `pi cli` | 本机的 pi，接入它支持的各家模型 | 同 opencode | 能 | 同 opencode，读写路径由插件注入的守卫检查 | 在 pi 里登录的厂商 |
-| `api` | 兼容 OpenAI 接口的模型 | 讨论 | 不能，Claude 把相关文件附过去 | 不涉及 | 厂商的 API 余额 |
+| `api` | 兼容 OpenAI 接口的模型 | 讨论 | 不能，Claude Code 把相关文件附过去 | 不涉及 | 厂商的 API 余额 |
 
 同一种可以配多个，各用不同模型。Codex 不是必需的。
 
 ### 任务等级
 
-Claude 只判断任务属于哪一级，交给谁、用什么推理强度由你在 `levels` 里决定。等级看需要多少判断、出错的代价有多大，不看改动多少：照清单机械地改 20 个文件是简单，改模块之间的接口是复杂。Claude 每次都必须给出等级，漏了脚本直接报错，不会悄悄按某个档位运行。
+Claude Code 只判断任务属于哪一级，交给谁、用什么推理强度由你在 `levels` 里决定。等级看需要多少判断、出错的代价有多大，不看改动多少：照清单机械地改 20 个文件是简单，改模块之间的接口是复杂。Claude Code 每次都必须给出等级，漏了脚本直接报错，不会悄悄按某个档位运行。
 
-- 想临时指定时，对 Claude 说"用 ultra 跑"或"用某某模型跑"，Claude 会改用 `--effort` 或 `--model`。
-- 某一级写成 `"claude code"` 时，你仍然可以明确要求把某个任务派出去，Claude 会用 `--agent` 点名。
-- 小任务也按等级走。默认 `simple` 由 Claude 自己做；改成交给 Codex 的话，连很小的改动也会派出去。
+- 想临时指定时，对 Claude Code 说"用 ultra 跑"或"用某某模型跑"，Claude Code 会改用 `--effort` 或 `--model`。
+- 某一级写成 `"claude code"` 时，你仍然可以明确要求把某个任务派出去，Claude Code 会用 `--agent` 点名。
+- 小任务也按等级走。默认 `simple` 由 Claude Code 自己做；改成交给 Codex 的话，连很小的改动也会派出去。
 
 ### 接入 API 模型
 
@@ -148,7 +148,7 @@ Claude 只判断任务属于哪一级，交给谁、用什么推理强度由你�
    - 配置文件：写 `"api_key": "sk-..."`，立即生效，但是明文保存，这个文件不要提交或分享。两种都写时，以配置文件里的为准。
 3. **加进讨论**：在 `levels.discuss` 需要的等级里加上它。
 
-也可以交给 `/foreman:setup`，比如运行 `/foreman:setup 加 DeepSeek`；key 由你自己填，不用发到对话里。API 模型自己翻不了代码，Claude 会把相关文件随议题附过去（每次上限约 30 万字符），并对照原文核实它对代码的说法。
+也可以交给 `/foreman:setup`，比如运行 `/foreman:setup 加 DeepSeek`；key 由你自己填，不用发到对话里。API 模型自己翻不了代码，Claude Code 会把相关文件随议题附过去（每次上限约 30 万字符），并对照原文核实它对代码的说法。
 
 ### 接入 opencode
 
@@ -173,10 +173,10 @@ Claude 只判断任务属于哪一级，交给谁、用什么推理强度由你�
 
 在用户配置里给这个协作方写 `run_access`，再放进 `levels.run`（项目配置开不了）：
 
-- `"edit"`：只能读写项目目录里的文件，不能运行命令，测试由 Claude 事后跑。
+- `"edit"`：只能读写项目目录里的文件，不能运行命令，测试由 Claude Code 事后跑。
 - `"shell"`：还能运行命令，比如跑测试。没有系统沙箱，命令以你的账户权限运行、能访问整台机器，只适合你信任的项目和模型。
 
-两档都会先拍改动快照，Claude 事后逐个文件审查 diff。
+两档都会先拍改动快照，Claude Code 事后逐个文件审查 diff。
 
 ### 完整示例
 
@@ -244,7 +244,7 @@ Claude 只判断任务属于哪一级，交给谁、用什么推理强度由你�
 | `mimo-v2.6-pro` | pi | 复杂的讨论 |
 | `kimi-k2.6` | API，key 在环境变量 `KIMI_API_KEY` 里 | 复杂的讨论 |
 
-简单和常规的执行由 Claude 自己做；讨论的人数随等级增加，越复杂请越多模型。
+简单和常规的执行由 Claude Code 自己做；讨论的人数随等级增加，越复杂请越多模型。
 
 这份配置没用到、但常会调整的字段：
 
@@ -273,7 +273,7 @@ Claude 只判断任务属于哪一级，交给谁、用什么推理强度由你�
 
 ### 偏好文件
 
-有些习惯不好写成 JSON，比如你的项目里哪类代码算高风险、哪些活不想派出去。这些可以用文字写在偏好文件里，Claude 每个会话开始用插件时会读：
+有些习惯不好写成 JSON，比如你的项目里哪类代码算高风险、哪些活不想派出去。这些可以用文字写在偏好文件里，Claude Code 每个会话开始用插件时会读：
 
 - 用户级：`~/.claude/foreman/preferences.md`
 - 项目级：`<项目目录>/.claude/foreman.md`
@@ -284,31 +284,31 @@ Claude 只判断任务属于哪一级，交给谁、用什么推理强度由你�
 # foreman 偏好
 
 - 这个项目的计费和对账代码按高风险处理：派活用 complex，改完都请 Codex 审查。
-- 数据库迁移脚本不派出去，由 Claude 自己写。
+- 数据库迁移脚本不派出去，由 Claude Code 自己写。
 - 改动超过 200 行就请 Codex 审查。
 ```
 
 ## 安全提示
 
-- **Claude 只能通过插件调用协作方。** 插件带有一个钩子：Claude 直接运行 `codex exec`、`codex review`、`opencode run` 或用 pi 跑任务的命令会被拦下，这样每次调用都有记录、改动追踪和明确的模型和推理强度。你自己在终端里运行它们不受影响。
+- **Claude Code 只能通过插件调用协作方。** 插件带有一个钩子：Claude Code 直接运行 `codex exec`、`codex review`、`opencode run` 或用 pi 跑任务的命令会被拦下，这样每次调用都有记录、改动追踪和明确的模型和推理强度。你自己在终端里运行它们不受影响。
 - **Codex 的隔离靠它自己的沙箱。**
-  - 沙箱以 Codex 的配置为准。是 `danger-full-access` 时，Codex 能读写电脑上的任何目录；任务说明会限定改动范围、Claude 事后也会审查 diff，但这些都不是技术上的隔离。想要隔离，把 `agents.<代号>.sandbox` 设成 `workspace-write` 或 `read-only`。
-  - Windows 上 Codex 默认的 elevated 沙箱要先以管理员身份完成一次设置，设置坏了每条命令都会失败（报 `windows sandbox failed`）。改了沙箱之后让 Claude 运行一次 `check`：它不调模型地测一遍沙箱，坏了会列出修法，比如改用 `[windows] sandbox = "unelevated"`。
+  - 沙箱以 Codex 的配置为准。是 `danger-full-access` 时，Codex 能读写电脑上的任何目录；任务说明会限定改动范围、Claude Code 事后也会审查 diff，但这些都不是技术上的隔离。想要隔离，把 `agents.<代号>.sandbox` 设成 `workspace-write` 或 `read-only`。
+  - Windows 上 Codex 默认的 elevated 沙箱要先以管理员身份完成一次设置，设置坏了每条命令都会失败（报 `windows sandbox failed`）。改了沙箱之后让 Claude Code 运行一次 `check`：它不调模型地测一遍沙箱，坏了会列出修法，比如改用 `[windows] sandbox = "unelevated"`。
   - 审批 `approval` 保持默认的 `never` 就好：派出去的任务没人能批准，沙箱坏了要修沙箱。
 - **opencode 和 pi 做执行时没有系统沙箱。** `edit` 档写不了项目以外的文件、不能运行命令；`shell` 档的命令能访问整台机器。默认不开放，要你自己在用户配置里写，项目配置开不了。
-- **代码会发给协作方背后的厂商。** 派给 Codex 的发给 OpenAI；opencode、pi 和 API 模型发给对应的厂商，API 模型还会收到 Claude 附上的文件。涉及敏感代码的项目先确认没问题，必要时用项目配置收紧。
+- **代码会发给协作方背后的厂商。** 派给 Codex 的发给 OpenAI；opencode、pi 和 API 模型发给对应的厂商，API 模型还会收到 Claude Code 附上的文件。涉及敏感代码的项目先确认没问题，必要时用项目配置收紧。
 - **API key 可以写在用户配置里，也可以放在环境变量里。** 写在配置里是明文，`~/.claude/foreman/config.json` 不要提交或分享；项目配置里写的 key 不生效。`config` 命令不显示 key，脚本也不会把 key 写进运行记录。
-- **按量计费的都会产生费用。** Codex 用 API key 计费时、API 模型、opencode 和 pi 接入的按量计费厂商，每次派活或讨论都会花钱。不想让 Claude 自动派活，就把 `dispatch.auto` 设成 `false`。
-- **协作方不会因为等人回答而卡住。** Codex 默认不需要审批，opencode 不开放提问和需要确认的权限，pi 没有提问工具。它们要人回答的事都收集在结果里，由 Claude 判断：你已有授权内的直接决定后续接，业务取舍、扩大范围、花钱和不可逆的操作才问你。
+- **按量计费的都会产生费用。** Codex 用 API key 计费时、API 模型、opencode 和 pi 接入的按量计费厂商，每次派活或讨论都会花钱。不想让 Claude Code 自动派活，就把 `dispatch.auto` 设成 `false`。
+- **协作方不会因为等人回答而卡住。** Codex 默认不需要审批，opencode 不开放提问和需要确认的权限，pi 没有提问工具。它们要人回答的事都收集在结果里，由 Claude Code 判断：你已有授权内的直接决定后续接，业务取舍、扩大范围、花钱和不可逆的操作才问你。
 
 ## 运行记录
 
 每次调用都会在 `~/.claude/foreman/runs/<run_id>/` 留档：任务说明、事件流、diff、最终报告。API 模型的运行没有 diff，另外多一份对话历史 `messages.json`，续接时接着发。`/foreman:status` 可以查看。
 
-- 改动追踪用的是放在记录目录里的独立 git 仓库，不会碰你项目里的 `.git`。它比较任务开始和结束时的整个工作目录，所以同一时间你、Claude 或别的会话改的文件也会被看到：有证据是协作方改的文件和归属未知的文件分开标出，Claude 不会直接还原归属未知的改动。
+- 改动追踪用的是放在记录目录里的独立 git 仓库，不会碰你项目里的 `.git`。它比较任务开始和结束时的整个工作目录，所以同一时间你、Claude Code 或别的会话改的文件也会被看到：有证据是协作方改的文件和归属未知的文件分开标出，Claude Code 不会直接还原归属未知的改动。
 - 被 `.gitignore` 忽略的路径默认不追踪，派活时用 `--track` 指定后才会追踪。
 - Codex 额度用完、API 余额不足时，任务标记为 `quota_exhausted`，不会自动重试；Codex 的会带上预计恢复时间。
-- 调度进程意外退出、卡死或超时的任务，下次在这个项目里开会话时，Claude 会收到提醒。
+- 调度进程意外退出、卡死或超时的任务，下次在这个项目里开会话时，Claude Code 会收到提醒。
 
 ## 平台支持
 

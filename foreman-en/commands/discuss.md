@@ -1,5 +1,5 @@
 ---
-description: Talk a complex plan, design or idea through with Codex and other configured models (discussion only, nothing is carried out; Claude decides)
+description: Talk a complex plan, design or idea through with Codex and other configured models (discussion only, nothing is carried out; Claude Code decides)
 argument-hint: <topic> [--level simple|normal|complex | --effort <effort>] [--model <model>] [--agent <agent>]
 ---
 

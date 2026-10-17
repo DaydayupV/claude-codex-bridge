@@ -1,6 +1,6 @@
 ---
 name: dispatch
-description: Hand off hands-on coding work to OpenAI Codex and check the result, have Codex review code independently, or talk a complex design through with Codex and other configured models (such as DeepSeek). Load before starting hands-on work such as implementing a feature, making bulk changes, writing scripts, migrations, refactoring or fixing bugs; when an image needs to be generated or edited (photos, illustrations, textures and other bitmaps); when facing a complex or uncertain design or plan with several options; and when the user mentions Codex, asks to discuss something with other models, or mentions /foreman-en:run, /foreman-en:discuss or /foreman-en:review, or when deciding whether to ask Codex for a review.
+description: Hand off hands-on coding work to configured agents such as Codex, opencode and pi and check the result, have them review code independently, or talk a complex design through with Codex and other configured models (such as DeepSeek). Load before starting hands-on work such as implementing a feature, making bulk changes, writing scripts, migrations, refactoring or fixing bugs; when an image needs to be generated or edited (photos, illustrations, textures and other bitmaps); when facing a complex or uncertain design or plan with several options; and when the user mentions Codex, asks to discuss something with other models, or mentions /foreman-en:run, /foreman-en:discuss or /foreman-en:review, or when deciding whether to ask Codex for a review.
 ---
 
 # foreman dispatch

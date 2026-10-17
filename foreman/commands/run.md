@@ -1,5 +1,5 @@
 ---
-description: 把一个执行任务派给 Codex（按任务复杂度选等级，模型和推理强度见配置）
+description: 把一个执行任务派给配置的协作方（按任务复杂度选等级，交给谁、模型和推理强度见配置）
 argument-hint: <任务描述> [--level simple|normal|complex | --effort <推理强度>] [--model <模型>]
 ---
 

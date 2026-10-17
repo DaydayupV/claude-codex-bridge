@@ -1,5 +1,5 @@
 ---
-description: Show recent Codex runs, or the details of one run
+description: Show recent runs, or the details of one run
 argument-hint: [run_id | last | group name]
 ---
 

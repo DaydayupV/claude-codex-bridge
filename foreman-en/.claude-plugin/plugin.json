@@ -1,7 +1,7 @@
 {
   "name": "foreman-en",
   "version": "0.10.6",
-  "description": "Claude-led multi-model teamwork: hand off hands-on coding work to CLI agents such as Codex and check the results, get independent code reviews, and have Codex, opencode and API models weigh in on complex designs.",
+  "description": "Claude Code-led multi-model teamwork: hand off hands-on coding work to CLI agents such as Codex, opencode and pi and check the results, get independent code reviews, and have several models weigh in on complex designs.",
   "author": {
     "name": "DaydayupV"
   }
