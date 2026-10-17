@@ -8,6 +8,8 @@ A Claude Code plugin that makes Claude Code the foreman: it plans, decides and c
 - **Your own quota**: agents run on your Codex plan, opencode subscription or API credit, not on your Claude Code quota.
 - **Visible all the way**: every handoff says who got it, with which model and reasoning effort, and a terminal view shows each model's progress live.
 
+**Intro video**: [watch on Bilibili](https://www.bilibili.com/video/BV16XJv6pE2S/)
+
 ## How it works
 
 1. **Pick a level**: a request goes through stages of discussion, hands-on work and review, and each gets a level by that kind's own criteria. Small things not worth an outside model are level 0, which Claude Code does itself; the rest are simple, normal or complex (`simple` / `normal` / `complex`).
