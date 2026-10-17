@@ -157,6 +157,32 @@ function looksLikeFinalQuestion(text) {
   return /[?？]$/.test(lastLine) || (t.length <= 800 && looksLikeQuestion(t));
 }
 
+// 名字写错时找最接近的候选：先看"/"后面那段是否相同（opencode 的提供方前缀写错），再看包含关系，最后按编辑距离。
+function closestMatches(name, candidates, limit = 3) {
+  const target = String(name ?? '').toLowerCase();
+  if (!target) return [];
+  const tail = (s) => s.slice(s.lastIndexOf('/') + 1);
+  const distance = (a, b) => {
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      const row = [i];
+      for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = row;
+    }
+    return prev[b.length];
+  };
+  // 只是大小写不同的排在最前面：名字区分大小写，这正是最需要提示的写法。
+  const scored = [...new Set(candidates)].filter((c) => c && c !== String(name)).map((c) => {
+    const lower = c.toLowerCase();
+    if (lower === target) return [c, -1];
+    if (tail(lower) === tail(target)) return [c, 0];
+    if (lower.includes(target) || target.includes(lower)) return [c, 1];
+    const d = distance(lower, target);
+    return d <= Math.max(2, Math.floor(target.length * 0.25)) ? [c, 2 + d] : null;
+  }).filter(Boolean);
+  return scored.sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0])).slice(0, limit).map(([c]) => c);
+}
+
 const needsDecision = (q) => ['decision_request', 'permission_denied', 'final_question', 'input_prompt'].includes(q.source);
 
 // 按 POSIX shell 规则拆分命令行；引号不配对时返回 null。
@@ -216,4 +242,4 @@ function replaceFile(from, to) {
   }
 }
 
-export { replaceFile, HERE, LANGUAGE, M, notice, isObject, readJson, die, need, resolveDir, readBrief, MAX_MATERIAL_CHARS, readAttachments, focusFiles, binCommand, pathCommand, npmEntry, isGitRepo, pidAlive, killTree, relativePath, pathKey, RECONNECT, isReconnect, sleep, clip, oneLine, plainCommand, isAscii, modelOf, whoOf, agentTypeOf, looksLikeQuestion, looksLikeInputPrompt, looksLikeFinalQuestion, needsDecision };
+export { replaceFile, HERE, LANGUAGE, M, notice, isObject, readJson, die, need, resolveDir, readBrief, MAX_MATERIAL_CHARS, readAttachments, focusFiles, binCommand, pathCommand, npmEntry, isGitRepo, pidAlive, killTree, relativePath, pathKey, RECONNECT, isReconnect, sleep, clip, oneLine, plainCommand, isAscii, modelOf, whoOf, agentTypeOf, looksLikeQuestion, looksLikeInputPrompt, looksLikeFinalQuestion, needsDecision, closestMatches };

@@ -3,10 +3,14 @@ import { setup, replay, write, finish } from './common.mjs';
 import { report } from '../fixtures/reports.mjs';
 
 const args = process.argv.slice(2);
-const operation = args[0] === '--version' ? 'version' : args[0] === 'login' ? 'login' : 'exec';
+const operation = args[0] === '--version' ? 'version' : args[0] === 'login' ? 'login' : args[0] === 'debug' ? 'catalog' : 'exec';
 const { scenario: s } = await setup('codex', operation, args);
 if (operation === 'version') {
   console.log(s.version || 'codex-cli synthetic-1.0');
+} else if (operation === 'catalog') {
+  // codex debug models：剧本没给 codex_catalog 时当作读不到清单
+  if (s.codex_catalog) console.log(JSON.stringify(s.codex_catalog));
+  else { process.stderr.write('synthetic: no model catalog\n'); process.exitCode = 1; }
 } else if (operation === 'login') {
   process.stderr.write(s.logged_in === false ? 'Not logged in\n' : 'Logged in using synthetic credentials\n');
   process.exitCode = s.logged_in === false ? 1 : 0;

@@ -3,13 +3,20 @@ import { once } from 'node:events';
 import { setTimeout as pause } from 'node:timers/promises';
 import { discussion } from '../fixtures/reports.mjs';
 
-export async function apiServer(t, scenarios = [{}]) {
+export async function apiServer(t, scenarios = [{}], { models } = {}) {
   const requests = [];
   const gates = new Map();
   const server = http.createServer(async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
-    const body = JSON.parse(raw);
+    const body = raw ? JSON.parse(raw) : null;
+    if (req.method === 'GET' && req.url === '/models') {
+      // 模型清单不计入 requests，不影响按序号挑选的对话剧本
+      if (!models) { res.writeHead(404).end(); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ data: models.map((id) => ({ id, object: 'model' })) }));
+      return;
+    }
     const index = requests.length;
     requests.push({ url: req.url, method: req.method, body });
     if (req.url !== '/chat/completions') { res.writeHead(404).end(); return; }

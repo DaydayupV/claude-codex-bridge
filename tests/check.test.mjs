@@ -92,7 +92,8 @@ for (const loggedIn of [true, false]) {
     assert.equal(r.git.ok, true);
     assert.equal(r.agents.codex.version, 'codex-cli synthetic-1.0');
     assert.equal(r.agents.codex.fix, loggedIn ? null : M.fixCodexLogin);
-    assert.deepEqual(s.calls().map((c) => c.args), [['--version'], ['login', 'status']]);
+    // 已登录时还会读一次模型清单，核对配置的推理强度
+    assert.deepEqual(s.calls().map((c) => c.args), loggedIn ? [['--version'], ['login', 'status'], ['debug', 'models']] : [['--version'], ['login', 'status']]);
   });
 }
 

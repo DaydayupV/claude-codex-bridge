@@ -88,11 +88,12 @@
 | 15 通用审查 | review.test.mjs | opencode 审查注入只读的 foreman-review，材料和正文落盘（中英文各一）；材料超限拒绝且不启动，Codex 没有这个限制；非 git 目录要求 brief；空范围不启动任何审查方；审查期间改动变化时警告；opencode 审查只收集权限拒绝和终端提示 |
 | 16 opencode 执行 | opencode-run.test.mjs | run_access 校验和授权（项目配置开不了）；edit 和 shell 两档注入的权限、改动归属（工具事件为 agent、自报为 reported、其余 unknown）、报告和用量、watch；报告只修复一次且修复阶段没有工具；禁止 --no-snapshot、快照失败不启动；shell 档不判卡死、edit 档按 stall_min；续接同一会话、run_access 变化提示；同组范围重叠；超时、额度和输入看门狗 |
 | 17 拦截 opencode run | hooks.test.mjs | 拦下各种写法的 opencode run（含 npx），放行版本、模型、会话、认证、调试、服务、帮助和文字提及 |
+| 18 模型清单和总表 | catalog.test.mjs | models 列出 Codex、opencode 和 API 的清单并核对配置里的模型，读不到清单时如实报告；check 按 Codex 清单核对推理强度、不发执行请求，模型不在清单里或读不到清单时只提示；opencode 清单外的档位不发请求、修正提示列出支持的档位；模型提供方前缀和 levels 里的代号写错时提示最接近的写法；config 和 check 输出总表，含没用到的协作方、明文 key、shell 权限和失效的旧代号，档位不支持的格子写明原因 |
 | 10 共用文件同步 | sync.test.mjs | 中英文插件的共用文件、schema 结构和版本号一致 |
 
 ## 说明
 
-- 整套约 40 秒，大头是几处真实等待：Codex 卡死检测每 30 秒查一次，测试要等无活动的任务真的被判卡死；API 断流后的重试固定等 5 秒；已结束任务组的 watch 固定停留 5 秒。
+- 整套约 50 秒，大头是几处真实等待：Codex 卡死检测每 30 秒查一次，测试要等无活动的任务真的被判卡死；API 断流后的重试固定等 5 秒；已结束任务组的 watch 固定停留 5 秒。
 - Node 24 第一次运行 `config` 时可能附带 DEP0190 警告，测试只核对插件自己的提示行。
 - 不覆盖：真实的 Codex 和 opencode、外部 API、终端里的实时画面（TTY）。这些发布前按设计文档 9.2 节的清单手工冒烟。
 - 改了 watch 的排版，要人工核对新输出后再更新 `expected/` 里的文本。

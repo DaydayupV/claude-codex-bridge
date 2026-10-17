@@ -2,12 +2,17 @@ import { setup, replay, finish } from './common.mjs';
 import { discussion } from '../fixtures/reports.mjs';
 
 const args = process.argv.slice(2);
-const operation = args[0] === '--version' ? 'version' : args[0] === 'session' ? 'export' : args[0];
+const operation = args[0] === '--version' ? 'version' : args[0] === 'session' ? 'export' : args[0] === 'api' ? 'catalog' : args[0];
 const { scenario: s } = await setup('opencode', operation, args);
 if (operation === 'version') console.log(s.version || 'synthetic-opencode-1.0');
 else if (operation === 'models') {
   if (s.models_delay_ms) await replay([{ delay_ms: s.models_delay_ms }]);
   console.log((s.models || ['fake/model']).join('\n'));
+}
+else if (operation === 'catalog') {
+  // opencode api GET /api/model：剧本没给 opencode_catalog 时当作读不到清单
+  if (s.opencode_catalog) console.log(JSON.stringify({ data: s.opencode_catalog }));
+  else { process.stderr.write('synthetic: no model catalog\n'); process.exitCode = 1; }
 }
 else if (operation === 'export') {
   if (s.export_error) { process.stderr.write(s.export_error); process.exitCode = 1; }

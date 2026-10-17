@@ -1,4 +1,5 @@
 // opencode CLI：代理权限与环境、事件翻译、会话导出和检查项。
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,7 +7,7 @@ import { SCHEMA, DISCUSS_SCHEMA } from '../config.mjs';
 import { MAX_REVIEW_CHARS } from '../review-scope.mjs';
 import { newRunDir, isCancelled } from '../records.mjs';
 import { startRun, finishDiscussion, execute, eventWriter, runLimits, reportWithRepair, spawnCli, validateSchema } from '../runner.mjs';
-import { M, LANGUAGE, die, isObject, binCommand, pathCommand, npmEntry, killTree, readAttachments, focusFiles, relativePath, whoOf } from '../util.mjs';
+import { M, LANGUAGE, die, isObject, binCommand, pathCommand, npmEntry, killTree, readAttachments, focusFiles, relativePath, whoOf, closestMatches } from '../util.mjs';
 
 function opencodeCommand(agent) {
   if (agent.bin) return binCommand(agent.bin);
@@ -269,7 +270,23 @@ async function opencodeSession(run, schema, agentId) {
     fileChanges, images: [], messages: observed.messages, questions: observed.questions };
 }
 
-async function checkOpencodeAgent(name, agent, variants = []) {
+// 本机 opencode 能用的模型清单，含每个模型的 variant（推理强度）、上下文、价格。读不到时返回 ok: false。
+function opencodeCatalog(agent = {}) {
+  const { file, pre } = opencodeCommand(agent);
+  const r = spawnSync(file, [...pre, 'api', 'GET', '/api/model'], { encoding: 'utf8', windowsHide: true, timeout: 60000, maxBuffer: 64 * 1024 * 1024 });
+  try {
+    if (r.error || r.status !== 0) throw new Error(r.error?.message || (r.stderr || '').trim().split('\n').pop() || `exit ${r.status}`);
+    const models = JSON.parse(r.stdout).data.map((m) => ({
+      // id 是 -m 里写的名字（可能是别名），modelID 是发给厂商的底层模型名，两者可以不同。
+      id: `${m.providerID}/${m.id ?? m.modelID}`, name: m.name || m.id || m.modelID, efforts: (m.variants || []).map((v) => v.id),
+      default_effort: null, context: m.limit?.context ?? null, cost: m.cost?.[0] ? { input: m.cost[0].input, output: m.cost[0].output } : null,
+      status: m.status ?? null, enabled: m.enabled !== false,
+    }));
+    return { ok: true, source: 'opencode api GET /api/model', models, error: null };
+  } catch (e) { return { ok: false, source: 'opencode api GET /api/model', models: [], error: e.message }; }
+}
+
+async function checkOpencodeAgent(name, agent, variants = [], catalog = () => opencodeCatalog(agent)) {
   const started = Date.now();
   const out = { ok: false, type: 'opencode cli', model: agent.model, version: null, model_listed: false, seconds: null, reply: null, error: null, fix: null, variants: [] };
   const call = (args, timeoutMs = 60000, prompt = '') => runOpencode({ agent, args, cwd: process.cwd(), timeoutMs, prompt });
@@ -280,23 +297,42 @@ async function checkOpencodeAgent(name, agent, variants = []) {
   out.version = version.stdout.trim();
   const models = await call(['models']);
   out.model_listed = models.status === 'done' && models.stdout.split(/\s+/).includes(agent.model);
-  if (!out.model_listed) { out.error = models.status === 'done' ? null : failed(models); out.fix = M.fixOpencodeModel(name, agent.model); return finish(); }
+  if (!out.model_listed) {
+    out.error = models.status === 'done' ? null : failed(models);
+    const near = closestMatches(agent.model, models.stdout.split(/\s+/).filter((s) => s.includes('/')));
+    out.fix = M.fixOpencodeModel(name, agent.model) + (near.length ? M.closestHint(M.list(near)) : '');
+    return finish();
+  }
   const reply = await call(opencodeArgs(agent.model, null), 120000, 'Reply with the single word OK.');
   out.ok = reply.status === 'done';
   out.reply = reply.text.trim().slice(0, 40);
   if (!out.ok) { out.error = failed(reply); out.fix = M.fixOpencodeRun(name, out.error); return finish(); }
+  // 先按清单核对，清单里没有的档位不用发请求；清单读不到或清单里有的，再发一个小请求实测。
+  const cat = variants.length ? catalog() : null;
   for (const variant of variants) {
+    const listed = cat?.ok ? cat.models.find((m) => m.id === variant.model) : null;
+    // "default" 在 opencode 里就是不指定档位，和上面的默认请求一样，不用再试。
+    if (variant.variant === 'default') {
+      out.variants.push({ ...variant, ok: true, error: null, ...(listed ? { supported: listed.efforts } : {}) });
+      continue;
+    }
+    if (listed && !listed.efforts.includes(variant.variant)) {
+      out.variants.push({ ...variant, ok: false, error: M.effortNotInCatalog(variant.variant, listed.efforts.length ? M.list(listed.efforts) : M.noEfforts), supported: listed.efforts });
+      continue;
+    }
     const result = await call(opencodeArgs(variant.model, variant.variant), 120000, 'Reply with the single word OK.');
     const ok = result.status === 'done';
-    out.variants.push({ ...variant, ok, error: ok ? null : failed(result) });
+    out.variants.push({ ...variant, ok, error: ok ? null : failed(result), ...(listed ? { supported: listed.efforts } : {}) });
   }
   const unavailable = out.variants.filter((v) => !v.ok);
   if (unavailable.length) {
     out.ok = false;
     out.error = unavailable[0].error;
-    const list = M.list(unavailable.map((v) => LANGUAGE === 'en'
-      ? `${v.variant} (${M.list(v.used_at)})` : `${v.variant}（${M.list(v.used_at)}）`));
-    out.fix = M.fixOpencodeVariant(name, list);
+    // 清单里查得到支持的档位时，直接告诉用户能写哪些。
+    out.fix = unavailable.every((v) => v.supported)
+      ? M.fixEffortUnsupported(name, M.list(unavailable.map((v) => M.effortAt(v.variant, M.list(v.used_at), v.model, v.supported.length ? M.list(v.supported) : M.noEfforts))))
+      : M.fixOpencodeVariant(name, M.list(unavailable.map((v) => LANGUAGE === 'en'
+        ? `${v.variant} (${M.list(v.used_at)})` : `${v.variant}（${M.list(v.used_at)}）`)));
   }
   return finish();
 }
@@ -313,6 +349,7 @@ export default {
   validate,
   status: (agent) => ({ bin: agent.bin || opencodeCommand(agent).file, run_access: agent.run_access ?? null }),
   check: checkOpencodeAgent,
+  catalog: opencodeCatalog,
   locate: opencodeCommand,
   execute: executeOpencode,
   validateResume: (parent) => { if (!parent.meta.session_id) die(M.noSession(parent.id)); },

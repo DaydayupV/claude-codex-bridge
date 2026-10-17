@@ -6,7 +6,7 @@ import path from 'node:path';
 import { SCHEMA, DISCUSS_SCHEMA } from '../config.mjs';
 import { newRunDir } from '../records.mjs';
 import { execute, eventWriter, watchCancellation, spawnCli, validateSchema } from '../runner.mjs';
-import { M, die, isObject, binCommand, pathCommand, npmEntry, killTree, isReconnect, readAttachments, focusFiles } from '../util.mjs';
+import { M, die, isObject, binCommand, pathCommand, npmEntry, killTree, isReconnect, readAttachments, focusFiles, closestMatches } from '../util.mjs';
 
 const capabilities = { modes: ['run', 'review', 'discuss'], isolation: 'os', reads_code: true, native_schema: true, native_review: true, images: true, resume: true, command_start_events: true };
 
@@ -201,7 +201,41 @@ function validate(agent, key, check, text) {
   for (const [mode, value] of Object.entries(agent.sandbox || {})) check(['run', 'review', 'discuss'].includes(mode) && (value === null || ['read-only', 'workspace-write', 'danger-full-access'].includes(value)), `${key}.sandbox.${mode}`, why.sandbox);
 }
 
-function checkCodex(name, agent) {
+// 本机 Codex 的模型清单：每个模型支持的推理强度、默认档位、上下文窗口。读不到时返回 ok: false，不影响其他检查。
+function codexCatalog(agent = {}) {
+  const { file, pre } = codexCommand(agent);
+  const r = spawnSync(file, [...pre, 'debug', 'models'], { encoding: 'utf8', windowsHide: true, timeout: 60000, maxBuffer: 64 * 1024 * 1024 });
+  try {
+    if (r.error || r.status !== 0) throw new Error(r.error?.message || (r.stderr || '').trim().split('\n').pop() || `exit ${r.status}`);
+    const models = JSON.parse(r.stdout).models.map((m) => ({
+      id: m.slug, name: m.display_name || m.slug, efforts: (m.supported_reasoning_levels || []).map((e) => e.effort),
+      default_effort: m.default_reasoning_level ?? null, context: m.context_window ?? null, description: m.description || null,
+      hidden: m.visibility !== 'list',
+    }));
+    return { ok: true, source: 'codex debug models', models, error: null };
+  } catch (e) { return { ok: false, source: 'codex debug models', models: [], error: e.message }; }
+}
+
+// 配置的推理强度按清单核对，不发请求；清单读不到或模型不在清单里时只提示，不判失败。
+function codexEfforts(name, agent, efforts, catalog) {
+  if (!efforts.length && agent.model == null) return {};
+  const cat = catalog();
+  if (!cat.ok) return { catalog: { ok: false, error: cat.error }, efforts: [] };
+  const out = { catalog: { ok: true }, efforts: [] }, unsupported = [];
+  for (const item of efforts) {
+    const model = cat.models.find((m) => m.id === item.model);
+    if (!model) { out.efforts.push({ ...item, ok: null, error: M.modelNotInCatalog(item.model) }); continue; }
+    const ok = model.efforts.includes(item.variant);
+    out.efforts.push({ ...item, ok, error: ok ? null : M.effortNotInCatalog(item.variant, M.list(model.efforts)) });
+    if (!ok) unsupported.push({ ...item, supported: model.efforts });
+  }
+  const own = agent.model && cat.models.some((m) => m.id === agent.model);
+  if (agent.model && !own) out.model_note = M.modelNotInCatalog(agent.model, M.list(closestMatches(agent.model, cat.models.map((m) => m.id))));
+  if (unsupported.length) out.unsupported = unsupported;
+  return out;
+}
+
+function checkCodex(name, agent, efforts = [], catalog = () => codexCatalog(agent)) {
   const { file, pre } = codexCommand(agent);
   const codex = (args) => spawnSync(file, [...pre, ...args], { encoding: 'utf8', windowsHide: true, timeout: 60000 });
   const version = codex(['--version']);
@@ -209,11 +243,19 @@ function checkCodex(name, agent) {
   const login = installed ? codex(['login', 'status']) : null;
   const loginText = login ? `${login.stdout}${login.stderr}`.trim() : null;
   const loggedIn = !!login && login.status === 0 && !/not logged in/i.test(loginText);
-  return {
+  const out = {
     ok: installed && loggedIn, version: installed ? version.stdout.trim() : null, login: loginText,
     model: agent.model || codexConfigModel(),
     fix: !installed ? M.fixCodexMissing : loggedIn ? null : M.fixCodexLogin,
   };
+  if (!out.ok) return out;
+  const { unsupported, ...checked } = codexEfforts(name, agent, efforts.map((e) => ({ ...e, model: e.model || out.model })), catalog);
+  Object.assign(out, checked);
+  if (unsupported) {
+    out.ok = false;
+    out.fix = M.fixEffortUnsupported(name, M.list(unsupported.map((u) => M.effortAt(u.variant, M.list(u.used_at), u.model, M.list(u.supported)))));
+  }
+  return out;
 }
 
 async function executeCodex(ctx) {
@@ -276,6 +318,7 @@ export default {
   validate,
   status: (agent) => ({ model: agent.model || codexConfigModel(), bin: codexCommand(agent).file }),
   check: checkCodex,
+  catalog: codexCatalog,
   execute: executeCodex,
   validateResume: (parent) => { if (!parent.meta.session_id) die(M.noSession(parent.id)); },
   locate: codexCommand,

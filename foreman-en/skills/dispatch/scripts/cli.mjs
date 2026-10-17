@@ -3,13 +3,14 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { USER_CONFIG, USER_PREFS, PROJECT_PREFS, LEGACY_PROJECT_PREFS, DEFAULT_AGENT_PARALLEL, CLAUDE_CODE, resolveAgentAlias, detectEnvironment, projectFile, loadConfig, pickProfile } from './config.mjs';
+import { USER_CONFIG, USER_PREFS, PROJECT_PREFS, LEGACY_PROJECT_PREFS, DEFAULT_AGENT_PARALLEL, CLAUDE_CODE, resolveAgentAlias, detectEnvironment, projectFile, loadConfig, pickProfile, unknownAgentError } from './config.mjs';
+import { buildSummary } from './summary.mjs';
 import { RUNS_ROOT, initializeRecords, findRun, readMeta } from './records.mjs';
 import { adapters } from './adapters/index.mjs';
 import { computeReviewScope } from './review-scope.mjs';
 import { cmdWatch } from './watch.mjs';
 import { cmdStatus, cmdCancel, cmdAwaitBusy } from './status.mjs';
-import { M, die, need, resolveDir, readBrief, isGitRepo, isAscii, agentTypeOf } from './util.mjs';
+import { M, die, need, resolveDir, readBrief, isGitRepo, isAscii, agentTypeOf, closestMatches } from './util.mjs';
 
 // 先加载配置，再迁移记录和重写启动器；这些步骤仍在解析参数之前完成。
 const load = (cwd) => loadConfig(cwd, adapters);
@@ -123,6 +124,7 @@ function cmdConfig(o) {
     preferences: [USER_PREFS, ...(o.cwd ? [projectFile(resolveDir(o.cwd), PROJECT_PREFS, LEGACY_PROJECT_PREFS)] : [])]
       .map((file) => ({ file, exists: fs.existsSync(file) })),
     environment: detectEnvironment(adapters, effective.agents),
+    summary: buildSummary(effective, adapters),
   }, null, 2) + '\n');
 }
 
@@ -130,7 +132,7 @@ function cmdConfig(o) {
 async function cmdCheck(o) {
   const cfg = load(null);
   if (o.agent) o.agent = resolveAgentAlias(o.agent, cfg, true);
-  if (o.agent && !Object.hasOwn(cfg.agents, o.agent)) die(M.unknownAgent('--agent', o.agent));
+  if (o.agent && !Object.hasOwn(cfg.agents, o.agent)) die(unknownAgentError('--agent', o.agent, cfg));
   const nodeOk = Number(process.versions.node.split('.')[0]) >= 18;
   const git = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: true });
   const gitVersion = git.status === 0 ? git.stdout.trim() : null;
@@ -160,18 +162,51 @@ async function cmdCheck(o) {
       }
     }
   }
+  // 只在要核对推理强度时才读清单。
+  const readCatalog = catalogReader();
   for (const [name, agent] of Object.entries(cfg.agents)) {
-    if (!o.agent || o.agent === name) result.agents[name] = { ...await adapters[agent.type].check(name, agent, variants.get(name) || []), type: agent.type };
+    if (!o.agent || o.agent === name) result.agents[name] = { ...await adapters[agent.type].check(name, agent, variants.get(name) || [], () => readCatalog(agent)), type: agent.type };
   }
   const referenced = new Set(Object.values(cfg.levels).flatMap((levels) => Object.values(levels).flatMap((entry) => entry === CLAUDE_CODE ? [] : (Array.isArray(entry) ? entry : [entry]).map((item) => item.agent))));
   result.ok = nodeOk && Object.entries(result.agents).every(([name, agent]) => !referenced.has(name) || agent.ok);
+  result.summary = buildSummary(cfg, adapters, result.agents);
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   process.exitCode = result.ok ? 0 : 1;
+}
+
+// 同一种工具、同一个可执行文件的清单只读一次，用这个可执行文件的协作方共用。
+function catalogReader() {
+  const catalogs = new Map();
+  return (agent) => {
+    const key = `${agent.type}\0${agent.bin ?? ''}`;
+    if (!catalogs.has(key)) catalogs.set(key, adapters[agent.type].catalog(agent));
+    return catalogs.get(key);
+  };
+}
+
+// 本机能用的模型和推理强度清单：Codex 和 opencode 读本机清单，API 读厂商的 /models（不含推理强度）。
+async function cmdModels() {
+  const cfg = load(null);
+  const out = { tools: {}, api: {}, agents: {} };
+  const readCatalog = catalogReader();
+  for (const type of ['codex cli', 'opencode cli']) {
+    out.tools[type] = readCatalog(Object.values(cfg.agents).find((a) => a.type === type) || { type });
+  }
+  for (const [name, agent] of Object.entries(cfg.agents)) if (agent.type === 'api') out.api[name] = await adapters.api.catalog(agent);
+  // 配置里每个协作方的模型在不在它自己那个可执行文件的清单里，在的话支持哪些推理强度；不在的给出最接近的写法。
+  for (const [name, agent] of Object.entries(cfg.agents)) {
+    const cat = agent.type === 'api' ? out.api[name] : readCatalog(agent);
+    const model = agent.model ?? adapters[agent.type].status(agent).model ?? null;
+    const found = cat.ok ? cat.models.find((m) => m.id === model) : null;
+    out.agents[name] = { type: agent.type, model, listed: cat.ok && model ? !!found : null, efforts: found?.efforts ?? null,
+      closest: cat.ok && model && !found ? closestMatches(model, cat.models.map((m) => m.id)) : [] };
+  }
+  process.stdout.write(JSON.stringify(out, null, 2) + '\n');
 }
 
 const { cmd, opts } = parseArgs(process.argv.slice(2));
 // 新建任务组时组名只用 ASCII：实时查看要把它写进终端命令，桌面版的终端面板只接受 ASCII 命令。
 if (['run', 'discuss', 'resume'].includes(cmd) && opts.group != null && !/^[A-Za-z0-9._-]{1,64}$/.test(opts.group)) die(M.badGroupName(opts.group));
-const commands = { run: cmdRun, discuss: cmdDiscuss, resume: cmdResume, review: cmdReview, status: (o) => cmdStatus(o, (meta) => adapters[agentTypeOf(meta)]?.stats?.(meta.session_id, meta.started_at)), watch: cmdWatch, config: cmdConfig, check: cmdCheck, cancel: cmdCancel, 'await-busy': (o) => cmdAwaitBusy(o, CONFIG) };
+const commands = { run: cmdRun, discuss: cmdDiscuss, resume: cmdResume, review: cmdReview, status: (o) => cmdStatus(o, (meta) => adapters[agentTypeOf(meta)]?.stats?.(meta.session_id, meta.started_at)), watch: cmdWatch, config: cmdConfig, check: cmdCheck, models: cmdModels, cancel: cmdCancel, 'await-busy': (o) => cmdAwaitBusy(o, CONFIG) };
 if (!commands[cmd]) die(M.usage);
 await commands[cmd](opts);

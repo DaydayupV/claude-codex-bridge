@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import os from 'node:os';
 import path from 'node:path';
-import { HERE, M, notice, isObject, readJson, die, pidAlive, replaceFile } from './util.mjs';
+import { HERE, M, notice, isObject, readJson, die, pidAlive, replaceFile, closestMatches } from './util.mjs';
 
 const ENTRY = path.join(HERE, 'cli.mjs');
 const SCHEMA = path.join(HERE, '..', 'schemas', 'report.schema.json');
@@ -91,6 +91,18 @@ function resolveAgentAlias(name, cfg, announce = false) {
   if (announce && resolved !== name) notice(M.legacyAgentAlias(name, resolved));
   return resolved;
 }
+
+function staleAliases(cfg) {
+  return Object.keys(readAgentAliases()).filter((old) => !Object.hasOwn(cfg.agents, old)).map((old) => [old, resolveAgentAlias(old, cfg)])
+    .filter(([, target]) => !Object.hasOwn(cfg.agents, target))
+    .map(([old, target]) => ({ old, target, closest: closestMatches(target, Object.keys(cfg.agents)) }));
+}
+
+// 代号写错时，提示里带上最接近的代号。
+const unknownAgentError = (key, name, cfg) => {
+  const near = closestMatches(name, Object.keys(cfg.agents));
+  return M.unknownAgent(key, name) + (near.length ? M.closestHint(M.list(near)) : '');
+};
 
 function mergeConfig(base, extra) {
   const out = { ...base };
@@ -292,7 +304,7 @@ function validateConfig(cfg, adapters, fail = die) {
         const at = mode === 'discuss' ? `${key}[${i}]` : key;
         check(isObject(item), at, M.levelEntryChoices);
         check(text(item.agent), `${at}.agent`, why.agentRef);
-        if (!Object.hasOwn(cfg.agents, item.agent)) fail(M.unknownAgent(at, item.agent));
+        if (!Object.hasOwn(cfg.agents, item.agent)) fail(unknownAgentError(at, item.agent, cfg));
         const agent = cfg.agents[item.agent], adapter = adapters[agent.type];
         check(!seen.has(item.agent), at, why.duplicate);
         seen.add(item.agent);
@@ -468,6 +480,7 @@ function pickProfile(cfg, o, mode, adapters, fallbackModel = null, parentAgent =
   if (legacyRequested) notice(M.legacyAgentAlias(o.agent, requested));
   if (parentAgent && requested && requested !== parentAgent) die(M.resumeAgentMismatch(requested, parentAgent));
   const selected = parentAgent || requested;
+  if (requested && !Object.hasOwn(cfg.agents, requested)) die(unknownAgentError('--agent', requested, cfg));
   if (!o.level && !o.effort) die(M.missingLevel(LEVELS.join(' / '), CODEX_EFFORTS.join(' / ')));
   if (o.level && !LEVELS.includes(o.level)) die(M.levelChoices(LEVELS.join(' / ')));
   const level = o.level || null, key = `levels.${mode}.${level}`;
@@ -490,7 +503,7 @@ function pickProfile(cfg, o, mode, adapters, fallbackModel = null, parentAgent =
     if (!found) die(M.agentNotInLevel(selected, key, names));
     entry = found;
   } else if (selected && selected !== entry.agent) die(M.agentMismatch(selected, key, entry.agent));
-  if (!Object.hasOwn(cfg.agents, entry.agent)) die(M.unknownAgent('--agent', entry.agent));
+  if (!Object.hasOwn(cfg.agents, entry.agent)) die(unknownAgentError('--agent', entry.agent, cfg));
   const agent = cfg.agents[entry.agent], adapter = adapters[agent.type], effort = o.effort ?? entry.effort;
   if (!adapter.capabilities.modes.includes(mode)) die(M.modeNotSupported(entry.agent, agent.type, mode, M.list(adapter.capabilities.modes)));
   if (mode === 'run' && agent.type === 'opencode cli' && !agent.run_access) die(M.runAccessRequired(entry.agent));
@@ -499,4 +512,4 @@ function pickProfile(cfg, o, mode, adapters, fallbackModel = null, parentAgent =
   return { level, agentName: entry.agent, agent, model: o.model || entry.model || agent.model || fallbackModel, effort: effort ?? null };
 }
 
-export { ENTRY, SCHEMA, DISCUSS_SCHEMA, USER_CONFIG, USER_PREFS, PROJECT_PREFS, LEGACY_PROJECT_PREFS, DEFAULT_AGENT_PARALLEL, DEFAULT_CONFIG, CLAUDE_CODE, projectFile, loadConfig, pickProfile, defaultRunsRoot, runsMovedNow, readAgentAliases, resolveAgentAlias, migrateStructure, renameAgentsByModel, detectEnvironment, buildStarterConfig };
+export { ENTRY, SCHEMA, DISCUSS_SCHEMA, USER_CONFIG, USER_PREFS, PROJECT_PREFS, LEGACY_PROJECT_PREFS, DEFAULT_AGENT_PARALLEL, DEFAULT_CONFIG, CLAUDE_CODE, projectFile, loadConfig, pickProfile, defaultRunsRoot, runsMovedNow, readAgentAliases, resolveAgentAlias, migrateStructure, renameAgentsByModel, detectEnvironment, buildStarterConfig , staleAliases, unknownAgentError };

@@ -153,6 +153,20 @@ async function executeApi(ctx) {
   return finishDiscussion(run, { usage, errors, notes, warnings, report, last, files, changesNote: M.apiNoChanges });
 }
 
+// 厂商接口列出的模型 ID。兼容 OpenAI 的接口一般都有 /models，但不给推理强度，那部分要查厂商文档。
+async function apiCatalog(agent) {
+  const { key } = apiKeyOf(agent);
+  const source = `GET ${agent.base_url.replace(/\/+$/, '')}/models`;
+  if (!key) return { ok: false, source, models: [], error: M.apiKeyMissing('', agent.api_key_env) };
+  try {
+    const response = await fetch(`${agent.base_url.replace(/\/+$/, '')}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(30000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = await response.json();
+    const models = (body.data || body.models || []).map((m) => ({ id: m.id ?? m.name, name: m.id ?? m.name, efforts: null, default_effort: null, context: m.context_length ?? null }));
+    return { ok: true, source, models, error: null };
+  } catch (e) { return { ok: false, source, models: [], error: redactKey(e.message, key) }; }
+}
+
 async function checkApiAgent(name, agent) {
   const { key: apiKey, source } = apiKeyOf(agent);
   const out = { ok: false, model: agent.model, base_url: agent.base_url, api_key_env: agent.api_key_env ?? null, key_set: !!apiKey, key_source: source };
@@ -335,5 +349,6 @@ export default {
   validate,
   status: (agent) => ({ api_key_env: agent.api_key_env ?? null, key_set: !!apiKeyOf(agent).key, key_source: apiKeyOf(agent).source }),
   check: checkApiAgent,
+  catalog: apiCatalog,
   execute: executeApi,
 };
