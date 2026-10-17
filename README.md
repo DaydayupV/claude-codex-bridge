@@ -15,6 +15,39 @@
 3. **实时查看**：派出后终端里打开实时画面，能看到模型的每一步。
 4. **验收**：Claude Code 审查改动、运行验证，再向你汇报用了哪个模型、花了多少 token。
 
+一个请求从开始到结束的完整流程：
+
+```mermaid
+flowchart TD
+    start(["收到请求"]) --> plan{"要先定方案吗？<br/>按讨论定级"}
+    plan -- "0 级：方案已明确" --> split
+    plan -- "1–3 级" --> discuss["多模型讨论<br/>Claude Code 裁决"]
+    discuss --> advice{"只是来要建议？"}
+    advice -- "是" --> report
+    advice -- "否，按最终方案做" --> split
+    split{"分工"} -- "决策、设计、文字" --> self["Claude Code 自己做"]
+    split -- "生成图片" --> image["交给能出图的协作方"]
+    split -- "其余执行工作" --> level{"按执行定级"}
+    level -- "0 级" --> self
+    level -- "1–3 级" --> run["按配置派给协作方<br/>终端里实时查看"]
+    run --> check["验收：看 diff，亲自运行验证"]
+    image --> check
+    check -- "不合格" --> rework["返工一次<br/>再不行 Claude Code 接手"]
+    rework --> check
+    check -- "通过" --> review{"交付前，按审查定级"}
+    self --> review
+    review -- "0 级" --> report(["汇报"])
+    review -- "1–3 级" --> reviewer["另一个模型开新会话审查<br/>逐条核实、修复、重新验证"]
+    reviewer --> report
+
+    classDef claude fill:#EEEDFE,stroke:#534AB7,color:#3C3489
+    classDef agent fill:#E1F5EE,stroke:#0F6E56,color:#085041
+    class plan,advice,split,self,level,check,review claude
+    class discuss,image,run,rework,reviewer agent
+```
+
+紫色的步骤由 Claude Code 做，绿色的有协作方参与。1–3 级交给谁看你的配置，配置里写成 `"claude code"` 的那一级同样由 Claude Code 自己做。
+
 ## 能做什么
 
 | 命令 | 作用 |

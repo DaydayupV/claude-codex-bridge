@@ -15,6 +15,39 @@ A Claude Code plugin that makes Claude Code the foreman: it plans, decides and c
 3. **Watch live**: once it's handed off, a live view opens in the terminal and shows each step the model takes.
 4. **Check the result**: Claude Code reviews the changes, runs them to verify, and reports which model did the work and how many tokens it used.
 
+The whole path of a request, from start to finish:
+
+```mermaid
+flowchart TD
+    start(["A request comes in"]) --> plan{"Settle the approach first?<br/>Level it as a discussion"}
+    plan -- "Level 0: approach is clear" --> split
+    plan -- "Levels 1–3" --> discuss["Several models discuss<br/>Claude Code decides"]
+    discuss --> advice{"Only asking for advice?"}
+    advice -- "Yes" --> report
+    advice -- "No, carry out the plan" --> split
+    split{"Who does what"} -- "Decisions, design, text" --> self["Claude Code does it"]
+    split -- "Images" --> image["An image-capable agent"]
+    split -- "Other hands-on work" --> level{"Level the hands-on work"}
+    level -- "Level 0" --> self
+    level -- "Levels 1–3" --> run["Handed off per the config<br/>watched live in a terminal"]
+    run --> check["Check: read the diff, run it"]
+    image --> check
+    check -- "Not good enough" --> rework["One rework<br/>then Claude Code takes over"]
+    rework --> check
+    check -- "Passes" --> review{"Before delivering,<br/>level the review"}
+    self --> review
+    review -- "Level 0" --> report(["Report"])
+    review -- "Levels 1–3" --> reviewer["Another model reviews in a new session<br/>verify, fix, check again"]
+    reviewer --> report
+
+    classDef claude fill:#EEEDFE,stroke:#534AB7,color:#3C3489
+    classDef agent fill:#E1F5EE,stroke:#0F6E56,color:#085041
+    class plan,advice,split,self,level,check,review claude
+    class discuss,image,run,rework,reviewer agent
+```
+
+Purple steps are done by Claude Code; green ones involve an agent. Who gets levels 1–3 is up to your config, and a level configured as `"claude code"` is done by Claude Code itself too.
+
 ## What it does
 
 | Command | What it does |
