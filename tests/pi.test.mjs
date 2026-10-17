@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import { pathToFileURL } from 'node:url';
-import { sandbox, baseConfig, piAgent, taskArgs, output, failed, read, ROOT, PI, MESSAGES } from './helpers.mjs';
+import { sandbox, baseConfig, piAgent, taskArgs, output, failed, read, seedRun, ROOT, PI, MESSAGES } from './helpers.mjs';
 import { report, discussion } from './fixtures/reports.mjs';
 const M = MESSAGES.zh;
 const SCRIPTS = path.join(ROOT, 'foreman/skills/dispatch/scripts');
@@ -268,4 +268,17 @@ test('拦截钩子：拦下直接用 pi 跑任务，放行查询、管理子命�
     'npx --yes @earendil-works/pi-coding-agent -p hi', 'npx -p @earendil-works/pi-coding-agent pi -p hi']) assert.equal(blocked(command), true, command);
   for (const command of ['pi --version', 'pi -v', 'pi --help', 'pi --list-models deepseek', 'pi auth check --provider deepseek', 'pi update', 'pi list',
     'echo pi -p hi', 'git commit -m "pi -p"', 'pip install x', 'node tests/pi-coding-agent.test.mjs', 'pi --model x --list-models']) assert.equal(blocked(command), false, command);
+});
+
+test('流式输出期间定期写进度，status 显示思考或回答了多少字，watch 照常', async (t) => {
+  const h = sandbox(t);
+  configure(h, {}, (c) => { c.levels.discuss.complex = [{ agent: 'pi' }]; });
+  const delta = (type, text) => ({ delay_ms: 5, event: { type: 'message_update', assistantMessageEvent: { type, contentIndex: 0, delta: text } } });
+  const s = h.scenario({ steps: [{ event: { type: 'message_start', message: { role: 'assistant' } } }, delta('thinking_delta', 'abcd'), delta('thinking_delta', 'efgh'), delta('text_delta', 'xyz')] });
+  const r = output(await h.bridge(taskArgs(h, 'discuss', ['--agent', 'pi']), { env: { ...s.env, FOREMAN_TEST_PROGRESS_MS: '1' }, input: '议题' }));
+  const progress = h.events(r.run_id).filter((e) => e.type === 'pi.progress');
+  assert.deepEqual(progress.map((e) => [e.phase, e.total_chars]), [['thinking', 4], ['thinking', 8], ['answering', 3]]);
+  assert.equal((await h.bridge(['watch', '--run', r.run_id])).code, 0);
+  seedRun(h, '20000101-thinking', { agent: 'pi', agent_type: 'pi cli', status: 'running', pid: process.pid }, null, [{ type: 'pi.progress', phase: 'thinking', total_chars: 42 }]);
+  assert.equal(output(await h.bridge(['status', '--run', '20000101-thinking'])).activity.step, M.stepApiThinking(42));
 });

@@ -120,7 +120,8 @@ function describeActivity(dir) {
       : last.type === 'api.repair' ? M.stepApiRepair
       : last.type === 'api.error' ? last.message
       : last.type === 'api.usage' ? M.watchTokens(last.usage) : M.watchEnded('done');
-  } else if (running.size) step = M.stepCommand(clip(oneLine(plainCommand([...running.values()].pop())), 160));
+  } else if (last?.type === 'pi.progress') step = last.phase === 'thinking' ? M.stepApiThinking(last.total_chars) : M.stepApiAnswering(last.total_chars);
+  else if (running.size) step = M.stepCommand(clip(oneLine(plainCommand([...running.values()].pop())), 160));
   else if (last?.item?.type === 'agent_message') step = M.stepSaid(clip(oneLine(last.item.text), 160));
   else if (last?.item?.type === 'file_change') step = M.stepFileChanged;
   else if (last?.type === 'image.generated') step = M.stepImageGenerated;

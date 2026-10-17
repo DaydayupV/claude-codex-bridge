@@ -25,6 +25,7 @@ TOOLS.edit = [...TOOLS.read, 'edit', 'write'];
 TOOLS.shell = [...TOOLS.edit, 'bash'];
 const capabilities = { modes: ['run', 'review', 'discuss'], isolation: 'tools', reads_code: true, native_schema: false, native_review: false, images: false, resume: true, command_start_events: true };
 // 只加载 foreman 的守卫扩展：用户自己的扩展、skill、提示模板、MCP 和项目里的 .pi 设置都不加载；项目的 AGENTS.md / CLAUDE.md 照常读。
+const PROGRESS_MS = Number(process.env.FOREMAN_TEST_PROGRESS_MS) || 5000;
 const LOG_SKIP = new Set(['message_update', 'message_start', 'turn_end', 'agent_end']);
 const ISOLATE = ['--no-extensions','--no-skills', '--no-prompt-templates', '--no-themes', '--no-mcp', '--no-approve', '--offline'];
 
@@ -211,12 +212,24 @@ async function piSession(run, schema, access) {
   const usage = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 };
   const fileChanges = new Set(), started_tools = new Map();
   let cost = 0, commands = 0, items = 0, repairing = false, last = '', report = null, thinkingLevel = null;
+  // 流式输出的字数；完整内容要等 message_end 才写进时间线，这期间每隔几秒写一条进度，免得看起来像卡住了。
+  const stream = { thinking: 0, text: 0, at: 0 };
   // 翻译成 Codex 的事件形状，让 watch 和 status 共用现有的时间线、命令和报告显示。
   const translate = (ev) => {
     if (ev.type === 'session' && ev.id && !meta.session_id) {
       meta.session_id = ev.id;
       writeMeta();
       event({ type: 'thread.started', thread_id: ev.id });
+    } else if (ev.type === 'message_start') {
+      stream.thinking = 0; stream.text = 0;
+    } else if (ev.type === 'message_update') {
+      const delta = ev.assistantMessageEvent;
+      const phase = delta?.type === 'thinking_delta' ? 'thinking' : delta?.type === 'text_delta' ? 'text' : null;
+      if (!phase) return;
+      stream[phase] += String(delta.delta || '').length;
+      if (Date.now() - stream.at < PROGRESS_MS) return;
+      stream.at = Date.now();
+      event({ type: 'pi.progress', phase: phase === 'thinking' ? 'thinking' : 'answering', total_chars: stream[phase] });
     } else if (ev.type === 'message_end' && ev.message?.role === 'assistant') {
       for (const block of ev.message.content || []) {
         if (block.type === 'thinking' && block.thinking) event({ type: 'item.completed', item: { type: 'reasoning', text: block.thinking } });
