@@ -101,7 +101,7 @@ function staleAliases(cfg) {
 // 代号写错时，提示里带上最接近的代号。
 const unknownAgentError = (key, name, cfg) => {
   const near = closestMatches(name, Object.keys(cfg.agents));
-  return M.unknownAgent(key, name) + (near.length ? M.closestHint(M.list(near)) : '');
+  return (key === '--agent' ? M.unknownAgentFlag(name) : M.unknownAgent(key, name)) + (near.length ? M.closestHint(M.list(near)) : '');
 };
 
 function mergeConfig(base, extra) {
@@ -486,7 +486,8 @@ function pickProfile(cfg, o, mode, adapters, fallbackModel = null, parentAgent =
   const level = o.level || null, key = `levels.${mode}.${level}`;
   let entry = level ? cfg.levels[mode][level] : CLAUDE_CODE;
   if (entry === CLAUDE_CODE) {
-    let name = selected;
+    // 这一级由 Claude 做：只有点名（--agent）或指定推理强度时才派出；续接也一样，不因为上一轮有协作方就自动派。
+    let name = requested || (o.effort ? parentAgent : null);
     if (!name && o.effort) {
       const names = Object.keys(cfg.agents).filter((n) => adapters[cfg.agents[n].type].capabilities.modes.includes(mode));
       if (!names.length) die(M.noAgentForMode(mode));

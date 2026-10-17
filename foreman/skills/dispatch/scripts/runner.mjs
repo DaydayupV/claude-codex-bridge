@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { CLAUDE_SESSION, checkAdmission, isCancelled } from './records.mjs';
+import { CLAUDE_SESSION, checkAdmission, groupScopeOwner, isCancelled } from './records.mjs';
 import { makeTracker } from './tracker.mjs';
 import { computeReviewScope } from './review-scope.mjs';
 import { M, die, notice, relativePath, pathKey, whoOf, modelOf, replaceFile, killTree, looksLikeQuestion, looksLikeInputPrompt, looksLikeFinalQuestion, needsDecision } from './util.mjs';
@@ -258,7 +258,11 @@ async function execute(ctx, { run: runAgent, stats: sessionStats = () => null, d
   changes.reported_total = tracked.filter((f) => f.by === 'reported').length;
   changes.unknown_total = tracked.length - changes.agent_total - changes.reported_total;
   if (kind !== 'exec' && changes.agent_total + changes.reported_total) warnings.push(M.readonlyChanged(kind, changes.agent_total + changes.reported_total));
-  if (changes.unknown_total) notes.push(M.unattributedChanges(changes.unknown_total));
+  const ownerOf = groupScopeOwner(meta);
+  const groupOwned = tracked.filter((f) => f.by === 'unknown').map((f) => ({ f, owner: ownerOf(relativePath(cwd, f.path)) })).filter((x) => x.owner);
+  for (const { f, owner } of groupOwned) f.group_run = owner;
+  if (groupOwned.length) notes.push(M.groupScopeChanges(groupOwned.length, M.list([...new Set(groupOwned.map((x) => x.owner))])));
+  if (changes.unknown_total > groupOwned.length) notes.push(M.unattributedChanges(changes.unknown_total - groupOwned.length));
   const trackedPaths = new Set(tracked.map((f) => pathKey(relativePath(cwd, f.path))));
   const untracked = [...new Map(reported.filter((f) => !trackedPaths.has(pathKey(f))).map((f) => [pathKey(f), f])).values()];
   if (untracked.length) notes.push(M.reportedNotTracked(untracked));

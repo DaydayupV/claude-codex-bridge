@@ -74,3 +74,11 @@ test('cancel 对已完成任务不改结果，对未正常结束任务标记已�
     assert.equal(fs.existsSync(path.join(dir, 'cancel')), false);
   }
 });
+
+test('组汇总里交回问题后已续接的任务记作已续接，结果看续接的那一轮', async (t) => {
+  const h = sandbox(t);
+  seedRun(h, '20000101-ask', { group: 'resumed-group' }, { status: 'done', needs_decision: true, report: { status: 'blocked' } });
+  seedRun(h, '20000101-answer', { group: 'resumed-group', parent: '20000101-ask' }, { status: 'done', report: { status: 'completed' } });
+  const r = await h.bridge(['status', '--group', 'resumed-group']);
+  assert.ok(r.stdout.endsWith(`${M.groupSummary(2, 0, 1, 0, 0, 1)}\n`));
+});

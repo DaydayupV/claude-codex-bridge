@@ -89,6 +89,7 @@
 | 16 opencode 执行 | opencode-run.test.mjs | run_access 校验和授权（项目配置开不了）；edit 和 shell 两档注入的权限、改动归属（工具事件为 agent、自报为 reported、其余 unknown）、报告和用量、watch；报告只修复一次且修复阶段没有工具；禁止 --no-snapshot、快照失败不启动；shell 档不判卡死、edit 档按 stall_min；续接同一会话、run_access 变化提示；同组范围重叠；超时、额度和输入看门狗 |
 | 17 拦截 opencode run | hooks.test.mjs | 拦下各种写法的 opencode run（含 npx），放行版本、模型、会话、认证、调试、服务、帮助和文字提及 |
 | 18 模型清单和总表 | catalog.test.mjs | models 列出 Codex、opencode 和 API 的清单并核对配置里的模型，读不到清单时如实报告；check 按 Codex 清单核对推理强度、不发执行请求，模型不在清单里或读不到清单时只提示；opencode 清单外的档位不发请求、修正提示列出支持的档位；模型提供方前缀和 levels 里的代号写错时提示最接近的写法；config 和 check 输出总表，含没用到的协作方、明文 key、shell 权限和失效的旧代号，档位不支持的格子写明原因 |
+| 19 实测补漏 | generalization.test.mjs、review.test.mjs、run.test.mjs、status-watch.test.mjs | 续接到 "claude code" 的等级时不沿用上一轮的协作方；opencode 审查和 check 总是带标题、被厂商限流时提示稍后再试、出错的回复没有 tokens 时照常统计用量；来源不明的改动落在同组其他任务的范围里时标出 group_run；组汇总把已续接的任务记作已续接 |
 | 10 共用文件同步 | sync.test.mjs | 中英文插件的共用文件、schema 结构和版本号一致 |
 
 ## 说明

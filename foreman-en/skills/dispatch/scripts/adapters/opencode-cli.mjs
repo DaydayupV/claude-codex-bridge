@@ -228,7 +228,8 @@ async function opencodeSession(run, schema, agentId) {
     const currentAgent = repairing && exec ? 'foreman-repair' : agentId;
     const args = opencodeArgs(model, effort, currentAgent);
     if (meta.session_id) args.push('--session', meta.session_id);
-    if (meta.title) args.push('--title', meta.title);
+    // 总是带标题：不带时 opencode 会另发一个请求让模型起标题，和主请求同时占用账号的并发名额（Moonshot 等只允许 1 个时会被 429 拒绝）。
+    args.push('--title', meta.title || `foreman ${ctx.kind}`);
     const out = await runOpencode({ agent, args, cwd, agentId: currentAgent, prompt: nextPrompt, runDir: dir, onEvent: translate,
       timeoutMs: deadline - Date.now(), stallMin });
     errors.push(...out.errors);
@@ -245,6 +246,7 @@ async function opencodeSession(run, schema, agentId) {
   });
   if (meta.status === 'cancelled') errors.push(M.runCancelled(model));
   if (meta.status === 'stalled') errors.push(M.stalled(stallMin));
+  if (meta.status === 'failed' && errors.some((e) => /rate.?limit|concurrency|too many requests|\b429\b/i.test(e))) notes.push(M.opencodeRateLimited(model));
   let usage = null, cost = null;
   if (meta.session_id) {
     // 最后一步没有 step_finish，用会话导出按开始时间过滤，包含同一轮的格式修复。
@@ -255,7 +257,7 @@ async function opencodeSession(run, schema, agentId) {
       usage = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 };
       cost = 0;
       for (const m of messages) {
-        const t = m.tokens;
+        const t = m.tokens || {}; // 出错的那条回复没有 tokens
         usage.input_tokens += (t.input || 0) + (t.cache?.read || 0) + (t.cache?.write || 0);
         usage.cached_input_tokens += t.cache?.read || 0;
         usage.output_tokens += t.output || 0;
@@ -303,7 +305,7 @@ async function checkOpencodeAgent(name, agent, variants = [], catalog = () => op
     out.fix = M.fixOpencodeModel(name, agent.model) + (near.length ? M.closestHint(M.list(near)) : '');
     return finish();
   }
-  const reply = await call(opencodeArgs(agent.model, null), 120000, 'Reply with the single word OK.');
+  const reply = await call([...opencodeArgs(agent.model, null), '--title', 'foreman check'], 120000, 'Reply with the single word OK.');
   out.ok = reply.status === 'done';
   out.reply = reply.text.trim().slice(0, 40);
   if (!out.ok) { out.error = failed(reply); out.fix = M.fixOpencodeRun(name, out.error); return finish(); }
@@ -320,7 +322,7 @@ async function checkOpencodeAgent(name, agent, variants = [], catalog = () => op
       out.variants.push({ ...variant, ok: false, error: M.effortNotInCatalog(variant.variant, listed.efforts.length ? M.list(listed.efforts) : M.noEfforts), supported: listed.efforts });
       continue;
     }
-    const result = await call(opencodeArgs(variant.model, variant.variant), 120000, 'Reply with the single word OK.');
+    const result = await call([...opencodeArgs(variant.model, variant.variant), '--title', 'foreman check'], 120000, 'Reply with the single word OK.');
     const ok = result.status === 'done';
     out.variants.push({ ...variant, ok, error: ok ? null : failed(result), ...(listed ? { supported: listed.efforts } : {}) });
   }

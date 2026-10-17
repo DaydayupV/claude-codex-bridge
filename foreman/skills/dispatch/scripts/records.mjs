@@ -143,6 +143,19 @@ function groupRuns(group, since = 0) {
   return runs.filter((run) => sessionOf(run) === batch);
 }
 
+const absolute = (cwd, file) => pathKey(path.resolve(cwd, file.replace(/\\/g, '/')).replace(/\\/g, '/')).replace(/\/$/, '');
+
+// 同组（同一个 Claude 会话）其他执行任务里，写入范围包含这个文件的那一个。归属未知的改动落在别人的范围里时，多半是那个任务改的。
+function groupScopeOwner(meta) {
+  if (meta.group == null) return () => null;
+  const others = listRuns().filter((id) => id !== meta.id).map((id) => ({ id, meta: readMeta(path.join(RUNS_ROOT, id)) }))
+    .filter((r) => r.meta?.group === meta.group && r.meta.kind !== 'discuss' && r.meta.claude_session === meta.claude_session);
+  return (file) => {
+    const a = absolute(meta.cwd, file);
+    return others.find((r) => (r.meta.scope || []).some((s) => { const b = absolute(r.meta.cwd, s); return a === b || a.startsWith(`${b}/`); }))?.id ?? null;
+  };
+}
+
 // 准入检查（在登记锁内）：同一协作方正在运行的任务不超过它的 max_parallel，所有组和会话都算，
 // 因为服务商的限流和额度是按账号的；同组的执行任务写入范围不能重叠。
 function checkAdmission(meta, cfg) {
@@ -153,7 +166,6 @@ function checkAdmission(meta, cfg) {
   const same = running.filter((r) => resolveAgentAlias(r.meta.agent || 'codex', cfg) === meta.agent); // 旧记录没有 agent 字段，都是 Codex
   if (same.length >= limit) return M.agentFull(meta.agent, same.length, limit, M.list(same.map((r) => r.id)));
   if (meta.group == null || meta.kind === 'discuss') return null;
-  const absolute = (cwd, file) => pathKey(path.resolve(cwd, file.replace(/\\/g, '/')).replace(/\\/g, '/')).replace(/\/$/, '');
   for (const other of running) {
     if (other.meta.group !== meta.group || other.meta.kind === 'discuss') continue;
     // 比较用归一化的绝对路径，报错里显示派活时写的原样路径。
@@ -190,15 +202,23 @@ function runOutcome(run) {
   return { running, status, result, ok, blocked };
 }
 
+// 组里各状态的个数。交回问题或失败、但已经续接过的任务记作"已续接"，结果看续接的那一轮。
+function groupTally(runs) {
+  const resumedIds = new Set(runs.map((run) => run.meta.parent).filter(Boolean));
+  const tally = { running: 0, ok: 0, blocked: 0, failed: 0, resumed: 0 };
+  for (const run of runs) {
+    const o = runOutcome(run);
+    tally[o.running ? 'running' : o.ok ? 'ok' : resumedIds.has(run.id) ? 'resumed' : o.blocked ? 'blocked' : 'failed']++;
+  }
+  return tally;
+}
+
 function groupSummary(runs) {
-  const outcomes = runs.map(runOutcome);
-  const running = outcomes.filter((r) => r.running).length;
-  const ok = outcomes.filter((r) => r.ok).length;
-  const blocked = outcomes.filter((r) => r.blocked).length;
-  return M.groupSummary(runs.length, running, ok, runs.length - running - ok - blocked, blocked);
+  const t = groupTally(runs);
+  return M.groupSummary(runs.length, t.running, t.ok, t.failed, t.blocked, t.resumed);
 }
 
 const readMeta = (dir) => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')); } catch { return null; } };
 const isRunning = (m) => m?.status === 'running' && pidAlive(m.pid);
 
-export { RUNS_ROOT, initializeRecords, CANCEL_FILE, UNFINISHED_STATUSES, CLAUDE_SESSION, isCancelled, writeWatchLauncher, newRunDir, listRuns, findRun, describeActivity, groupRuns, checkAdmission, runEnd, runOutcome, groupSummary, readMeta, isRunning };
+export { RUNS_ROOT, initializeRecords, CANCEL_FILE, UNFINISHED_STATUSES, CLAUDE_SESSION, isCancelled, writeWatchLauncher, newRunDir, listRuns, findRun, describeActivity, groupRuns, checkAdmission, runEnd, runOutcome, groupTally, groupSummary, groupScopeOwner, readMeta, isRunning };

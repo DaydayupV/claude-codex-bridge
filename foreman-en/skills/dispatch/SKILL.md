@@ -140,7 +140,7 @@ Discussions (`discuss`) are levelled by the topic:
 - `complex`: meets all three conditions for starting a discussion on its own under "Discussion mode" (complex, uncertain, costly to get wrong); evidence reviews before a conclusion is used also take this level.
 
 - When unsure, go one level up.
-- When the user asks for a specific effort ("run it with ultra"), use `--effort <effort>` instead of a level; the model is then that agent's default model under `agents`. Without `--agent`, the agent configured for that level is used; when the level is `"claude code"` or no level is given, the one agent that can do this kind of task is used, and if there are several, `--agent` is required. Give either `--level` or `--effort`, not both.
+- When the user asks for a specific effort ("run it with ultra"), use `--effort <effort>` instead of a level; the model is then that agent's default model under `agents`. Without `--agent`, the agent configured for that level is used; when the level is `"claude code"` or no level is given, the one agent that can do this kind of task is used, and if there are several, `--agent` is required. `--effort` can also go with `--level`: the run goes to the agent configured for that level, with the given effort instead.
 - When the user asks for a specific model, add `--model <model>`. It overrides the configured model and works with either `--level` or `--effort`.
 - On resume, the model is worked out again from the level you give, so moving up a level for a rework may switch models. If no model is configured anywhere, the previous round's model is kept.
 
@@ -239,7 +239,7 @@ Before research conclusions go into long-term records, reports or docs, or are h
 1. Look at `status` and `report.status` first. If it isn't `completed`, read `open_issues` first.
 2. Read `run_dir/diff.patch` and compare it with `changes.files`:
    - Any files changed outside the scope? Does `report.files_changed` match the actual changes?
-   - For files with `by` set to `reported`, check the diff to confirm they are changes this task should have made. Files with `by` set to `unknown` may have been changed by Claude itself or another session, or written by the agent with a command it didn't report. Find out who changed them first; **don't just revert them**.
+   - For files with `by` set to `reported`, check the diff to confirm they are changes this task should have made. Files with `by` set to `unknown` may have been changed by Claude itself or another session, or written by the agent with a command it didn't report. Find out who changed them first; **don't just revert them**. Those marked with `group_run` are inside the write scope of another run in the same group, so most likely that run changed them; review them with it.
    - Is the logic right? Any defensive overkill, needless abstraction, redundant tests?
    - **Was it overdone?** The change is clearly bigger than the "Size" section expected (say, more than twice), or it adds options, settings, abstraction layers, compatibility branches or tests nobody asked for. Trim small things yourself; if there's a lot, use resume for a rework and list what to remove in the rework brief.
    - Do names, comments and messages follow the brief, and are they plain and readable (see "Claude owns all text meant for people")?

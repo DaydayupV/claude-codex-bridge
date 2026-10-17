@@ -21,6 +21,10 @@ else if (operation === 'export') {
   })) }));
 } else if (operation === 'run') {
   const model = args[args.indexOf('-m') + 1];
+  if (s.rate_limited) {
+    console.log(JSON.stringify({ type: 'error', error: { type: 'provider.rate-limit', message: 'synthetic: request reached max organization concurrency: 1', status: 429 } }));
+    process.exit(1);
+  }
   const rejected = s.reject_variants?.find((variant) => model.endsWith(`#${variant}`));
   if (rejected) {
     console.log(JSON.stringify({ type: 'error', error: { type: 'provider.no-route', message: `Variant unavailable for ${model.slice(0, -(rejected.length + 1))}: ${rejected}` } }));

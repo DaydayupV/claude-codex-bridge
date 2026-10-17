@@ -17,13 +17,14 @@ for (const lang of ['zh', 'en']) test(`opencode 审查注入只读 foreman-revie
   h.write('binary.bin', Buffer.from([0, 1])); h.write('large.txt', 'x'.repeat(1024 * 1024 + 1));
   const s = h.scenario({ last_message: last, steps: [{ event: { type: 'text', part: { text: 'please confirm context' } } }],
     export_messages: [{ type: 'assistant', tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 3, write: 4 } }, cost: 0.25 },
-      { type: 'assistant', created: 'old', tokens: { input: 1000 }, cost: 1 }] });
+      { type: 'assistant', created: 'old', tokens: { input: 1000 }, cost: 1 }, { type: 'assistant' }] }); // 最后一条是出错、没有 tokens 的回复
   const c = output(await h.bridge(['config']));
   assert.equal(c.effective.levels.review.normal.agent, 'oc');
   assert.deepEqual(c.agents_status.oc.capabilities.modes, ['run', 'review', 'discuss']);
   const r = output(await h.bridge(args(h, ['--brief', '-']), { env: { ...s.env, FOREMAN_LANG: lang }, input: '重点检查重复扣款' }));
   const calls = s.calls().filter((c) => c.operation === 'run'), call = calls[0];
   assert.equal(calls.length, 1); assert.equal(call.args[call.args.indexOf('--agent') + 1], 'foreman-review');
+  assert.equal(call.args[call.args.indexOf('--title') + 1], 'foreman review'); // 不带标题时 opencode 会另发请求起标题
   assert.equal(call.env.PWD, h.cwd);
   const permission = JSON.parse(call.env.OPENCODE_CONFIG_CONTENT).agent['foreman-review'].permission;
   assert.deepEqual(permission, { '*': 'deny', read: 'allow', grep: 'allow', glob: 'allow', list: 'allow' });
@@ -106,4 +107,13 @@ test('opencode 审查仅收集权限拒绝和终端输入提示，不修复正�
   const input = h.scenario({ hold: true, steps: [{ stderr: 'Continue? (y/n)\n' }] }, 'input');
   const waiting = output(await h.bridge(args(h, ['--brief', '-']), { env: { ...input.env, FOREMAN_TEST_INPUT_WAIT_MIN: '0.005' } }), 1);
   assert.equal(waiting.status, 'needs_input'); assert.deepEqual(waiting.questions.map((q) => q.source), ['input_prompt']);
+});
+
+test('opencode 被厂商限流时，结果里提示稍后再试、不要同时给同一个账号派多个任务', async (t) => {
+  const h = sandbox(t); configure(h); h.initGit();
+  h.write('source.txt', 'review change\n');
+  const s = h.scenario({ rate_limited: true });
+  const r = output(await h.bridge(args(h, ['--brief', '-']), { env: s.env, input: '重点' }), 1);
+  assert.equal(r.status, 'failed');
+  assert.ok(r.notes.includes(M.opencodeRateLimited('fake/model')));
 });

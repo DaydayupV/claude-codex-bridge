@@ -110,6 +110,7 @@ test('check opencode 清单里没有的档位不发请求，修正提示列出�
   ]);
   assert.equal(r.agents.oc.fix, M.fixEffortUnsupported('oc', M.effortAt('medium', 'levels.review.normal', 'fake/model', M.list(supported))));
   assert.deepEqual(runCalls(s), ['fake/model', 'fake/model#high']);
+  assert.ok(s.calls().filter((c) => c.operation === 'run').every((c) => c.args[c.args.indexOf('--title') + 1] === 'foreman check'));
   const before = runCalls(s).length; // 调用记录按沙箱累计
   const empty = h.scenario({ opencode_catalog: opencodeCatalog, last_message: 'OK', models: ['fake/model', 'right/thing'] });
   const r2 = output(await h.bridge(['check', '--agent', 'oc2'], { env: empty.env }));
@@ -139,7 +140,7 @@ test('levels 里代号写错时，报错带上最接近的代号', async (t) => 
 });
 
 test('--agent 写错时先提示最接近的代号，不报和等级不符', async (t) => {
-  const h = sandbox(t), hint = M.unknownAgent('--agent', 'codexx') + M.closestHint('codex');
+  const h = sandbox(t), hint = M.unknownAgentFlag('codexx') + M.closestHint('codex');
   failed(await h.bridge(taskArgs(h, 'discuss', ['--agent', 'codexx'])), hint);
   failed(await h.bridge(taskArgs(h, 'run', ['--agent', 'codexx'])), hint);
 });

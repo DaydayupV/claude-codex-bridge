@@ -100,7 +100,7 @@ test('讨论多参与方需要选择，未知代号和非法 Codex 强度被拒�
   h.config(c);
   failed(await h.bridge(args(h, 'discuss', ['--level', 'normal'])), M.agentRequired('levels.discuss.normal', 'codex、second'));
   failed(await h.bridge(args(h, 'discuss', ['--level', 'normal', '--effort', 'low'])), M.agentRequiredForEffort('discuss', 'codex、second'));
-  failed(await h.bridge(args(h, 'run', ['--effort', 'high', '--agent', 'missing'])), M.unknownAgent('--agent', 'missing'));
+  failed(await h.bridge(args(h, 'run', ['--effort', 'high', '--agent', 'missing'])), M.unknownAgentFlag('missing'));
   failed(await h.bridge(args(h, 'run', ['--effort', 'invalid', '--agent', 'codex'])), M.effortChoices('low / medium / high / xhigh / max / ultra'));
   for (const effort of [null, 'invalid']) {
     c.levels.run.complex.effort = effort;
@@ -223,4 +223,16 @@ test('无协作方的中英文会话提醒只建议 setup，并读取旧位置�
     assert.ok(!context.includes(':dispatch'));
     if (old) assert.equal(fs.existsSync(h.userConfig), false);
   }
+});
+
+test('续接到 "claude code" 的等级时不沿用上一轮的协作方，点名或指定推理强度才派出', async (t) => {
+  const h = sandbox(t);
+  h.config(baseConfig());
+  const first = output(await h.bridge(args(h, 'run', ['--level', 'complex'])));
+  const resume = ['resume', '--run', first.run_id, '--brief', '-', '--no-snapshot'];
+  failed(await h.bridge([...resume, '--level', 'normal']), M.levelForClaude('normal'));
+  const named = output(await h.bridge([...resume, '--level', 'normal', '--agent', 'codex']));
+  assert.equal(named.agent, 'codex');
+  assert.equal(named.effort, 'high');
+  assert.equal(output(await h.bridge(['resume', '--run', named.run_id, '--brief', '-', '--no-snapshot', '--effort', 'low'])).effort, 'low');
 });

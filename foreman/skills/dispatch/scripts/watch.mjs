@@ -1,7 +1,7 @@
 // 详细事件、时间线、组视图和终端实时画面，只读取统一记录。
 import fs from 'node:fs';
 import path from 'node:path';
-import { RUNS_ROOT, CANCEL_FILE, listRuns, findRun, readMeta, isRunning, runEnd, runOutcome, groupRuns } from './records.mjs';
+import { RUNS_ROOT, CANCEL_FILE, listRuns, findRun, readMeta, isRunning, runEnd, runOutcome, groupTally, groupRuns } from './records.mjs';
 import { M, die, sleep, clip, oneLine, plainCommand, RECONNECT, isReconnect, modelOf, whoOf, agentTypeOf, needsDecision } from './util.mjs';
 
 // 终端里中日韩字符和全角符号占两格，按显示宽度截断和换行，避免折行错位。
@@ -666,12 +666,8 @@ function panelLines(run, feed, rows, width, withTitle) {
 
 // 组的标题行右侧：运行中、完成、失败各几个，为 0 的不写
 function groupCounts(all) {
-  const outcomes = all.map(runOutcome);
-  const running = outcomes.filter((o) => o.running).length;
-  const ok = outcomes.filter((o) => o.ok).length;
-  const blocked = outcomes.filter((o) => o.blocked).length;
-  const failed = all.length - running - ok - blocked;
-  return [running && C.cyan(M.groupCount.running(running)), ok && C.green(M.groupCount.ok(ok)), blocked && C.yellow(M.groupCount.blocked(blocked)), failed && C.red(M.groupCount.failed(failed))].filter(Boolean).join(C.dim(' · '));
+  const { running, ok, blocked, failed, resumed } = groupTally(all);
+  return [running && C.cyan(M.groupCount.running(running)), ok && C.green(M.groupCount.ok(ok)), resumed && C.dim(M.groupCount.resumed(resumed)), blocked && C.yellow(M.groupCount.blocked(blocked)), failed && C.red(M.groupCount.failed(failed))].filter(Boolean).join(C.dim(' · '));
 }
 
 // 组的标题行：左边是组名和标题，右边是各状态的个数，放不下右侧时只留左侧

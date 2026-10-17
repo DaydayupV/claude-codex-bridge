@@ -162,3 +162,13 @@ test('交回问题的执行任务提示 Claude 决定，watch 用问号列出问
   assert.ok(w.stdout.includes(`? ${M.watchFinished(M.statusName('blocked'), M.duration(r.duration_s), null).split(' · ')[0]}`));
   for (const text of [M.watchDecisions, '· 合成问题', '- 选项甲', '- 选项乙', M.watchRecommendation('选项甲，已按它做了')]) assert.ok(w.stdout.includes(text), text);
 });
+
+test('来源不明的改动落在同组其他任务的范围里时，标出是哪个任务', async (t) => {
+  const h = sandbox(t), s = h.scenario({ files: { 'other/x.txt': 'sibling\n', 'loose.txt': 'synthetic\n' } });
+  seedRun(h, '20000101-sibling', { group: 'owner-group', scope: ['other'] }, { status: 'done' });
+  const r = output(await h.bridge(taskArgs(h, 'run', ['--group', 'owner-group', '--scope', 'mine']), { env: s.env }));
+  assert.equal(r.changes.files.find((f) => f.path === 'other/x.txt').group_run, '20000101-sibling');
+  assert.equal(r.changes.files.find((f) => f.path === 'loose.txt').group_run, undefined);
+  assert.ok(r.notes.includes(M.groupScopeChanges(1, '20000101-sibling')));
+  assert.ok(r.notes.includes(M.unattributedChanges(1)));
+});
