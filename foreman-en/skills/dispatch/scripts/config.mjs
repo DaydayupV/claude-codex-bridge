@@ -178,14 +178,14 @@ function renameAgentsByModel(config, adapters) {
   const nameOf = (name, agent) => {
     let model = agent.model || (agent.type === 'codex cli' ? adapters[agent.type].status(agent).model : null);
     if (!model) return name;
-    if (agent.type === 'opencode cli') model = model.split('/').at(-1);
+    if (agent.type === 'opencode cli' || agent.type === 'pi cli') model = model.split('/').at(-1);
     let id = model.replace(/[^A-Za-z0-9._-]/g, '-');
     if (!/^[A-Za-z0-9]/.test(id)) id = `agent-${id}`;
     if (id === 'claude') id += '-agent';
     return id;
   };
   const add = (name, agent) => {
-    const base = nameOf(name, agent), suffix = { 'codex cli': 'codex', 'opencode cli': 'opencode', api: 'api' }[agent.type];
+    const base = nameOf(name, agent), suffix = { 'codex cli': 'codex', 'opencode cli': 'opencode', 'pi cli': 'pi', api: 'api' }[agent.type];
     let id = base;
     for (let n = 1; Object.hasOwn(agents, id); n++) {
       if (isDeepStrictEqual(agents[id], agent)) return id;
@@ -309,7 +309,7 @@ function validateConfig(cfg, adapters, fail = die) {
         check(!seen.has(item.agent), at, why.duplicate);
         seen.add(item.agent);
         check(adapter.capabilities.modes.includes(mode), `${at}.agent`, M.modeNotSupported(item.agent, agent.type, mode, M.list(adapter.capabilities.modes)));
-        if (mode === 'run' && agent.type === 'opencode cli' && !agent.run_access) fail(M.runAccessRequired(item.agent));
+        if (mode === 'run' && adapter.capabilities.isolation === 'tools' && !agent.run_access) fail(M.runAccessRequired(item.agent, agent.type));
         check(item.model == null || (text(item.model) && item.model !== CLAUDE_CODE), `${at}.model`, why.modelName);
         check(item.effort === undefined || (adapter.efforts ? adapter.efforts.includes(item.effort) : item.effort === null || text(item.effort)), `${at}.effort`, adapter.efforts?.join(' / ') || why.apiEffort);
       }
@@ -368,8 +368,12 @@ function detectEnvironment(adapters, agents = {}) {
   const login = found ? call('codex cli', ['login', 'status']) : null;
   const oc = call('opencode cli', ['--version']), ocFound = !oc.error && oc.status === 0;
   const models = ocFound ? call('opencode cli', ['models']) : null;
+  const pi = call('pi cli', ['--version']), piFound = !pi.error && pi.status === 0;
+  const piModels = piFound ? call('pi cli', adapters['pi cli'].listModelsArgs) : null;
   return { codex: { found, logged_in: !!login && !login.error && login.status === 0 && /logged in/i.test(`${login.stdout}${login.stderr}`) && !/not logged in/i.test(`${login.stdout}${login.stderr}`) },
     opencode: { found: ocFound, models: models?.status === 0 ? new Set(models.stdout.split(/\s+/).filter((s) => s.includes('/'))).size : 0 },
+    // pi --list-models 输出一张表：第一行是表头，之后每行一个模型。
+    pi: { found: piFound, models: piModels?.status === 0 ? Math.max(0, piModels.stdout.trim().split(/\r?\n/).filter(Boolean).length - 1) : 0 },
     api_keys: ['DEEPSEEK_API_KEY', 'KIMI_API_KEY', 'MOONSHOT_API_KEY', 'MIMO_API_KEY'].filter((key) => !!process.env[key]) };
 }
 
@@ -406,6 +410,7 @@ function loadConfig(cwd, adapters) {
       fs.writeFileSync(USER_CONFIG, JSON.stringify(starter, null, 2) + '\n', { flag: 'wx' });
       let parts = environment.codex.logged_in ? M.starterCodex('gpt-6.1-sol', 'gpt-6-astra') : M.starterNoCodex;
       if (environment.opencode.models) parts += M.starterOpencode(environment.opencode.models);
+      if (environment.pi.models) parts += M.starterPi(environment.pi.models);
       const names = API_STARTERS.filter(([, , , model]) => starter.agents[model]).map(([name]) => name);
       if (names.length) parts += M.starterApi(M.list(names));
       notice(M.starterCreated(USER_CONFIG, parts + M.starterNext));
@@ -507,7 +512,7 @@ function pickProfile(cfg, o, mode, adapters, fallbackModel = null, parentAgent =
   if (!Object.hasOwn(cfg.agents, entry.agent)) die(unknownAgentError('--agent', entry.agent, cfg));
   const agent = cfg.agents[entry.agent], adapter = adapters[agent.type], effort = o.effort ?? entry.effort;
   if (!adapter.capabilities.modes.includes(mode)) die(M.modeNotSupported(entry.agent, agent.type, mode, M.list(adapter.capabilities.modes)));
-  if (mode === 'run' && agent.type === 'opencode cli' && !agent.run_access) die(M.runAccessRequired(entry.agent));
+  if (mode === 'run' && adapter.capabilities.isolation === 'tools' && !agent.run_access) die(M.runAccessRequired(entry.agent, agent.type));
   if (mode === 'run' && adapter.capabilities.isolation !== 'os' && o['no-snapshot']) die(M.snapshotRequired);
   if (effort !== undefined && adapter.efforts && !adapter.efforts.includes(effort)) die(M.effortChoices(adapter.efforts.join(' / ')));
   return { level, agentName: entry.agent, agent, model: o.model || entry.model || agent.model || fallbackModel, effort: effort ?? null };

@@ -112,7 +112,7 @@ async function cmdAwaitBusy(o, config) {
     await sleep(1000);
   }
   for (;;) {
-    const running = pick().filter((run) => isRunning(run.meta) && agentTypeOf(run.meta) !== 'opencode cli');
+    const running = pick().filter((run) => isRunning(run.meta) && !['opencode cli', 'pi cli'].includes(agentTypeOf(run.meta)));
     const busy = running.map((run) => ({ run, s: queuedSeconds(run.dir) })).filter((x) => x.s != null && x.s >= after * 60);
     if (busy.length || !running.length) {
       print({

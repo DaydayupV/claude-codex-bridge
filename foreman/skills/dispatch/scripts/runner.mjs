@@ -53,7 +53,8 @@ function spawnCli(file, args, options, { onInput, busy = () => false, onStderrLi
 }
 
 function collectQuestions({ mode, kind, agent_type, report, last = '', messages = [], questions = [] }) {
-  const review = kind === 'review' && agent_type === 'opencode cli';
+  // 没有原生审查的 CLI（opencode、pi）审查时只交回文字，不按提问收集。
+  const review = kind === 'review' && ['opencode cli', 'pi cli'].includes(agent_type);
   const permissions = new Set();
   const collected = questions.filter((q) => {
     if (q.source !== 'permission_denied') return true;

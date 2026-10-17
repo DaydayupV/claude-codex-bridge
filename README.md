@@ -28,7 +28,7 @@
 - 推荐：[Codex CLI](https://github.com/openai/codex)，已安装并登录。执行、审查和生成图片目前都靠它；没有它时，这些工作由 Claude 自己做
 - Node.js 18 或更高版本。在 WSL 里运行 Claude Code 时，WSL 里也要装 Node.js，否则插件的钩子会在每条命令前报错
 - Git 2.25 或更高版本，用来追踪协作方改了哪些文件
-- 可选：想让其他模型参加讨论时，需要对应厂商的 API key（比如 DeepSeek），或者装好 [opencode](https://opencode.ai) 2.x
+- 可选：想让其他模型参加讨论时，需要对应厂商的 API key（比如 DeepSeek），或者装好 [opencode](https://opencode.ai) 2.x 或 [pi](https://github.com/earendil-works/pi)
 
 ## 安装
 
@@ -173,6 +173,17 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 
 讨论和审查时，插件给 opencode 注入一个只读代理，只有读文件、搜索和列目录的工具：它不能运行命令，也不能改文件。审查时要看的改动由插件用 git 算好附给它，范围和 Codex 原生审查一致。key 和登录都留在 opencode 里，插件的配置文件里不写。结果里会带上这一轮折算的费用（`cost_usd`），OpenCode Go 的额度就按这个扣。Go 的额度按模型分开算，几个模型一起讨论能把额度摊开；高档模型额度少，建议只放在复杂讨论里。
 
+### 接入 pi
+
+装了 [pi](https://github.com/earendil-works/pi)（`npm install -g @earendil-works/pi-coding-agent`）的话，pi 里能用的模型都可以参加讨论、做审查，开启后也能做执行任务。用法和 opencode 一样：它们自己读项目里的代码，结果里带上这一轮的费用（`cost_usd`）。
+
+1. **在 pi 里登录**：终端运行 `pi`，用 `/login` 登录要用的厂商（或者设置厂商的 API key 环境变量），再运行 `pi --list-models` 看能用哪些模型。
+2. **加进配置**：每个模型加一项 `{ "type": "pi cli", "model": "deepseek/deepseek-flash" }`，代号用模型名（和别的协作方重名时加 `-pi`），再加进需要的等级。也可以交给 `/foreman:setup`。
+
+推理强度就是 pi 的 thinking 档位（`off` 到 `max`），每个模型支持的不一样。**写了模型不支持的档位，pi 不会报错，会悄悄换成最接近的一档**，所以改完运行一次 `check`，它会按 pi 的模型清单核对，并说明会被换成哪一档。
+
+pi 本身没有权限系统。插件每次调用都只开放这次任务需要的工具，注入一个守卫扩展，让读写的路径不能出项目目录；也不加载你自己装的扩展、skill 和 MCP。项目的 AGENTS.md / CLAUDE.md 照常读，会话存在 pi 的默认位置，在 pi 里用 `/resume` 也能找到。做执行任务同样要在用户配置里写 `run_access`（`"edit"` 或 `"shell"`），规则和 opencode 一样，也一样没有系统沙箱。
+
 ### 项目配置
 
 项目配置只能收紧，不能放宽：
@@ -201,9 +212,9 @@ Claude 只判断任务属于哪一级：简单 `simple`、常规 `normal`、复�
 ## 安全提示
 
 - **沙箱以 Codex 的配置为准。** 如果你的 Codex 配置是 `danger-full-access`，Codex 能读写电脑上的任何目录。任务说明会限定它的改动范围，Claude 事后也会审查 diff，但这些都不是技术上的隔离。想要技术隔离，就在配置里把 `agents.codex.sandbox` 设成 `workspace-write` 或 `read-only`。注意 Codex 在 Windows 上的沙箱支持可能不完整，改了之后要实际测试。
-- **opencode 做执行时没有系统沙箱。** `run_access` 为 `edit` 时它写不了项目以外的文件、也不能运行命令；为 `shell` 时它的命令能访问整台机器。默认不开放，要你自己在用户配置里写，项目配置开不了。
-- **Claude 只能通过插件调用协作方。** 插件带有一个钩子：Claude 直接运行 `codex exec`、`codex review` 或 `opencode run` 的命令会被拦下，这样每次调用都有记录、改动追踪和明确的模型和推理强度。你自己在终端里运行它们不受影响。
-- **协作方不会因为等人回答而卡住。** Codex 默认不需要审批，opencode 不开放提问和需要确认的权限；协作方要人回答的事（交回的问题、被权限挡住的操作、等终端输入的提示）都收集在结果里，由 Claude 判断：在你已有的授权内的直接决定后续接，业务取舍、扩大范围、花钱和不可逆的操作才问你。
+- **opencode 和 pi 做执行时没有系统沙箱。** `run_access` 为 `edit` 时它写不了项目以外的文件、也不能运行命令；为 `shell` 时它的命令能访问整台机器。默认不开放，要你自己在用户配置里写，项目配置开不了。
+- **Claude 只能通过插件调用协作方。** 插件带有一个钩子：Claude 直接运行 `codex exec`、`codex review`、`opencode run` 或用 pi 跑任务的命令会被拦下，这样每次调用都有记录、改动追踪和明确的模型和推理强度。你自己在终端里运行它们不受影响。
+- **协作方不会因为等人回答而卡住。** Codex 默认不需要审批，opencode 不开放提问和需要确认的权限，pi 没有提问工具；协作方要人回答的事（交回的问题、被权限挡住的操作、等终端输入的提示）都收集在结果里，由 Claude 判断：在你已有的授权内的直接决定后续接，业务取舍、扩大范围、花钱和不可逆的操作才问你。
 - **你的代码和任务说明会发给 OpenAI。** 加了 API 模型参与讨论后，议题和附带的代码也会发给对应厂商。涉及敏感代码的项目，先确认这样做没问题，必要时用项目配置只留 Codex。
 - **API key 可以写在用户配置里，也可以放在环境变量里。** 写在配置里是明文，`~/.claude/foreman/config.json` 不要提交或分享；项目配置里写的 key 不会生效。`config` 命令不显示 key，脚本也不会把 key 写进运行记录。
 - **按量计费的都会产生费用。** Codex 用 API key 计费时每次派活都花钱；API 模型每场讨论都会扣账户余额。不想让 Claude 自动派活，就把 `dispatch.auto` 设成 `false`。

@@ -41,7 +41,7 @@
 | `watch` | `auto`：只要派给了其他模型（执行、续接、讨论、审查）就打开实时查看；`off`：不主动打开，想看时用 `/foreman:watch` | `auto` |
 | `discuss_max_rounds` | 一场讨论最多几轮（第 1 轮加上之后的续接），每个参与方各自计数；超出后脚本拒绝续接 | `2` |
 | `timeout_min` | 单次任务的总超时（分钟） | `480` |
-| `stall_min` | 多久没有动静判定为卡死（分钟，0 为关闭）。Codex：没有任何事件，也没有命令在执行；API：流式输出里没有任何数据；opencode：没有输出任何事件 | `40` |
+| `stall_min` | 多久没有动静判定为卡死（分钟，0 为关闭）。Codex：没有任何事件，也没有命令在执行；API：流式输出里没有任何数据；opencode：没有输出任何事件；pi：没有输出任何事件，也没有工具在运行 | `40` |
 | `busy_ask_min` | API 协作方因为服务繁忙排队超过多少分钟，就由 Claude 决定要不要终止它（0 为不处理） | `2` |
 | `runs_dir` | 运行记录目录（也可用环境变量 `FOREMAN_RUNS_DIR`） | `~/.claude/foreman/runs` |
 
@@ -79,6 +79,23 @@
 
 两档都必须先拍改动快照才开始执行（不能 `--no-snapshot`），改动靠事后审查 diff 把关。
 
+**`type: "pi cli"`**（本机的 pi CLI，npm 包 `@earendil-works/pi-coding-agent`）
+
+| 字段 | 作用 |
+|---|---|
+| `model` | 必填，写成 `提供方/模型`，比如 `deepseek/deepseek-flash`。`pi --list-models` 列出的都能用 |
+| `bin` | 可选，pi 可执行文件或它的 `cli.js` 的路径。默认自动查找 |
+| `max_parallel` | 可选，默认 `4` |
+| `run_access` | 可选，和 opencode 一样：`"edit"` 或 `"shell"`，只能写在用户配置里。不写就不能放进 `levels.run`，也不能被点名派执行 |
+
+登录和 key 由 pi 自己管（在 pi 里用 `/login`，或者设置厂商的 API key 环境变量），插件不碰。pi 本身没有权限系统，脚本每次调用都：
+- 只开放这次任务需要的工具：讨论和审查只有读文件、搜索和列目录；执行的 `edit` 档再加编辑和写文件，`shell` 档再加运行命令；
+- 注入 foreman 的守卫扩展：文件工具的路径不能出项目目录（`shell` 档运行的命令不受它限制）；
+- 不加载你装的扩展、skill、提示模板、MCP 和项目里的 `.pi` 设置；项目的 AGENTS.md / CLAUDE.md 照常读；
+- 会话存在 pi 的默认位置，在 pi 里用 `/resume` 也能找到。
+
+和 opencode 一样没有系统沙箱，两档都必须先拍改动快照才开始执行。
+
 **`type: "api"`**（兼容 OpenAI 接口的模型）
 
 | 字段 | 作用 |
@@ -93,14 +110,14 @@
 ### 能做什么（能力表）
 `config` 输出的 `agents_status.<代号>.capabilities` 列出每个协作方能做什么。配置校验也按它来：把协作方放进它做不了的任务，会报错。
 
-| | codex cli | opencode cli | api |
-|---|---|---|---|
-| 能做的任务（`modes`） | 执行、审查、讨论 | 执行（要写 `run_access`）、审查、讨论 | 讨论 |
-| 隔离（`isolation`） | 系统沙箱（`os`），看沙箱配置 | 只有工具权限（`tools`） | 无（`none`），只收发文字 |
-| 自己读代码（`reads_code`） | 能 | 能 | 不能，靠附带文件 |
-| 原生格式约束（`native_schema`） | 有 | 没有，靠提示词加一次修复 | 没有，同左 |
-| 原生审查（`native_review`） | 有 | 没有 | 没有 |
-| 出图（`images`） | 能 | 不能 | 不能 |
+| | codex cli | opencode cli | pi cli | api |
+|---|---|---|---|---|
+| 能做的任务（`modes`） | 执行、审查、讨论 | 执行（要写 `run_access`）、审查、讨论 | 执行（要写 `run_access`）、审查、讨论 | 讨论 |
+| 隔离（`isolation`） | 系统沙箱（`os`），看沙箱配置 | 只有工具权限（`tools`） | 只有工具权限加守卫扩展（`tools`） | 无（`none`），只收发文字 |
+| 自己读代码（`reads_code`） | 能 | 能 | 能 | 不能，靠附带文件 |
+| 原生格式约束（`native_schema`） | 有 | 没有，靠提示词加一次修复 | 没有，同左 | 没有，同左 |
+| 原生审查（`native_review`） | 有 | 没有 | 没有 | 没有 |
+| 出图（`images`） | 能 | 不能 | 不能 | 不能 |
 
 ## levels
 
@@ -113,19 +130,21 @@
 - `codex cli`：`low`、`medium`、`high`、`xhigh`、`max`、`ultra`。每个模型支持哪些以 Codex 自带的模型清单为准（比如 gpt-5.5 最高到 `xhigh`），`check` 会按清单核对。
 - `api`：原样作为 `reasoning_effort` 发出（DeepSeek 接受 `low` / `high` / `max`）；写 `null` 表示不发。没有推理强度参数的模型写 `null`，比如小米 MiMo（只有思考开关，默认开启）。
 - `opencode cli`：模型的 variant（比如 `high`），拼成 `-m 模型#variant` 传给 opencode；`null` 表示用模型的默认设置。各模型有哪些 variant 不一样（比如免费的 DeepSeek 模型接受 `low`、`high`、`max`，不接受 `medium`），写错了 opencode 会报错。写 `default` 和不写一样。改完运行 `check`：opencode 的模型清单里没有的 variant 直接报出，其余逐个试一遍。
+- `pi cli`：`off`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`，作为 `--thinking` 传给 pi。每个模型支持哪些不一样（比如 deepseek-flash 是 off / low / high / max），以 pi 的模型清单为准。**写了不支持的档位，pi 不会报错，会悄悄换成最接近的一档**（先往高处找，所以可能更贵），改完一定要运行 `check`，它按清单核对。
 
 向用户汇报时，不写和 `null` 都说成"推理强度：默认"。
 
-各模型能选哪些推理强度，运行 `models` 查看：Codex 和 opencode 读它们自带的模型清单；API 只能列出模型名，推理强度要查厂商的官方文档。
+各模型能选哪些推理强度，运行 `models` 查看：Codex、opencode 和 pi 读它们自带的模型清单；API 只能列出模型名，推理强度要查厂商的官方文档。
 
 等级里还可以写 `model` 覆盖协作方的模型，旧配置里有这种写法照常能用。新配置不推荐：代号和实际模型会对不上。想换模型，就新加一个协作方。
 
 内置默认值：没有协作方，九格都是 `"claude code"`。实际的安排来自第一次运行时生成的配置（见下文）。
 
 ## 第一次运行时生成的配置
-用户配置不存在时，脚本第一次运行（任何子命令）会先检测本机，再生成配置。`config` 输出的 `environment` 字段也会列出检测结果。检测三样：
+用户配置不存在时，脚本第一次运行（任何子命令）会先检测本机，再生成配置。`config` 输出的 `environment` 字段也会列出检测结果。检测这几样：
 - 有没有能用的 Codex：能启动、已登录；
 - 有没有 opencode：能启动，`opencode models` 列出了几个模型；
+- 有没有 pi：能启动，`pi --list-models` 列出了几个模型；
 - 常见 API key 的环境变量：`DEEPSEEK_API_KEY`、`KIMI_API_KEY` / `MOONSHOT_API_KEY`、`MIMO_API_KEY`。
 
 按检测结果生成：
@@ -135,9 +154,9 @@
 | 能用的 Codex | 两个 `codex cli` 协作方 `gpt-6.1-sol` 和 `gpt-6-astra`。执行：simple、normal 由 Claude 做，complex 用 gpt-6.1-sol max。审查：gpt-6.1-sol medium / high，complex 用 gpt-6-astra max。讨论：gpt-6.1-sol medium / high，complex 用 gpt-6-astra max |
 | 没有能用的 Codex | 九格都是 `"claude code"` |
 | API key | 每家一个 `api` 协作方，`api_key_env` 指向检测到的变量，代号用模型名，**不放进等级** |
-| opencode | 不写，要用哪个模型由 `/foreman:setup` 引导用户选 |
+| opencode、pi | 不写，要用哪个模型由 `/foreman:setup` 引导用户选 |
 
-花钱或有安全影响的决定（用哪个 opencode 模型、让 API 模型参加讨论）都不会自动做，统一由 `/foreman:setup` 问用户。以后装了新工具，重跑 setup 就能补进配置。
+花钱或有安全影响的决定（用哪个 opencode 或 pi 模型、让 API 模型参加讨论）都不会自动做，统一由 `/foreman:setup` 问用户。以后装了新工具，重跑 setup 就能补进配置。
 
 ## 从旧配置升级
 - 从 codex-bridge 升级时，旧的 `~/.claude/codex-bridge.json` 会先复制到新位置。

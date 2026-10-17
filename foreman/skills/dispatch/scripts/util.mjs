@@ -228,7 +228,8 @@ const isAscii = (s) => /^[ -~]*$/.test(s);
 // 界面上以模型为主，接入方式作附注；旧记录没有 agent_type 和 model_name，都是 Codex CLI。
 const modelOf = (m) => m?.model || m?.model_name || m?.model_shown || '?';
 const agentTypeOf = (m) => ({ codex: 'codex cli', opencode: 'opencode cli', 'openai-compatible': 'api' })[m?.agent_type] || m?.agent_type || 'codex cli';
-const whoOf = (m) => M.who(modelOf(m), agentTypeOf(m) === 'api' ? M.channel.api : agentTypeOf(m) === 'opencode cli' ? M.channel.opencode : M.channel.codex, m?.effort, !m?.model && !!m?.model_name && agentTypeOf(m) === 'codex cli');
+const CHANNEL_KEY = { api: 'api', 'opencode cli': 'opencode', 'pi cli': 'pi' };
+const whoOf = (m) => M.who(modelOf(m), M.channel[CHANNEL_KEY[agentTypeOf(m)] || 'codex'], m?.effort, !m?.model && !!m?.model_name && agentTypeOf(m) === 'codex cli');
 
 // 用改名替换文件。Windows 上目标文件正被别的进程读取时（watch、status、并发登记都会读 meta.json），
 // 改名会报 EPERM / EACCES / EBUSY，稍等再试；最多等约 2 秒。

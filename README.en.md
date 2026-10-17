@@ -28,7 +28,7 @@ Every time Claude hands something off, it tells you in the chat who got it and w
 - Recommended: the [Codex CLI](https://github.com/openai/codex), installed and signed in. Hands-on work, reviews and image generation currently rely on it; without it, Claude does that work itself
 - Node.js 18 or later. If you run Claude Code inside WSL, Node.js must be installed inside WSL too, or the plugin's hooks will error before every command
 - Git 2.25 or later (used to track which files the agents changed)
-- Optional: to have other models join discussions, an API key from that provider (for example DeepSeek), or [opencode](https://opencode.ai) 2.x installed
+- Optional: to have other models join discussions, an API key from that provider (for example DeepSeek), or [opencode](https://opencode.ai) 2.x or [pi](https://github.com/earendil-works/pi) installed
 
 ## Install
 
@@ -173,6 +173,17 @@ Both levels take a change snapshot first, and Claude reviews the diff file by fi
 
 For discussions and reviews the plugin gives opencode a read-only agent with only the read, search and list tools: it can't run commands or change files. For a review, the plugin works out the changes with git and attaches them, with the same scope as Codex's native review. Keys and sign-in stay in opencode; the plugin's config file holds none. Results include this round's cost (`cost_usd`), which is what OpenCode Go quota is charged by. Go's limits are per model, so several models in one discussion spread the load; premium models have small limits, so keep them for complex discussions.
 
+### Adding pi
+
+If you have [pi](https://github.com/earendil-works/pi) installed (`npm install -g @earendil-works/pi-coding-agent`), any model it can use can join discussions and do reviews, and hands-on work once you turn it on. It works like opencode: the models read your project's code themselves, and results include this round's cost (`cost_usd`).
+
+1. **Sign in inside pi**: run `pi` in a terminal and sign in to the providers you want with `/login` (or set the provider's API key environment variable), then run `pi --list-models` to see which models you can use.
+2. **Add them to the config**: one entry per model, `{ "type": "pi cli", "model": "deepseek/deepseek-flash" }`, with the model name as its ID (add `-pi` if another agent already has that name), then add it to the levels you want. `/foreman-en:setup` can do this for you.
+
+The effort is pi's thinking level (`off` to `max`), and each model supports its own set. **If you set a level the model doesn't support, pi doesn't report an error; it quietly switches to the nearest one**, so run `check` after a change: it checks against pi's model list and says which level would be used instead.
+
+pi has no permission system of its own. Every call from the plugin enables only the tools the task needs and injects a guard extension that keeps file reads and writes inside the project directory; your own extensions, skills and MCP servers aren't loaded. The project's AGENTS.md / CLAUDE.md are read as usual, and sessions stay in pi's default location, so `/resume` inside pi finds them too. Hands-on work also needs `run_access` (`"edit"` or `"shell"`) in the user config, with the same rules as opencode, and likewise no OS sandbox.
+
 ### Project config
 
 A project config can only tighten, never loosen:
@@ -201,9 +212,9 @@ Preference files win over the plugin's built-in rules, and project level wins ov
 ## Safety notes
 
 - **The sandbox is whatever Codex is configured with.** If your Codex config uses `danger-full-access`, Codex can read and write any directory on your machine. The task brief limits what it should touch, and Claude reviews the diff afterwards, but that is not isolation. For real isolation, set `agents.codex.sandbox` to `workspace-write` or `read-only`. Codex's sandbox support on Windows may be incomplete, so test after changing it.
-- **opencode has no OS sandbox when doing hands-on work.** With `run_access` set to `edit` it can't write outside the project or run commands; with `shell` its commands can reach the whole machine. It's off by default; only you can turn it on, in the user config, and a project config can't.
-- **Claude can only call agents through the plugin.** The plugin includes a hook that blocks Claude's commands that run `codex exec`, `codex review` or `opencode run` directly, so every call is recorded, has its changes tracked, and uses an explicit model and effort. Running them yourself in a terminal isn't affected.
-- **Agents don't get stuck waiting for an answer.** Codex needs no approvals by default, and opencode gets no way to ask questions or request confirmable permissions. Anything an agent needs answered (returned questions, actions blocked by permissions, prompts waiting for terminal input) is collected in the result, and Claude decides: within the authority you've already given, it decides and resumes; it only asks you about business trade-offs, wider scope, extra cost and irreversible steps.
+- **opencode and pi have no OS sandbox when doing hands-on work.** With `run_access` set to `edit` it can't write outside the project or run commands; with `shell` its commands can reach the whole machine. It's off by default; only you can turn it on, in the user config, and a project config can't.
+- **Claude can only call agents through the plugin.** The plugin includes a hook that blocks Claude's commands that run `codex exec`, `codex review`, `opencode run` or a pi task directly, so every call is recorded, has its changes tracked, and uses an explicit model and effort. Running them yourself in a terminal isn't affected.
+- **Agents don't get stuck waiting for an answer.** Codex needs no approvals by default, opencode gets no way to ask questions or request confirmable permissions, and pi has no question tool. Anything an agent needs answered (returned questions, actions blocked by permissions, prompts waiting for terminal input) is collected in the result, and Claude decides: within the authority you've already given, it decides and resumes; it only asks you about business trade-offs, wider scope, extra cost and irreversible steps.
 - **Your code and task briefs are sent to OpenAI.** Once API models join discussions, the topic and the attached code are also sent to those providers. Check that this is acceptable for sensitive projects, and use the project config to keep only Codex if needed.
 - **API keys can go in the user config or in environment variables.** In the config they're plain text, so don't commit or share `~/.claude/foreman/config.json`; keys in a project config are ignored. The `config` command never shows keys, and the script never writes them into run records.
 - **Pay-as-you-go means real costs.** With API-key billing, every Codex handoff costs money, and every discussion with an API model draws on that account's balance. Set `dispatch.auto` to `false` if you don't want Claude handing off work on its own.

@@ -246,7 +246,7 @@ async function opencodeSession(run, schema, agentId) {
   });
   if (meta.status === 'cancelled') errors.push(M.runCancelled(model));
   if (meta.status === 'stalled') errors.push(M.stalled(stallMin));
-  if (meta.status === 'failed' && errors.some((e) => /rate.?limit|concurrency|too many requests|\b429\b/i.test(e))) notes.push(M.opencodeRateLimited(model));
+  if (meta.status === 'failed' && errors.some((e) => /rate.?limit|concurrency|too many requests|\b429\b/i.test(e))) notes.push(M.rateLimited(model, 'opencode'));
   let usage = null, cost = null;
   if (meta.session_id) {
     // 最后一步没有 step_finish，用会话导出按开始时间过滤，包含同一轮的格式修复。

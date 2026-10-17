@@ -24,7 +24,7 @@ const readJson = (file) => { try { return JSON.parse(readText(file)); } catch { 
 
 const REMINDERS = {
   zh: {
-    noAgentsReminder: (file) => `foreman 插件已启用，但配置（${file}）里还没有任何协作方，执行、审查和讨论都由 Claude 自己做。在合适的时候用一句话建议用户运行 /foreman:setup，接入 Codex、opencode 或 API 模型。`,
+    noAgentsReminder: (file) => `foreman 插件已启用，但配置（${file}）里还没有任何协作方，执行、审查和讨论都由 Claude 自己做。在合适的时候用一句话建议用户运行 /foreman:setup，接入 Codex、opencode、pi 或 API 模型。`,
     intro: (auto) => `foreman 插件已启用。下面两种情况，先加载 \`foreman:dispatch\` skill，再按其中的规则判断：
 1. 动手做执行类编码工作之前（实现功能、批量修改、写脚本、重构、修 bug、性能优化等，包括用户同意你开始改代码的那一刻），以及要生成或编辑图片（照片、插画、贴图等位图）时：按 skill 的"分工"判断由谁做：生成或编辑位图一律交给 Codex；只由 Claude 做的工作不派；其余都先定等级，再看配置把这一级交给谁。${auto ? '要派出的直接派（用户已开启 dispatch.auto）。' : '要派出的先向用户提议，同意后再派（dispatch.auto 已关闭）。'}
 2. 给出方案建议、研究方向、设计选型或计划之前，包括用户只是来要建议的时候：判断是否先和 Codex 讨论（discuss）；用户明确要求和 Codex 或其他模型讨论时，直接发起。
@@ -38,7 +38,7 @@ const REMINDERS = {
     firstUse: (file) => `用户还没有用过本插件（没有配置文件 ${file}）。在合适的时候用一句话建议用户运行 /foreman:setup：它会检查 Codex 是否装好并登录，说明默认配置，还可以按需让其他模型参加讨论。`,
   },
   en: {
-    noAgentsReminder: (file) => `The foreman-en plugin is enabled, but the config (${file}) has no agents yet, so Claude does hands-on work, reviews and discussions itself. At a suitable moment, suggest in one sentence that the user run /foreman-en:setup to add Codex, opencode or API models.`,
+    noAgentsReminder: (file) => `The foreman-en plugin is enabled, but the config (${file}) has no agents yet, so Claude does hands-on work, reviews and discussions itself. At a suitable moment, suggest in one sentence that the user run /foreman-en:setup to add Codex, opencode, pi or API models.`,
     intro: (auto) => `The foreman-en plugin is enabled. In these two cases, load the \`foreman-en:dispatch\` skill first and follow its rules:
 1. Before starting hands-on coding work (implementing features, bulk changes, scripts, refactoring, bug fixes, performance work, and so on, including the moment the user agrees you can start changing code), and when an image needs to be generated or edited (photos, illustrations, textures and other bitmaps): decide who does it per "Who does what" in the skill: generating or editing bitmaps always goes to Codex; work only Claude does stays with Claude; for everything else, pick a level first, then see who the config gives that level to. ${auto ? 'Hand off what should be handed off directly (the user has dispatch.auto on).' : 'Suggest handing it off to the user first, and do so once they agree (dispatch.auto is off).'}
 2. Before giving design suggestions, research directions, technology choices or plans, including when the user only asks for advice: decide whether to discuss it with Codex first (discuss); when the user explicitly asks to discuss it with Codex or other models, start one.

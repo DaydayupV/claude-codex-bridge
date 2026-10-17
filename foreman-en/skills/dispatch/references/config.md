@@ -41,7 +41,7 @@ Example:
 | `watch` | `auto`: open the live view whenever work goes to another model (hands-on work, resumes, discussions, reviews); `off`: don't, and use `/foreman-en:watch` when you want to look | `auto` |
 | `discuss_max_rounds` | The most rounds one discussion can have (round 1 plus later resumes), counted per participant; the script refuses resumes beyond it | `2` |
 | `timeout_min` | Total time limit for one run, in minutes | `480` |
-| `stall_min` | How long without activity counts as stuck, in minutes (0 turns it off). Codex: no events and no command running; API: no data at all in the stream; opencode: no events at all | `40` |
+| `stall_min` | How long without activity counts as stuck, in minutes (0 turns it off). Codex: no events and no command running; API: no data at all in the stream; opencode: no events at all; pi: no events and no tool running | `40` |
 | `busy_ask_min` | Once an API agent has been queued this many minutes because its service is busy, Claude decides whether to stop it (0 turns this off) | `2` |
 | `runs_dir` | Run directory (or the environment variable `FOREMAN_RUNS_DIR`) | `~/.claude/foreman/runs` |
 
@@ -79,6 +79,23 @@ For hands-on work, the injected agent can write files, and at the `shell` level 
 
 Both levels take a change snapshot before starting (`--no-snapshot` isn't allowed), and reviewing the diff afterwards is the check.
 
+**`type: "pi cli"`** (the pi CLI on this machine, npm package `@earendil-works/pi-coding-agent`)
+
+| Field | Meaning |
+|---|---|
+| `model` | Required, as `provider/model`, such as `deepseek/deepseek-flash`. Anything `pi --list-models` lists works |
+| `bin` | Optional; path to the pi executable or its `cli.js`. Found automatically by default |
+| `max_parallel` | Optional, default `4` |
+| `run_access` | Optional, as for opencode: `"edit"` or `"shell"`, user config only. Without it, the agent can't be put in `levels.run` or named for hands-on work |
+
+Sign-in and keys are handled by pi itself (`/login` inside pi, or the provider's API key environment variable); the plugin doesn't touch them. pi has no permission system of its own, so every call from the script:
+- enables only the tools the task needs: read, search and list for discussions and reviews; edit and write added for hands-on work at `edit`; running commands added at `shell`;
+- injects foreman's guard extension, so file tools can't reach paths outside the project directory (commands at `shell` aren't limited by it);
+- doesn't load your installed extensions, skills, prompt templates, MCP servers or the project's `.pi` settings; the project's AGENTS.md / CLAUDE.md are read as usual;
+- keeps sessions in pi's default location, so `/resume` inside pi finds them too.
+
+Like opencode it has no OS sandbox, and both levels take a change snapshot before starting.
+
 **`type: "api"`** (models with an OpenAI-compatible API)
 
 | Setting | What it does |
@@ -93,14 +110,14 @@ Both levels take a change snapshot before starting (`--no-snapshot` isn't allowe
 ### What each type can do
 `agents_status.<ID>.capabilities` in the `config` output lists what each agent can do, and config checks use it: putting an agent at a task it can't do is an error.
 
-| | codex cli | opencode cli | api |
-|---|---|---|---|
-| Tasks (`modes`) | hands-on work, reviews, discussions | hands-on work (needs `run_access`), reviews, discussions | discussions |
-| Isolation (`isolation`) | OS sandbox (`os`), per the sandbox setting | tool permissions only (`tools`) | none (`none`); text in and out only |
-| Reads code itself (`reads_code`) | yes | yes | no; relies on attached files |
-| Native report format (`native_schema`) | yes | no; prompt plus one repair | no; same |
-| Native review (`native_review`) | yes | no | no |
-| Images (`images`) | yes | no | no |
+| | codex cli | opencode cli | pi cli | api |
+|---|---|---|---|---|
+| Tasks (`modes`) | hands-on work, reviews, discussions | hands-on work (needs `run_access`), reviews, discussions | hands-on work (needs `run_access`), reviews, discussions | discussions |
+| Isolation (`isolation`) | OS sandbox (`os`), per the sandbox setting | tool permissions only (`tools`) | tool permissions plus a guard extension (`tools`) | none (`none`); text in and out only |
+| Reads code itself (`reads_code`) | yes | yes | yes | no; relies on attached files |
+| Native report format (`native_schema`) | yes | no; prompt plus one repair | no; same | no; same |
+| Native review (`native_review`) | yes | no | no | no |
+| Images (`images`) | yes | no | no | no |
 
 ## levels
 
@@ -113,19 +130,21 @@ Three task types, `run` / `review` / `discuss`, each with three levels, `simple`
 - `codex cli`: `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. Which ones a model supports comes from Codex's own model list (gpt-5.5, for example, goes up to `xhigh`); `check` checks against that list.
 - `api`: sent as is as `reasoning_effort` (DeepSeek takes `low` / `high` / `max`), and `null` means don't send it. Use `null` for models with no reasoning effort parameter, such as Xiaomi MiMo (only a thinking on/off switch, on by default).
 - `opencode cli`: the model's variant (for example `high`), passed to opencode as `-m model#variant`; `null` means the model's default. Each model has its own variants (the free DeepSeek model, for example, takes `low`, `high` and `max` but not `medium`), and opencode reports an error for a wrong one. `default` is the same as leaving it out. After a change, run `check`: variants missing from opencode's model list are reported at once, and the rest are tried one by one.
+- `pi cli`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, passed to pi as `--thinking`. Each model supports its own set (deepseek-flash, for example, takes off / low / high / max), as pi's model list says. **pi doesn't report an unsupported level; it quietly switches to the nearest one** (looking upward first, so it may cost more). Always run `check` after a change; it checks against the list.
 
 When reporting to the user, describe a missing or `null` effort as "effort: default".
 
-Run `models` to see which efforts each model takes: for Codex and opencode it reads their built-in model lists; for API agents it can only list model names, so efforts come from the provider's official docs.
+Run `models` to see which efforts each model takes: for Codex, opencode and pi it reads their built-in model lists; for API agents it can only list model names, so efforts come from the provider's official docs.
 
 A level can also set `model` to override the agent's model; old configs that do this still work. It isn't recommended for new configs, because the ID and the model actually used drift apart. To use another model, add another agent.
 
 Built-in defaults: no agents, and all nine levels are `"claude code"`. The real setup comes from the config generated on first run (below).
 
 ## The config generated on first run
-When there's no user config, the first run of the script (any subcommand) checks the machine before generating one. The `environment` field in the `config` output shows what it finds. It checks three things:
+When there's no user config, the first run of the script (any subcommand) checks the machine before generating one. The `environment` field in the `config` output shows what it finds. It checks these:
 - whether a usable Codex exists: it starts and is signed in;
 - whether opencode exists: it starts, and how many models `opencode models` lists;
+- whether pi exists: it starts, and how many models `pi --list-models` lists;
 - common API key environment variables: `DEEPSEEK_API_KEY`, `KIMI_API_KEY` / `MOONSHOT_API_KEY`, `MIMO_API_KEY`.
 
 What gets generated:
@@ -135,9 +154,9 @@ What gets generated:
 | A usable Codex | Two `codex cli` agents, `gpt-6.1-sol` and `gpt-6-astra`. Hands-on work: Claude does simple and normal, complex goes to gpt-6.1-sol at max. Reviews: gpt-6.1-sol medium / high, complex on gpt-6-astra at max. Discussions: gpt-6.1-sol medium / high, complex on gpt-6-astra at max |
 | No usable Codex | All nine levels are `"claude code"` |
 | API keys | One `api` agent per provider, with `api_key_env` pointing at the variable found and the model name as its ID, **not added to any level** |
-| opencode | Nothing added; `/foreman-en:setup` helps the user pick a model |
+| opencode, pi | Nothing added; `/foreman-en:setup` helps the user pick a model |
 
-Choices that cost money or affect safety (which opencode model to use, letting API models join discussions) are never made automatically; `/foreman-en:setup` asks the user. Running setup again later picks up newly installed tools.
+Choices that cost money or affect safety (which opencode or pi model to use, letting API models join discussions) are never made automatically; `/foreman-en:setup` asks the user. Running setup again later picks up newly installed tools.
 
 ## Upgrading an old config
 - When upgrading from codex-bridge, the old `~/.claude/codex-bridge.json` is copied to the new location first.

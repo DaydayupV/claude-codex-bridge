@@ -115,5 +115,5 @@ test('opencode 被厂商限流时，结果里提示稍后再试、不要同时�
   const s = h.scenario({ rate_limited: true });
   const r = output(await h.bridge(args(h, ['--brief', '-']), { env: s.env, input: '重点' }), 1);
   assert.equal(r.status, 'failed');
-  assert.ok(r.notes.includes(M.opencodeRateLimited('fake/model')));
+  assert.ok(r.notes.includes(M.rateLimited('fake/model', 'opencode')));
 });

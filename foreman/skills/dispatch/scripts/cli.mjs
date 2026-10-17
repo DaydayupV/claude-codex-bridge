@@ -184,12 +184,12 @@ function catalogReader() {
   };
 }
 
-// 本机能用的模型和推理强度清单：Codex 和 opencode 读本机清单，API 读厂商的 /models（不含推理强度）。
+// 本机能用的模型和推理强度清单：Codex、opencode 和 pi 读本机清单，API 读厂商的 /models（不含推理强度）。
 async function cmdModels() {
   const cfg = load(null);
   const out = { tools: {}, api: {}, agents: {} };
   const readCatalog = catalogReader();
-  for (const type of ['codex cli', 'opencode cli']) {
+  for (const type of ['codex cli', 'opencode cli', 'pi cli']) {
     out.tools[type] = readCatalog(Object.values(cfg.agents).find((a) => a.type === type) || { type });
   }
   for (const [name, agent] of Object.entries(cfg.agents)) if (agent.type === 'api') out.api[name] = await adapters.api.catalog(agent);

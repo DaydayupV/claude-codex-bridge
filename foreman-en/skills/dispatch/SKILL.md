@@ -68,16 +68,17 @@ node "<script path>" cancel --run <run_id>
 - `check` tests whether the environment works: Node.js, Git, and every agent in the config, with results under `agents.<ID>`.
   - Codex CLI: whether it starts and is signed in; then the efforts the levels configure are checked against Codex's own model list (no requests sent), with results under `efforts`;
   - API: whether the key is set, plus a tiny request to confirm it connects;
-  - opencode: whether it starts, whether `opencode models` lists the model, plus a tiny request to confirm it works; each reasoning effort (variant) the levels configure for it is first checked against opencode's model list, failing at once if it isn't there, and every other one gets one more tiny request; results are under `variants`.
+  - opencode: whether it starts, whether `opencode models` lists the model, plus a tiny request to confirm it works; each reasoning effort (variant) the levels configure for it is first checked against opencode's model list, failing at once if it isn't there, and every other one gets one more tiny request; results are under `variants`;
+  - pi: whether it starts, whether its model list has the model, plus a tiny request to confirm it works; efforts are only checked against the model list (pi doesn't report an unsupported level; it quietly switches to the nearest one, so a request can't reveal it), with results under `efforts`.
 
   The overall `ok` only counts Node.js and the agents the levels use; a failure in an unused agent is reported but doesn't block anything. For each failed item, `fix` in the result says what to do; pass it on to the user. When a handoff or discussion fails because of the environment (codex not found, not signed in, a 401 from an API, and so on), run `check` first to confirm the cause.
 
   `summary` in the result is the overview of the whole config: `levels` gives each cell's agent, model, effort and whether it passed (with a `problem` if not), `agents` gives the cells each agent is used in, and `warnings` lists things worth noting (unused agents, keys written in plain text in the config, shell access for hands-on work, stale old IDs). After `check`, tell the user with a level table and the warnings, as in the last step of `/foreman-en:setup`. `config` also outputs `summary`, without check results.
 
-- `models` lists the model lists built into the local Codex and opencode (with the efforts each model supports) and the model names each API agent's endpoint lists (without efforts), and checks whether the configured models are listed, suggesting the closest names when not. Read-only; it sends no model requests. Use it when the user asks which models are available, or wants to change a model or effort.
+- `models` lists the model lists built into the local Codex, opencode and pi (with the efforts each model supports) and the model names each API agent's endpoint lists (without efforts), and checks whether the configured models are listed, suggesting the closest names when not. Read-only; it sends no model requests. Use it when the user asks which models are available, or wants to change a model or effort.
 
 - Who gets the work, the model, reasoning effort, sandbox, approval policy and time limits come from the config file (see "Configuration"). Anything not configured for Codex comes from its own `~/.codex/config.toml`.
-- `--agent <agent>` picks which entry under `agents` in the config gets this call. Without it, the one configured for that level is used; it's required when a discussion level has several participants. Which tasks an agent can do is in `capabilities.modes` in the `config` output; for now `api` agents can only take part in `discuss`; `opencode cli` agents can do `review` and `discuss`, and `run` too when the config gives them `run_access`. Old IDs from before the upgrade (such as `codex`) still work, and the script says what the new ID is. opencode agents also go only through this script; don't run `opencode run` directly to bring one into a discussion.
+- `--agent <agent>` picks which entry under `agents` in the config gets this call. Without it, the one configured for that level is used; it's required when a discussion level has several participants. Which tasks an agent can do is in `capabilities.modes` in the `config` output; for now `api` agents can only take part in `discuss`; `opencode cli` and `pi cli` agents can do `review` and `discuss`, and `run` too when the config gives them `run_access`. Old IDs from before the upgrade (such as `codex`) still work, and the script says what the new ID is. opencode and pi agents also go only through this script; don't run `opencode run` or `pi` directly to bring one into a discussion.
 - If you're unsure of the current settings, run `config --cwd "<project dir>"` first. It shows the settings in effect, the run directory and the path of the watch launcher.
 - When the sandbox isn't `read-only` / `workspace-write` (for example `danger-full-access`), `--cwd` **doesn't limit what Codex can write**. The scope is then held only by the brief and by reviewing the diff afterwards.
 - If the allowed scope includes paths ignored by `.gitignore` (such as `tests/` or a results folder), pass them with `--track "<path>"` (can be given more than once); otherwise change tracking can't see those files. Resume keeps the previous round's `--track`.
@@ -92,12 +93,12 @@ node "<script path>" cancel --run <run_id>
   - `questions` and `needs_decision`: things the agent needs answered; see "When an agent needs an answer".
   - `session_id`, `run_dir`: the full diff is in `run_dir/diff.patch`.
   - Token use: `usage` is this call's input, cached and output tokens (when `usage_scope` is `session_total`, it's the whole session's total); `last_request` is the size of the latest request and the model's context window; `rate_limit` is how much of the Codex quota is used.
-  - `agent`: which agent this call went to. Results from API and opencode agents have no change tracking (`changes.available` is `false`); for API agents `files` lists the files that were attached, and opencode agents add `cost_usd`.
+  - `agent`: which agent this call went to. Discussion results from API, opencode and pi agents have no change tracking (`changes.available` is `false`); for API agents `files` lists the files that were attached, and opencode and pi agents add `cost_usd`.
 - Several runs can go in parallel, but their file scopes must not overlap; see "Splitting work to run in parallel". **Claude doesn't touch files Codex is changing.**
 
 ## Configuration
 The user config is `~/.claude/foreman/config.json` and the project config is `<project dir>/.claude/foreman.json`; the latter overrides the former. What each setting means and its default are in `references/config.md`; read it when the user asks about or wants to change settings.
-- When the script prints "First run: created config file", pass on what it found (Codex, opencode, API keys) and who now gets each kind of task, and suggest running `/foreman-en:setup` to choose models.
+- When the script prints "First run: created config file", pass on what it found (Codex, opencode, pi, API keys) and who now gets each kind of task, and suggest running `/foreman-en:setup` to choose models.
 - When the script prints that it rewrote the config file in the new format, tell the user: the config uses the new format (`type` is now `codex cli` / `opencode cli` / `api`, `"claude"` is now `"claude code"`), agent IDs were renamed after their models (pass on the list the script printed), the models and efforts actually used are unchanged, and where the original was backed up.
 - **On Windows, don't set `sandbox` to `read-only`**: Codex's Windows sandbox may fail to start even file-reading commands in read-only mode. The read-only requirement for discussions and reviews is held by the rules the script appends, and the script checks afterwards whether any files changed.
 - When the user wants to change settings, edit the relevant JSON file, then run `config` to confirm.
@@ -109,7 +110,7 @@ Whenever work goes to another model, that is, right after starting `run`, `resum
 - The run_id is in the first line of the background output ("run dir …/<run_id>"). Without `--run`, watch follows whichever run is in progress, but other sessions may be running tasks too, so pass it when you can.
 - Right after it opens, switch the terminal panel to that tab so the user sees it: call the tool that shows panes (in the Claude desktop app its name contains `show_pane`; you may need to load it with ToolSearch first) with `pane` set to `terminal` and `tab_id` set to the tab_id you just got. Opening a tab alone can leave the terminal panel hidden behind another panel. Skip this if there's no such tool.
 - Then send the user the tab link `[<title>](#terminal/<tab_id>)`.
-- When a discussion has API participants, also start the queue check `await-busy` in the background (once per group; opencode participants don't need it). The "Queue check" line the script prints at startup gives the full command; run it as is. What to do when it exits is in "When an API participant is busy" under the discussion mode.
+- When a discussion has API participants, also start the queue check `await-busy` in the background (once per group; opencode and pi participants don't need it). The "Queue check" line the script prints at startup gives the full command; run it as is. What to do when it exits is in "When an API participant is busy" under the discussion mode.
 - **If `run_in_terminal` isn't available** (for example in the Claude Code CLI), send the user the full watch command in a bash code block and ask them to run it in another terminal.
 - When the run ends, watch exits on its own and the tab stays for the user to look back at. Don't close it.
 - A tab whose watch has exited won't show new runs. So for every resume (a discussion's next round, a rework), open a new tab as above; don't send the user back to the previous round's tab. A discussion's next round still uses `--group <name>`, titled "Discussion: <short title> (round N)", and the view shows only that round's participants.
@@ -245,9 +246,9 @@ Before research conclusions go into long-term records, reports or docs, or are h
    - Do names, comments and messages follow the brief, and are they plain and readable (see "Claude owns all text meant for people")?
    - Only changes inside the working directory are tracked; if the task involved paths outside it, check those separately.
 3. **Actually run it**: build, run the tests or the script itself. Don't rely on the agent saying it passed.
-4. **Take a closer look at runs without an OS sandbox** (`isolation` is `tools` in the result; currently opencode):
+4. **Take a closer look at runs without an OS sandbox** (`isolation` is `tools` in the result; currently opencode and pi):
    - With `run_access` set to `edit`, it can't run commands: Claude runs every test and script itself, and a report saying "passed" counts for nothing.
-   - With `run_access` set to `shell`, its commands can reach outside the working directory, where change tracking can't see. Go through the diff file by file; if the task touches outside paths, installs dependencies or goes online, check what it actually did (`opencode.jsonl` in `run_dir` has every command it ran).
+   - With `run_access` set to `shell`, its commands can reach outside the working directory, where change tracking can't see. Go through the diff file by file; if the task touches outside paths, installs dependencies or goes online, check what it actually did (`opencode.jsonl` or `pi.jsonl` in `run_dir` has every command it ran).
    - Write-tool events count as evidence of who changed a file (`by: agent`); files the report merely claims don't.
 4. Report to the user only once you've confirmed it.
 
@@ -265,6 +266,7 @@ Before research conclusions go into long-term records, reports or docs, or are h
 Runs are unattended: nobody can answer an agent while it runs. The script makes sure no agent gets stuck waiting:
 - Codex needs no approvals by default;
 - opencode gets no question tool and no permissions that need confirming;
+- pi has no question tool, and the guard extension foreman injects only allows the tools the task needs;
 - a CLI added later that prints a "(y/n)"-style prompt and then goes quiet is stopped after 3 minutes with the status `needs_input`.
 
 Every question is collected in the result's `questions`. When `needs_decision` is `true`, something needs deciding; the run has finished, it isn't stuck.
@@ -278,7 +280,7 @@ Every question is collected in the result's `questions`. When `needs_decision` i
 
 By `source`:
 - `decision_request`: a question returned in a hands-on report. `recommendation` says which option it already went with. If Claude agrees, nothing changes; if not, say what to change in the resume brief.
-- `permission_denied`: an action the tool tried was blocked by permissions, for example opencode reading a file outside the project. The permissions are a deliberate boundary, so don't change the config to let it through; read the material it needs yourself and put it in the resume brief, or attach it with `--file`.
+- `permission_denied`: an action the tool tried was blocked by permissions, for example opencode reading a file outside the project, or a pi action stopped by foreman's guard. The permissions are a deliberate boundary, so don't change the config to let it through; read the material it needs yourself and put it in the resume brief, or attach it with `--file`.
 - `final_question`: the final answer is a question, not a report. Claude answers it and resumes, asking for the report in the required format.
 - `input_prompt` (status `needs_input`): the tool is waiting for terminal input. Look at the prompt: if Claude can decide it under the rules above, resume and write the answer in the brief; otherwise leave it to the user.
 - `asked_mid_run`: a question asked mid-run that nobody answered; it carried on with its own judgement. When checking the work, compare the approach it chose against the report, and treat it as a rework if it's wrong. These don't count toward `needs_decision`.
@@ -287,7 +289,7 @@ By `source`:
 A resume to answer questions doesn't count as a rework.
 
 ## Discussion mode (/foreman-en:discuss)
-For complex plans, designs or ideas, discuss them with other models first, without carrying anything out. The participants come from `levels.discuss.<level>` in the config: Codex alone, or Codex plus API agents (such as DeepSeek) and opencode agents, all giving their views at the same time. **Claude stays in charge of the conclusions**: the participants' views are input only. Claude accepts or rejects them on the strength of the arguments, doesn't give in just because someone insists, and doesn't go by majority vote.
+For complex plans, designs or ideas, discuss them with other models first, without carrying anything out. The participants come from `levels.discuss.<level>` in the config: Codex alone, or Codex plus API agents (such as DeepSeek), opencode and pi agents, all giving their views at the same time. **Claude stays in charge of the conclusions**: the participants' views are input only. Claude accepts or rejects them on the strength of the arguments, doesn't give in just because someone insists, and doesn't go by majority vote.
 
 When `resolved_levels.discuss.<level>` is `"claude code"`, that level uses no outside model; Claude thinks it through itself.
 
@@ -301,19 +303,20 @@ Start one directly when the user uses `/foreman-en:discuss` or explicitly asks t
 
 Don't start one for ordinary implementation details, tasks with a clear plan, or decisions the user has already made. When you start one on your own, tell the user in one sentence, for example: "I'll talk this through with the other models first."
 
-### Three kinds of participants
+### Four kinds of participants
 - **Codex**: can read the code and run read-only commands to check things itself.
 - **opencode agents** (`type` is `opencode cli` in the config, such as `opencode-go/glm-5.3`): models called through the opencode CLI on this machine. The script gives them only the read, search and list tools, so they can look through the project's code themselves but can't run commands or change files. So:
   - `--file` works as it does for Codex: the paths are listed as "key files" without their contents. They can only read files inside the project directory; put material from outside the project into the topic itself.
   - Every file they read is another request, so they use more quota than API agents. Put premium models with tight subscription limits (such as Kimi K3 or Qwen Max on OpenCode Go) only at the `complex` level.
   - `cost_usd` in the result is this round's cost at the provider's prices; OpenCode Go quota is charged by this. Include it when reporting tokens.
   - Check what they say about the code before accepting it, too.
+- **pi agents** (`type` is `pi cli` in the config, such as `deepseek/deepseek-flash`): models called through the pi CLI on this machine. Like opencode agents they only get the read, search and list tools, and reading is limited to the project directory (pi has no permission system of its own; the guard extension foreman injects checks it). `--file` is likewise listed as "key files"; `cost_usd` in the result is the cost pi computes at the provider's prices. pi uses your own pi config and sign-ins, but doesn't load your installed extensions, skills or MCP servers.
 - **API agents** (`type` is `api` in the config, such as DeepSeek): see only the topic and the attached material and can't look through the code themselves. So:
   - Attach the relevant files with `--file "<path>"` (can be given more than once); `--file "<path>:<start>-<end>"` attaches just those lines. Attach the code the topic mentions and the core modules under discussion. There's a size limit (about 300,000 characters); the script errors if it's exceeded, so pick files more carefully or use line ranges. The script also attaches the project's file list.
   - The attached material is sent to that provider. Don't add API agents for projects whose preference file or project config says not to.
   - Check what it says about the code against the source before accepting it.
   - Files it asks for in `open_questions` get attached with `--file` in the next round.
-- When the same `--file` is passed to Codex or an opencode agent, the script only lists the paths as "key files" without their contents; they read the files themselves.
+- When the same `--file` is passed to Codex, an opencode agent or a pi agent, the script only lists the paths as "key files" without their contents; they read the files themselves.
 
 ### Process (round limit set by `dispatch.discuss_max_rounds`, 2 by default)
 1. **Round 1, independent proposals**: the topic brief only gives the background, the problem to solve, constraints, known facts, relevant code locations, and the specific questions to answer. **Don't include Claude's own leaning**, so the participants don't just go along with it. Before reading any participant's result, Claude writes its own proposal to a file (scratchpad directory or system temp directory), so it isn't swayed the other way either. Then, going by `resolved_levels.discuss.<level>` in the `config` output, start one `discuss` per participant: the same brief, the same `--group` (a short title plus the date, such as `config-rework-1013`; a different name for each discussion within a conversation, kept for its later rounds), and `--agent <name>` for each, all started in the background in the same message. When the level has only one participant, `--agent` and `--group` can be left out.
@@ -325,7 +328,7 @@ Don't start one for ordinary implementation details, tasks with a clear plan, or
 - Pick the level by the discussion criteria in "Task levels and reasoning effort"; discussions started on their own meet all three conditions, so they use `complex`. Later rounds keep round 1's level.
 - Each participant has its own run_id, and the round limit applies to each participant separately. Each participant takes one of its own agent's parallel slots; if one is refused because its agent is at the limit, start it again once that agent's running tasks finish rather than skipping it.
 - If one participant fails (for example `quota_exhausted` from a low balance, an API error, a missing key, or `cancelled` because the user stopped it), the others carry on: tell the user which one failed and why, and continue with the other participants' results. Don't change the config just to get every participant in.
-- Discussion is read-only: Codex can read code and run read-only commands to back up its points, but can't change files. If `warnings` says Codex changed files, check the diff and revert what Codex changed. Don't revert changes of unknown origin listed in `notes`; most likely someone else made them. API and opencode agents can't change files.
+- Discussion is read-only: Codex can read code and run read-only commands to back up its points, but can't change files. If `warnings` says Codex changed files, check the diff and revert what Codex changed. Don't revert changes of unknown origin listed in `notes`; most likely someone else made them. API, opencode and pi agents can't change files.
 - Discussions get the live view too.
 
 ### When an API participant is busy
@@ -372,8 +375,8 @@ The script works out the review scope with git first:
 This matches what Codex's native review means. With no changes at all, the script stops with an error instead of handing anything off.
 
 - The full patch is saved as `review.patch` in the run directory. `review_scope` in the result gives the scope, file count and fingerprint; if the changes moved while the review ran, `warnings` says so, and the review may not cover the latest changes.
-- Codex reads the changes itself. opencode agents get the patch the script computed, plus read-only tools for context, and can't run commands.
-- If the patch is too large (about 200,000 characters), an opencode review is refused: review commit by commit (`--commit`), or give the review to Codex.
+- Codex reads the changes itself. opencode and pi agents get the patch the script computed, plus read-only tools for context, and can't run commands.
+- If the patch is too large (about 200,000 characters), an opencode or pi review is refused: review commit by commit (`--commit`), or give the review to Codex.
 
 Check the review findings too: verify each issue the reviewer raises and fix only the real ones. Drop false positives and mention them briefly in your report.
 

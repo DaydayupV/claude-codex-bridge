@@ -1,6 +1,6 @@
 ---
 description: 设置引导：检测本机的工具，列出能用的模型和推理强度，给出一份完整的推荐，按你的选择改好配置，最后给出总配置情况
-argument-hint: [可选：只做某一部分，例如"加 DeepSeek"、"用 opencode 的 GLM"、"讨论加一个模型"]
+argument-hint: [可选：只做某一部分，例如"加 DeepSeek"、"用 opencode 的 GLM"、"用 pi 的 DeepSeek"、"讨论加一个模型"]
 ---
 
 用户要设置 foreman。参数：
@@ -10,18 +10,20 @@ $ARGUMENTS
 脚本路径是 `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/cli.mjs`。配置的写法见 `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/references/config.md`，动手改配置前先读它。按下面的顺序进行，每一步用简短的中文告诉用户结果。参数里写了只做某一部分时，第 4 步只给这一部分的推荐，其余步骤照做。
 
 1. **检查环境**：运行 `node "<脚本路径>" check` 和 `node "<脚本路径>" config --cwd "<当前项目目录>"`。
-   - 用一张表说明本机有什么，来自 `config` 的 `environment`：Codex 有没有、登录没有；opencode 有没有、几个可用模型；检测到哪些 API key 环境变量。
+   - 用一张表说明本机有什么，来自 `config` 的 `environment`：Codex 有没有、登录没有；opencode 和 pi 各有没有、几个可用模型；检测到哪些 API key 环境变量。
    - Node.js 不通过时插件用不了，转告 `fix` 后结束。Git 不通过时，告诉用户改动追踪用不了、建议安装，但可以继续。实时查看（`watch`）不通过只影响桌面版终端面板里自动打开实时进度，可以继续。
    - 脚本输出了"首次使用，已生成配置文件"时，转告它检测到了什么、生成了什么。
    - 这一步不贴每个协作方的检查结果，留到第 7 步的总表里一起说。
 
 2. **读模型清单**：运行 `node "<脚本路径>" models`（只读，不发模型请求）。
-   - `tools."codex cli"`、`tools."opencode cli"`：本机工具自带的模型清单，每个模型有 `efforts`（支持的推理强度）、`default_effort`、`context`，opencode 还有 `cost`（每百万 token 的美元价格）。`ok` 为 `false` 时说明读不到的原因（比如没装、没登录），这个工具的推荐就跳过。
+   - `tools."codex cli"`、`tools."opencode cli"`、`tools."pi cli"`：本机工具自带的模型清单，每个模型有 `efforts`（支持的推理强度）、`default_effort`、`context`，opencode 和 pi 还有 `cost`（每百万 token 的美元价格）。`ok` 为 `false` 时说明读不到的原因（比如没装、没登录），这个工具的推荐就跳过。
    - `api.<代号>`：每个 API 协作方的接口列出的模型名。这份清单没有推理强度。
    - `agents.<代号>`：配置里每个协作方的模型在不在清单里（`listed`）。为 `false` 的说明模型名写错了或已经下线，`closest` 是最接近的写法，放进第 4 步的推荐。
    - 给用户看可选的模型：
      - Codex：不列 `hidden` 为 `true` 的。每个模型一行：名称、支持的推理强度（标出默认档）、上下文长度。
      - opencode：只列 `enabled` 不为 `false` 的，按提供方分组，写支持的 variant、上下文和价格（价格为 0 写"免费"）。`efforts` 为空的模型没有可选档位，推理强度只能不写。模型很多时只列推荐里用到的和用户问到的，再说一句"还有 N 个，想看全部可以说"。
+     - pi：按提供方分组，写支持的推理强度、上下文和价格。pi 遇到模型不支持的档位不报错，会悄悄换一档，所以推理强度只从这里列出的档位里选。
+     - 要的 pi 模型不在清单里时，请用户自己在终端运行 `pi`，在里面用 `/login` 登录那家厂商（或者设置它的 API key 环境变量），再运行一次 `models`。
      - 要的 opencode 模型不在清单里时，请用户自己在终端运行 `opencode`，在里面用 `/connect` 登录（OpenCode Go 选 OpenCode Go），登录后再运行一次 `models`。
 
 3. **新加 API 模型时查文档**：只在用户要新加 API 模型，或者要把自动生成、还没放进任何等级的 API 协作方放进等级时做。已经在用的 API 协作方沿用现在的推理强度，不再查。
@@ -30,18 +32,19 @@ $ARGUMENTS
    - 模型名再和第 2 步 `api` 里列出的核对一遍。第 4 步的推荐里附上文档链接。
 
 4. **一次给出完整推荐**：把下面三块一起给出来，每一项编号，方便用户说"第 3 项改成 …"。
-   - **等级表**：执行、审查、讨论各三级，每格写"现在"和"推荐"，推荐里写协作方、模型、推理强度和一句理由；不改的格子写"不变"。每个用到的模型旁边写出它能选的推理强度和来源（Codex 清单、opencode 清单或文档链接）。
+   - **等级表**：执行、审查、讨论各三级，每格写"现在"和"推荐"，推荐里写协作方、模型、推理强度和一句理由；不改的格子写"不变"。每个用到的模型旁边写出它能选的推理强度和来源（Codex 清单、opencode 清单、pi 清单或文档链接）。
    - **协作方的增删改**：要新加的（代号、类型、模型）、模型名要改的、没用在任何等级里的（问放进哪一级还是删掉，用户不在意就保留）。
    - **其他**：总表提醒里失效的旧代号（`stale_alias`）推荐改成哪个现在的代号，选和它同一家、同一种接入方式的，拿不准就列出候选让用户选，或者删掉这条（不再续接升级前的任务时）；新加 API 时 key 怎么放。
 
    推荐按这些原则：
    - 已有的安排默认不变。只在这几种情况推荐改：格子的模型或推理强度不在清单里；这次新装了工具，或者用户要加模型；审查、讨论的某一级是 `"claude code"`，而现在有合适的协作方。执行的 simple、normal 交给 Claude 是默认安排，不主动改。
    - 推理强度只从清单支持的档位里选：simple 选偏低的一档（比如 `medium`），normal 选默认档或高一档（比如 `high`），complex 选最高的常用档（比如 `max`）。更高的档位在说明里写着明显更慢、更贵时，用户要求才推荐。
-   - 执行只能交给 `codex cli`，或者写了 `run_access` 的 `opencode cli`。审查优先用 Codex（原生审查、能跑只读命令核实），opencode 也能审。API 只能参加讨论。
+   - 执行只能交给 `codex cli`，或者写了 `run_access` 的 `opencode cli` / `pi cli`。审查优先用 Codex（原生审查、能跑只读命令核实），opencode 和 pi 也能审。API 只能参加讨论。
+   - 同一家厂商的账号可能被 opencode、pi 和 API 共用，并发按账号算（比如有的 Moonshot 账号同时只允许 1 个请求）：同一级讨论里不要放两个用同一个受限账号的参与方。
    - 讨论：simple 一方或不找外部模型；normal 一到两方；complex 两到四方，尽量来自不同厂商，观点更多样。额度少的高档模型（比如 OpenCode Go 里的 Kimi K3、Qwen Max）只放在 complex。API 参与方会收到附带的代码，提醒用户一句。
-   - **不默认推荐让 opencode 做执行**。用户想要时讲清两档，用户明确同意并选好一档后才写 `run_access`：
+   - **不默认推荐让 opencode 或 pi 做执行**。用户想要时讲清两档，用户明确同意并选好一档后才写 `run_access`：
      - `"edit"`：只能改项目里的文件，不能运行命令，测试由 Claude 事后跑；
-     - `"shell"`：还能运行命令。opencode 没有系统沙箱，命令以用户的账户权限运行、能访问整台机器。选这一档要请用户明确确认接受"没有系统沙箱"。
+     - `"shell"`：还能运行命令。opencode 和 pi 都没有系统沙箱，命令以用户的账户权限运行、能访问整台机器。选这一档要请用户明确确认接受"没有系统沙箱"。
 
 5. **用户逐项调整**：用 AskUserQuestion 问"按推荐改"（推荐项放第一个）、"逐项调整"、"先不改"。
    - 选"逐项调整"：再问要调整哪几项（项目多于 4 个时请用户直接回复编号和改法），然后每项给出候选（推荐的放第一个，推理强度只给清单里有的档位），一次最多问 4 项。
@@ -50,7 +53,7 @@ $ARGUMENTS
 
 6. **改配置并确认**：
    - 先备份：把 `~/.claude/foreman/config.json` 复制成同目录下的 `config.json.setup-<年月日-时分秒>.bak`，告诉用户备份在哪里。
-   - 改用户配置的 `agents` 和 `levels`。代号用模型名（opencode 取 `/` 后面那段）；已经有同名代号时，加上类型后缀，比如 `deepseek-flash-api`、`deepseek-flash-opencode-cli`。失效的旧代号改在 `~/.claude/foreman/agent-aliases.json` 里。
+   - 改用户配置的 `agents` 和 `levels`。代号用模型名（opencode 和 pi 取 `/` 后面那段）；已经有同名代号时，加上类型后缀，比如 `deepseek-flash-api`、`deepseek-flash-opencode-cli`、`deepseek-flash-pi`。失效的旧代号改在 `~/.claude/foreman/agent-aliases.json` 里。
    - API key 的放法：
      - **写在配置文件里**（改完立即生效）：告诉用户打开 `~/.claude/foreman/config.json`，在这个协作方里加一行 `"api_key": "<key>"`，自己填上。提醒用户 key 是明文保存的，这个文件不要提交或分享。
      - **放在环境变量里**：配置里写 `"api_key_env": "<变量名>"`，告诉用户自己设置：Windows 上在"系统属性 → 环境变量"里加一个用户变量，或者在 PowerShell 里运行 `[Environment]::SetEnvironmentVariable('<变量名>', '<key>', 'User')`；macOS 和 Linux 写进 shell 的启动文件。设置后要重启 Claude Code 才能读到。
@@ -61,13 +64,13 @@ $ARGUMENTS
 7. **总配置情况**：用第 6 步 `check` 输出的 `summary`（没改配置时用第 1 步的），给出：
    - **等级表**：执行、审查、讨论各三级，每格写协作方、模型、推理强度（不写或 `null` 说成"默认"）和检查结果；`ok` 为 `false` 的写出 `problem`。`"claude code"` 在执行里说成"Claude 自己做"，在审查和讨论里说成"不找外部模型"。
    - **协作方表**：代号、类型、模型、用在哪几格、执行权限、检查结果。执行权限这一列：
-     - `opencode cli` 写了 `run_access`：写 `edit`（只改项目里的文件，不能运行命令）或 `shell`（还能运行命令，没有系统沙箱）；
-     - `opencode cli` 没写 `run_access`：写"未开启（可以开启 edit 或 shell）"。不要写成"不能执行"：opencode 能做执行，只是要用户先开启；
+     - `opencode cli` 或 `pi cli` 写了 `run_access`：写 `edit`（只改项目里的文件，不能运行命令）或 `shell`（还能运行命令，没有系统沙箱）；
+     - `opencode cli` 或 `pi cli` 没写 `run_access`：写"未开启（可以开启 edit 或 shell）"。不要写成"不能执行"：它们能做执行，只是要用户先开启；
      - `codex cli`：写"不需要开启"；
      - `api`：写"—"，API 只能参加讨论。
    - **提醒**：`summary.warnings` 逐条用人话转告，已经在第 4 步处理掉的不再说。
    - 最后用两三句话总结：现在哪些能用、还有什么没弄好；平时直接让 Claude 做事即可，大任务会按配置派出去，复杂方案会先讨论，也可以用 `/foreman:run`、`/foreman:discuss`、`/foreman:review` 点名。
 
-**只有 API、没有 Codex 和 opencode 时**：说明执行和审查只能由 Claude 自己做；想让外部模型干活或审查，需要装 Codex 或 opencode。
+**只有 API、没有 Codex、opencode 和 pi 时**：说明执行和审查只能由 Claude 自己做；想让外部模型干活或审查，需要装 Codex、opencode 或 pi。
 
-**什么都没有时**：说明插件现在由 Claude 自己完成所有工作。想接入外部模型，可以装 Codex CLI（`npm install -g @openai/codex`，再运行 `codex login`）、装 opencode（`npm install -g @opencode/cli`），或者准备一个 API key。装好后再运行一次 `/foreman:setup`。
+**什么都没有时**：说明插件现在由 Claude 自己完成所有工作。想接入外部模型，可以装 Codex CLI（`npm install -g @openai/codex`，再运行 `codex login`）、装 opencode（`npm install -g @opencode/cli`）、装 pi（`npm install -g @earendil-works/pi-coding-agent`），或者准备一个 API key。装好后再运行一次 `/foreman:setup`。

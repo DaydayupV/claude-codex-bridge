@@ -38,15 +38,15 @@ test('run_access 只校验 opencode，config 展示权限和执行能力', async
 test('opencode 执行和续接需要用户授权，项目配置不能开启执行', async (t) => {
   const h = sandbox(t), c = configure(h);
   delete c.agents.oc.run_access; h.config(c);
-  failed(await h.bridge(['config']), M.runAccessRequired('oc'));
+  failed(await h.bridge(['config']), M.runAccessRequired('oc', 'opencode cli'));
   c.levels.run.complex = 'claude code'; h.config(c);
   h.write('.claude/foreman.json', { agents: { oc: { run_access: 'shell' } }, levels: { run: { complex: { agent: 'oc' } } } });
   const r = output(await h.bridge(['config', '--cwd', h.cwd]));
   assert.equal(r.agents_status.oc.run_access, null);
   assert.equal(r.effective.levels.run.complex, 'claude code');
-  failed(await h.bridge(taskArgs(h, 'run', ['--agent', 'oc'])), M.runAccessRequired('oc'));
+  failed(await h.bridge(taskArgs(h, 'run', ['--agent', 'oc'])), M.runAccessRequired('oc', 'opencode cli'));
   seedRun(h, 'previous-exec', { agent: 'oc', agent_type: 'opencode cli', run_access: 'edit' });
-  failed(await h.bridge(['resume', '--run', 'previous-exec', '--level', 'complex', '--brief', '-', '--agent', 'oc']), M.runAccessRequired('oc'));
+  failed(await h.bridge(['resume', '--run', 'previous-exec', '--level', 'complex', '--brief', '-', '--agent', 'oc']), M.runAccessRequired('oc', 'opencode cli'));
   assert.equal(h.calls().filter((c) => ['run', 'exec'].includes(c.operation)).length, 0, JSON.stringify(h.calls()));
 });
 

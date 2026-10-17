@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { sandbox, output, failed, json, write, baseConfig, apiAgent, opencodeAgent, CODEX, OPENCODE, ROOT, BRIDGE, MESSAGES } from './helpers.mjs';
+import { sandbox, output, failed, json, write, baseConfig, apiAgent, opencodeAgent, CODEX, OPENCODE, PI, ROOT, BRIDGE, MESSAGES } from './helpers.mjs';
 import { apiServer } from './fake/api-server.mjs';
 import { discussion } from './fixtures/reports.mjs';
 const M = MESSAGES.zh;
@@ -81,7 +81,7 @@ test('opencode 未授权时不能执行、API 仅能讨论，Claude 等级点名
     const supported = name === 'oc' ? 'review、discuss' : 'discuss';
     for (const mode of name === 'oc' ? ['run'] : ['run', 'review']) {
       h.config(c);
-      const error = name === 'oc' ? M.runAccessRequired(name) : M.modeNotSupported(name, c.agents[name].type, mode, supported);
+      const error = name === 'oc' ? M.runAccessRequired(name, 'opencode cli') : M.modeNotSupported(name, c.agents[name].type, mode, supported);
       failed(await h.bridge(args(h, mode, ['--level', 'simple', '--agent', name])), error);
       h.config({ ...c, levels: { [mode]: { normal: { agent: name } } } });
       failed(await h.bridge(['config']), error);
@@ -156,19 +156,21 @@ test('项目只能保留同级参与方或交回 Claude，忽略协作方和模�
   failed(await h.bridge(['config', '--cwd', h.cwd]), M.projectLevelEmpty('levels.discuss.normal'));
 });
 
-for (const scenario of ['nothing', 'codex', 'opencode', 'api', 'all', 'logged-out', 'empty-models']) test(`环境检测和初始配置：${scenario}`, async (t) => {
-  const h = sandbox(t, { config: false }), codex = ['codex', 'all', 'logged-out'].includes(scenario), oc = ['opencode', 'all', 'empty-models'].includes(scenario);
+for (const scenario of ['nothing', 'codex', 'opencode', 'pi', 'api', 'all', 'logged-out', 'empty-models']) test(`环境检测和初始配置：${scenario}`, async (t) => {
+  const h = sandbox(t, { config: false }), codex = ['codex', 'all', 'logged-out'].includes(scenario), oc = ['opencode', 'all', 'empty-models'].includes(scenario), pi = ['pi', 'all'].includes(scenario);
   const available = codex && scenario !== 'logged-out', keys = ['api', 'all'].includes(scenario) ? ['DEEPSEEK_API_KEY', 'KIMI_API_KEY', 'MOONSHOT_API_KEY', 'MIMO_API_KEY'] : [];
-  const s = h.scenario({ logged_in: available, models: scenario === 'empty-models' ? [] : ['fake/model', 'fake/second'] });
+  const s = h.scenario({ logged_in: available, models: scenario === 'empty-models' ? [] : ['fake/model', 'fake/second'],
+    pi_catalog: [{ provider: 'fake', id: 'model' }, { provider: 'fake', id: 'second' }, { provider: 'fake', id: 'third' }] });
   const adapterUrl = pathToFileURL(path.join(ROOT, 'foreman/skills/dispatch/scripts/adapters/index.mjs')).href;
   const script = h.write('detect.mjs', `import { adapters } from ${JSON.stringify(adapterUrl)};
 adapters['codex cli'].locate = () => ({ file: ${JSON.stringify(codex ? process.execPath : path.join(h.home, 'missing-codex.exe'))}, pre: ${JSON.stringify(codex ? [CODEX] : [])} });
 adapters['opencode cli'].locate = () => ({ file: ${JSON.stringify(oc ? process.execPath : path.join(h.home, 'missing-opencode.exe'))}, pre: ${JSON.stringify(oc ? [OPENCODE] : [])} });
+adapters['pi cli'].locate = () => ({ file: ${JSON.stringify(pi ? process.execPath : path.join(h.home, 'missing-pi.exe'))}, pre: ${JSON.stringify(pi ? [PI] : [])} });
 process.argv.splice(2, 0, 'config');
 await import(${JSON.stringify(pathToFileURL(BRIDGE).href)});`);
   const env = { ...s.env, ...Object.fromEntries(keys.map((key) => [key, 'synthetic-key'])) };
   const r = await h.start(script, [], { env }).done, c = output(r), cfg = json(h.userConfig);
-  assert.deepEqual(c.environment, { codex: { found: codex, logged_in: available }, opencode: { found: oc, models: oc && scenario !== 'empty-models' ? 2 : 0 }, api_keys: keys });
+  assert.deepEqual(c.environment, { codex: { found: codex, logged_in: available }, opencode: { found: oc, models: oc && scenario !== 'empty-models' ? 2 : 0 }, pi: { found: pi, models: pi ? 3 : 0 }, api_keys: keys });
   assert.deepEqual(Object.keys(cfg.agents), [...(available ? ['gpt-6.1-sol', 'gpt-6-astra'] : []), ...(keys.length ? ['deepseek-v4-pro', 'kimi-k2.6', 'mimo-v2.6-pro'] : [])]);
   assert.equal(cfg.levels.run.simple, 'claude code');
   assert.equal(cfg.levels.run.normal, 'claude code');
@@ -183,12 +185,15 @@ await import(${JSON.stringify(pathToFileURL(BRIDGE).href)});`);
   if (keys.length) assert.equal(cfg.agents['kimi-k2.6'].api_key_env, 'KIMI_API_KEY');
   let parts = available ? M.starterCodex('gpt-6.1-sol', 'gpt-6-astra') : M.starterNoCodex;
   if (oc && scenario !== 'empty-models') parts += M.starterOpencode(2);
+  if (pi) parts += M.starterPi(3);
   if (keys.length) parts += M.starterApi('DeepSeek、Kimi、MiMo');
   assert.ok(r.stderr.includes(M.starterCreated(h.userConfig, parts + M.starterNext)));
   const before = s.calls().length;
   output(await h.start(script, [], { env }).done);
-  assert.ok(s.calls().every((call) => ['version', 'login', 'models'].includes(call.operation)));
-  if (codex || oc) assert.ok(s.calls().length > before);
+  assert.ok(s.calls().every((call) => ['version', 'login', 'models', 'list-models'].includes(call.operation)));
+  if (codex || oc || pi) assert.ok(s.calls().length > before);
+  // 列模型前 pi 会加载扩展，环境检测也要带隔离参数
+  for (const call of s.calls().filter((c) => c.tool === 'pi' && c.operation === 'list-models')) assert.ok(call.args.includes('--no-extensions') && call.args.includes('--no-approve'));
 });
 
 test('只设置 MOONSHOT_API_KEY 生成一个 Kimi，配置输出不泄露 key', async (t) => {

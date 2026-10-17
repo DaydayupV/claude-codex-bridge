@@ -175,17 +175,17 @@
 ### 4.2 能力表
 每个适配器声明一张能力表，`config` 输出里列出来，SKILL.md 按能力描述，不再到处写"Codex"。
 
-| 能力 | codex cli | opencode cli | api |
-|---|---|---|---|
-| `modes` | run、review、discuss | run、review、discuss | discuss |
-| `isolation`（执行时的隔离） | `os`：Codex 系统沙箱（看 sandbox 配置） | `tools`：只有工具权限，没有系统沙箱 | — |
-| `reads_code`（能自己读代码） | 是 | 是 | 否，靠附带文件 |
-| `native_schema`（原生 JSON schema 约束） | 是 | 否，提示词加一次修复 | 否，提示词加一次修复 |
-| `native_review`（原生审查命令） | 是 | 否 | — |
-| `images`（出图） | 是 | 否 | 否 |
-| `resume`（续接同一会话） | 是 | 是 | 是（本地保存的对话） |
-| `command_start_events`（能看到命令开始） | 是 | 否，只有工具完成事件 | — |
-| `usage` | 会话记录，有额度 | 会话导出，有费用 | 流式返回 |
+| 能力 | codex cli | opencode cli | pi cli | api |
+|---|---|---|---|---|
+| `modes` | run、review、discuss | run、review、discuss | run、review、discuss | discuss |
+| `isolation`（执行时的隔离） | `os`：Codex 系统沙箱（看 sandbox 配置） | `tools`：只有工具权限，没有系统沙箱 | `tools`：工具白名单加 foreman 的守卫扩展，没有系统沙箱 | — |
+| `reads_code`（能自己读代码） | 是 | 是 | 是 | 否，靠附带文件 |
+| `native_schema`（原生 JSON schema 约束） | 是 | 否，提示词加一次修复 | 否，提示词加一次修复 | 否，提示词加一次修复 |
+| `native_review`（原生审查命令） | 是 | 否 | 否 | — |
+| `images`（出图） | 是 | 否 | 否 | 否 |
+| `resume`（续接同一会话） | 是 | 是 | 是 | 是（本地保存的对话） |
+| `command_start_events`（能看到命令开始） | 是 | 否，只有工具完成事件 | 是，工具开始和结束都有事件 | — |
+| `usage` | 会话记录，有额度 | 会话导出，有费用 | 每条回复自带用量和费用 | 流式返回 |
 
 ### 4.3 统一事件
 - 内部事件沿用现在的格式（Codex 的事件形状：`thread.started`、`item.started` / `item.completed`，item 类型有 `agent_message`、`reasoning`、`command_execution`、`file_change` 等），写进 `events.jsonl`。watch 和 status 不用为每种工具各写一套。
@@ -284,16 +284,23 @@ SKILL.md 改成"交给有出图能力的协作方"。配置里没有 `codex cli`
 - 追踪的盲区写进结果和文档：工作目录以外、被排除的目录（node_modules 等）、超过 5 MB 只比较大小和时间的文件。
 
 ### 6.6 拦截直接调用
-- `guard-direct-calls.mjs` 拦截 `codex exec`、`codex review` 和 `opencode run`，以及以后接入的工具。
+- `guard-direct-calls.mjs` 拦截 `codex exec`、`codex review`、`opencode run` 和直接用 pi 跑任务（pi 只放行 `--version`、`--help`、`--list-models`、`--export` 和管理类子命令），以及以后接入的工具。
 - 只读命令照常放行：`opencode models`、`--version`、`session export`、`auth list` 等。
 - 这是调度约束，不是安全边界。
 
-### 6.7 opencode 版本
+### 6.7 pi 的边界
+- pi 本身没有权限系统，也没有系统沙箱。每次调用都用 `--tools` 只开放这次任务需要的工具，并用 `-e` 注入 `adapters/pi-guard.mjs`：不在白名单里的工具一律拒绝，文件工具的路径不能出项目目录；`shell` 档的命令不受它限制。
+- 关掉用户自己的扩展、skill、提示模板、MCP 和项目里的 `.pi` 设置（`--no-extensions` 等加 `--no-approve`），项目的 AGENTS.md / CLAUDE.md 照常读；会话放在 pi 的默认位置。
+- pi 遇到模型不支持的推理强度不报错，会悄悄换一档，所以 `check` 只按 RPC 读到的模型清单核对；运行时实际档位和配置不同会在 notes 里提示。
+- JSON 模式下回复出错时 pi 照样以 0 退出，按最后一条回复的结束原因判断成败（自动重试成功的不算失败）。
+- 能看到工具开始事件，`shell` 档也做卡死检测：有工具在运行时不算卡住。
+
+### 6.8 opencode 版本
 - `check` 报告 opencode 版本。
 - 不在已验证范围内（目前是 2.0.x）时给出提示，但不拦截。
 - 注入的代理找不到时（比如以后配置写法变了），opencode 会报 Agent not found，任务直接失败，不会放宽权限。
 
-### 6.8 协作方要人回答（已实现，提交见 git log）
+### 6.9 协作方要人回答（已实现，提交见 git log）
 - 防止卡住：
   - Codex 没配置 `approval` 时默认 `never`；
   - opencode 注入的代理一律"全部拒绝 + 白名单"，不开放 `question` 工具和需要确认的权限。第 4 步的 `foreman-run` 代理同样要遵守。
