@@ -10,8 +10,8 @@
 
 ## 工作方式
 
-1. **定等级**：Claude Code 判断这件事是简单、常规还是复杂（`simple` / `normal` / `complex`）。
-2. **按配置派出**：每类任务的每一级交给谁、用什么推理强度，由你在配置里决定；写成 `"claude code"` 的那一级由 Claude Code 自己做。
+1. **定等级**：一个请求按讨论、执行、审查几个阶段，各自按这一类的标准定级。不值得找外部模型的小事是 0 级，由 Claude Code 自己做；其余分简单、常规、复杂三级（`simple` / `normal` / `complex`）。
+2. **按配置派出**：1–3 级交给谁、用什么推理强度，由你在配置里决定；写成 `"claude code"` 的那一级由 Claude Code 自己做。
 3. **实时查看**：派出后终端里打开实时画面，能看到模型的每一步。
 4. **验收**：Claude Code 审查改动、运行验证，再向你汇报用了哪个模型、花了多少 token。
 
@@ -31,12 +31,14 @@
 
 ### 不用命令也行
 
-插件自带的 skill 会让 Claude Code 自己判断：
+插件自带的 skill 会让 Claude Code 按讨论、执行、审查分别定级，达到门槛的自己发起：
 
-- 执行类工作按等级和配置主动派出。不想这样，把 `dispatch.auto` 设成 `false`，Claude Code 会先问你。
-- 遇到复杂、不确定、选错代价又高的方案，先找其他模型讨论。
-- 高风险或改动大的工作交付前，请另一个模型审查。
+- 给出方案之前，复杂、不确定的问题先找其他模型讨论，结论由 Claude Code 裁决。
+- 动手之前，执行类工作按等级和配置派出；只由 Claude Code 做的工作（决策、设计、文字）和 0 级的小事不派。
+- 交付之前，按改动的风险判断要不要请另一个模型审查。
 - 大任务能拆成互不相干的几份时，同时派给几个会话，缩短等待（每个协作方的并发上限见 `max_parallel`）。
+
+不想让 Claude Code 自己发起，把 `dispatch.auto` 设成 `false`：派活、讨论和审查之前它都会先问你。
 
 为了不让 Claude Code 忘了这些（项目里有自己的 skill 时尤其容易漏），插件会在每个会话开始时提醒它一次，并附上你的偏好文件。
 
@@ -119,7 +121,7 @@
 ```
 
 - `agents` 的键是协作方的**代号**，`levels` 和 `--agent` 用它引用。建议直接用模型名，可以用字母、数字、`.`、`-`、`_`。
-- 三种任务（`run` 执行、`review` 审查、`discuss` 讨论）各分三级。执行和审查写一个协作方，讨论写一组参与方。
+- 三种任务（`run` 执行、`review` 审查、`discuss` 讨论）各分三级，另有一个不进配置的 0 级（见下文"任务等级"）。执行和审查写一个协作方，讨论写一组参与方。
 - 写成 `"claude code"` 表示 Claude Code 自己做；对审查和讨论来说，就是这一级不找外部模型。
 - `effort` 是推理强度，不写就用默认值。Codex 是 `low` 到 `ultra`；opencode 是模型的 variant；pi 是 thinking 档位；API 原样作为 `reasoning_effort` 发出。
 
@@ -136,11 +138,20 @@
 
 ### 任务等级
 
-Claude Code 只判断任务属于哪一级，交给谁、用什么推理强度由你在 `levels` 里决定。等级看需要多少判断、出错的代价有多大，不看改动多少：照清单机械地改 20 个文件是简单，改模块之间的接口是复杂。Claude Code 每次都必须给出等级，漏了脚本直接报错，不会悄悄按某个档位运行。
+一个请求往往要经过讨论、执行、审查几个阶段，Claude Code 在每个阶段到了时，按这一类的标准单独定级。三类的标准不一样：
+
+| 等级 | 讨论（看决策的不确定性和选错的代价） | 执行（看要多少判断、出错的代价） | 审查（看被审改动的风险） |
+|---|---|---|---|
+| 0 级 | 方案已经明确或你已拍板：不找外部模型 | 一处就能改完、自己改比写任务说明还快的小改动 | 小改动、文档、样式、配置，或有测试覆盖的低风险改动：Claude Code 验收就够 |
+| 1 `simple` | 需要第二意见的一次性问答 | 做法确定、几乎不用判断 | 改动量大但很机械 |
+| 2 `normal` | 有几个方案要比较，影响有限 | 有规格，细节要自己设计 | 较大的一般功能和修复 |
+| 3 `complex` | 复杂、不确定、选错代价高 | 根因不明、出错代价高、跨模块 | 金额、数据、并发、鉴权等高风险代码 |
+
+0 级固定由 Claude Code 自己做，不在配置里；1–3 级交给谁、用什么推理强度由你在 `levels` 里决定。等级看判断和风险，不看改动多少：照清单机械地改 20 个文件是简单，改模块之间的接口是复杂。派出去的每次调用都必须带上等级，漏了脚本直接报错，不会悄悄按某个档位运行。
 
 - 想临时指定时，对 Claude Code 说"用 ultra 跑"或"用某某模型跑"，Claude Code 会改用 `--effort` 或 `--model`。
 - 某一级写成 `"claude code"` 时，你仍然可以明确要求把某个任务派出去，Claude Code 会用 `--agent` 点名。
-- 小任务也按等级走。默认 `simple` 由 Claude Code 自己做；改成交给 Codex 的话，连很小的改动也会派出去。
+- 0 级只限一处就能改完的小改动。默认 `simple` 也由 Claude Code 自己做；把 `simple` 交给协作方的话，除了 0 级的小改动，其余的活都会派出去。
 
 ### 接入 API 模型
 
@@ -256,7 +267,7 @@ Claude Code 只判断任务属于哪一级，交给谁、用什么推理强度�
 "deepseek-v4-pro":    { "type": "api", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-v4-pro", "extra_body": { "temperature": 0.3 } }
 ```
 
-- `sandbox`：Codex 每类任务（`run`、`review`、`discuss`）用的沙箱，`read-only`、`workspace-write` 或 `danger-full-access`；不写就用 Codex 自己的配置。
+- `sandbox`：Codex 每类任务（`run`、`review`、`discuss`）用的沙箱，`read-only`、`workspace-write` 或 `danger-full-access`；不写就用 Codex 自己的配置。Windows 上不要用 `read-only`。
 - `max_parallel`：这个协作方同时最多跑几个任务，默认 4。
 - `run_access`：允许 opencode 或 pi 做执行任务，见上文。
 - `extra_body`：API 请求里额外带的参数。
@@ -294,13 +305,13 @@ Claude Code 只判断任务属于哪一级，交给谁、用什么推理强度�
 
 - **Claude Code 只能通过插件调用协作方。** 插件带有一个钩子：Claude Code 直接运行 `codex exec`、`codex review`、`opencode run` 或用 pi 跑任务的命令会被拦下，这样每次调用都有记录、改动追踪和明确的模型和推理强度。你自己在终端里运行它们不受影响。
 - **Codex 的隔离靠它自己的沙箱。**
-  - 沙箱以 Codex 的配置为准。是 `danger-full-access` 时，Codex 能读写电脑上的任何目录；任务说明会限定改动范围、Claude Code 事后也会审查 diff，但这些都不是技术上的隔离。想要隔离，把 `agents.<代号>.sandbox` 设成 `workspace-write` 或 `read-only`。
+  - 沙箱以 Codex 的配置为准。是 `danger-full-access` 时，Codex 能读写电脑上的任何目录；任务说明会限定改动范围、Claude Code 事后也会审查 diff，但这些都不是技术上的隔离。想要隔离，把 `agents.<代号>.sandbox` 设成 `workspace-write` 或 `read-only`（Windows 上用 `workspace-write`：只读沙箱可能连读文件的命令都启动不了）。
   - Windows 上 Codex 默认的 elevated 沙箱要先以管理员身份完成一次设置，设置坏了每条命令都会失败（报 `windows sandbox failed`）。改了沙箱之后让 Claude Code 运行一次 `check`：它不调模型地测一遍沙箱，坏了会列出修法，比如改用 `[windows] sandbox = "unelevated"`。
   - 审批 `approval` 保持默认的 `never` 就好：派出去的任务没人能批准，沙箱坏了要修沙箱。
 - **opencode 和 pi 做执行时没有系统沙箱。** `edit` 档写不了项目以外的文件、不能运行命令；`shell` 档的命令能访问整台机器。默认不开放，要你自己在用户配置里写，项目配置开不了。
 - **代码会发给协作方背后的厂商。** 派给 Codex 的发给 OpenAI；opencode、pi 和 API 模型发给对应的厂商，API 模型还会收到 Claude Code 附上的文件。涉及敏感代码的项目先确认没问题，必要时用项目配置收紧。
 - **API key 可以写在用户配置里，也可以放在环境变量里。** 写在配置里是明文，`~/.claude/foreman/config.json` 不要提交或分享；项目配置里写的 key 不生效。`config` 命令不显示 key，脚本也不会把 key 写进运行记录。
-- **按量计费的都会产生费用。** Codex 用 API key 计费时、API 模型、opencode 和 pi 接入的按量计费厂商，每次派活或讨论都会花钱。不想让 Claude Code 自动派活，就把 `dispatch.auto` 设成 `false`。
+- **按量计费的都会产生费用。** Codex 用 API key 计费时、API 模型、opencode 和 pi 接入的按量计费厂商，每次派活或讨论都会花钱。不想让 Claude Code 自己发起派活、讨论和审查，就把 `dispatch.auto` 设成 `false`，它会先问你。
 - **协作方不会因为等人回答而卡住。** Codex 默认不需要审批，opencode 不开放提问和需要确认的权限，pi 没有提问工具。它们要人回答的事都收集在结果里，由 Claude Code 判断：你已有授权内的直接决定后续接，业务取舍、扩大范围、花钱和不可逆的操作才问你。
 
 ## 运行记录

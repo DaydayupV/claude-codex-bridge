@@ -37,7 +37,7 @@
 
 | 字段 | 作用 | 默认 |
 |---|---|---|
-| `auto` | 是否主动派活（见 skill 的"授权"一节） | `true` |
+| `auto` | Claude 主动发起派活、讨论和审查前要不要先问用户：`true` 直接做并说一句，`false` 先问（见 skill 的"授权"） | `true` |
 | `watch` | `auto`：只要派给了其他模型（执行、续接、讨论、审查）就打开实时查看；`off`：不主动打开，想看时用 `/foreman:watch` | `auto` |
 | `intro` | 新派出的对话第一次打开实时查看时，先放一段启动动画：模型的像素头像、"正在启动"和几句玩笑，单个模型 5 秒、讨论 10 秒，按任意键跳过，任务提前结束会马上收尾。续接（讨论的下一轮、返工）不放。头像按模型名里的关键字认（gpt、deepseek、glm、kimi、qwen、mimo、minimax、gemini、claude 等），认不出的用 ??? 头像。`false` 关掉 | `true` |
 | `discuss_max_rounds` | 一场讨论最多几轮（第 1 轮加上之后的续接），每个参与方各自计数；超出后脚本拒绝续接 | `2` |
@@ -60,7 +60,7 @@
 | `model` | 模型 | 不写就沿用 `~/.codex/config.toml` |
 | `bin` | codex 可执行文件或 `codex.js` 路径（也可以用环境变量 `CODEX_BIN`） | 自动查找 |
 | `max_parallel` | 这个协作方同时最多运行几个任务，所有任务组和会话加起来算（见 skill 的"并发拆分"一节） | `4` |
-| `sandbox` | `run` / `review` / `discuss` 各自的沙箱：`read-only` / `workspace-write` / `danger-full-access` | 全部 `null`，沿用 Codex 配置 |
+| `sandbox` | `run` / `review` / `discuss` 各自的沙箱：`read-only` / `workspace-write` / `danger-full-access`。Windows 上不要用 `read-only`，只读沙箱可能连读文件的命令都启动不了 | 全部 `null`，沿用 Codex 配置 |
 | `approval` | 审批策略：`never` 或 `on-request` | 不写时用 `never`：无人值守，没人能审批。命令被沙箱挡住时直接把失败交回给模型；沙箱坏了要修沙箱，见下文"Codex 的沙箱起不来时" |
 
 ### Codex 的沙箱起不来时
@@ -132,7 +132,7 @@
 
 ## levels
 
-`run` / `review` / `discuss` 三种任务，各有 `simple` / `normal` / `complex` 三级。每一级可以写：
+`run` / `review` / `discuss` 三种任务，各有 `simple` / `normal` / `complex` 三级。另有一个 0 级（未达门槛、不值得找外部模型），固定由 Claude 自己做，不进配置。每一级可以写：
 - `"claude code"`：执行由 Claude 自己做；审查和讨论表示这一级不找外部协作方。三种任务都可以这样写。
 - `run` 和 `review`：`{ "agent": "<代号>", "effort": "<推理强度>" }`。
 - `discuss`：参与方数组，可以一方也可以多方，例如 `[{ "agent": "gpt-6-astra", "effort": "max" }, { "agent": "deepseek-v4-pro", "effort": "max" }]`。同一个协作方在一级里只能出现一次。

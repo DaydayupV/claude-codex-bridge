@@ -10,8 +10,8 @@ A Claude Code plugin that makes Claude Code the foreman: it plans, decides and c
 
 ## How it works
 
-1. **Pick a level**: Claude Code decides whether the task is simple, normal or complex (`simple` / `normal` / `complex`).
-2. **Hand it off as configured**: who gets each level of each task type, and with what effort, is up to you in the config; a level set to `"claude code"` is done by Claude Code itself.
+1. **Pick a level**: a request goes through stages of discussion, hands-on work and review, and each gets a level by that kind's own criteria. Small things not worth an outside model are level 0, which Claude Code does itself; the rest are simple, normal or complex (`simple` / `normal` / `complex`).
+2. **Hand it off as configured**: who gets levels 1–3, and with what effort, is up to you in the config; a level set to `"claude code"` is done by Claude Code itself.
 3. **Watch live**: once it's handed off, a live view opens in the terminal and shows each step the model takes.
 4. **Check the result**: Claude Code reviews the changes, runs them to verify, and reports which model did the work and how many tokens it used.
 
@@ -31,12 +31,14 @@ You can also just ask Claude Code to "check the environment" (`check`: whether e
 
 ### Without commands
 
-The bundled skill lets Claude Code decide on its own:
+The bundled skill has Claude Code level each stage (discussion, hands-on work, review) and start what crosses the threshold on its own:
 
-- Hand off hands-on work as the levels and config say. If you'd rather it didn't, set `dispatch.auto` to `false` and Claude Code asks you first.
-- Discuss complex, uncertain designs that would be costly to get wrong with other models first.
-- Ask another model to review risky or large changes before delivering them.
+- Before giving an approach, talk complex, uncertain questions through with other models first; Claude Code rules on the conclusion.
+- Before starting work, hand off hands-on work as the levels and config say; work only Claude Code does (decisions, design, text) and level 0 small things aren't handed off.
+- Before delivering, decide by the risk of the change whether another model should review it.
 - When a big task splits into parts that don't touch each other, hand them to several sessions at once to cut the wait (each agent's limit is `max_parallel`).
+
+If you'd rather Claude Code didn't start these on its own, set `dispatch.auto` to `false`: it asks you before handing off work, starting a discussion or asking for a review.
 
 So that Claude Code doesn't forget (easy when a project has its own skills), the plugin reminds it once at the start of every session and includes your preference files.
 
@@ -119,7 +121,7 @@ A minimal example: Codex does complex hands-on work and every review, and comple
 ```
 
 - Each key under `agents` is the agent's **ID**, which `levels` and `--agent` refer to. Naming it after its model works best; IDs may use letters, digits, `.`, `-` and `_`.
-- Each of the three task types (`run` for hands-on work, `review`, `discuss`) has three levels. Hands-on work and reviews name one agent; discussions name a set of participants.
+- Each of the three task types (`run` for hands-on work, `review`, `discuss`) has three levels, plus a level 0 that isn't in the config (see "Task levels" below). Hands-on work and reviews name one agent; discussions name a set of participants.
 - `"claude code"` means Claude Code does it itself; for reviews and discussions, that level uses no outside model.
 - `effort` is the reasoning effort; leave it out for the default. For Codex it's `low` to `ultra`; for opencode, the model's variant; for pi, its thinking level; for API models it's sent as `reasoning_effort` as is.
 
@@ -136,11 +138,20 @@ You can have several agents of one type, each with a different model. Codex isn'
 
 ### Task levels
 
-Claude Code only decides which level a task is; who gets it, and with what effort, is up to you in `levels`. The level depends on how much judgement it takes and how costly a mistake would be, not on how much changes: renaming across 20 files from a list is simple, while changing an interface between modules is complex. Claude Code must give a level every time; if it's missing, the script errors out rather than quietly picking one.
+A request often goes through stages of discussion, hands-on work and review, and Claude Code levels each stage by that kind's own criteria when it gets there. The criteria differ by kind:
+
+| Level | Discussion (how uncertain, how costly a wrong choice) | Hands-on work (how much judgement, how costly a mistake) | Review (risk of the change) |
+|---|---|---|---|
+| 0 | The approach is clear or you've decided: no outside model | A small change done in one place, quicker to make than to brief | Small changes, docs, styling, config, or low-risk changes with tests: Claude Code's check is enough |
+| 1 `simple` | A one-off question that needs a second opinion | The method is settled, little judgement needed | Large but mechanical changes |
+| 2 `normal` | A few options to compare, limited impact | There's a spec, details need designing | Larger ordinary features and fixes |
+| 3 `complex` | Complex, uncertain and costly to get wrong | Unknown cause, costly mistakes, cross-module | High-risk code: money, data, concurrency, auth |
+
+Level 0 is always done by Claude Code and isn't in the config; who gets levels 1–3, and with what effort, is up to you in `levels`. Levels go by judgement and risk, not by how much changes: renaming across 20 files from a list is simple, while changing an interface between modules is complex. Every call that goes out must carry a level; if it's missing, the script errors out rather than quietly picking one.
 
 - To choose on the spot, tell Claude Code "run it with ultra" or "use such-and-such model"; Claude Code switches to `--effort` or `--model`.
 - When a level is `"claude code"`, you can still explicitly ask for a task to be handed off, and Claude Code names an agent with `--agent`.
-- Small tasks follow the levels too. By default Claude Code does `simple` itself; give `simple` to Codex and even tiny changes get handed off.
+- Level 0 is only for small changes done in one place. By default Claude Code also does `simple` itself; give `simple` to an agent and everything except level 0 changes gets handed off.
 
 ### Adding API models
 
@@ -256,7 +267,7 @@ Fields this config doesn't use but that are often adjusted:
 "deepseek-v4-pro":    { "type": "api", "base_url": "https://api.deepseek.com", "api_key_env": "DEEPSEEK_API_KEY", "model": "deepseek-v4-pro", "extra_body": { "temperature": 0.3 } }
 ```
 
-- `sandbox`: the sandbox Codex uses for each task type (`run`, `review`, `discuss`): `read-only`, `workspace-write` or `danger-full-access`. Left out, Codex's own config applies.
+- `sandbox`: the sandbox Codex uses for each task type (`run`, `review`, `discuss`): `read-only`, `workspace-write` or `danger-full-access`. Left out, Codex's own config applies. Don't use `read-only` on Windows.
 - `max_parallel`: how many runs this agent may have at once; 4 by default.
 - `run_access`: lets opencode or pi do hands-on work; see above.
 - `extra_body`: extra parameters to send with API requests.
@@ -294,13 +305,13 @@ Preference files win over the plugin's built-in rules, and project level wins ov
 
 - **Claude Code can only call agents through the plugin.** The plugin includes a hook that blocks Claude Code's commands that run `codex exec`, `codex review`, `opencode run` or a pi task directly, so every call is recorded, has its changes tracked, and uses an explicit model and effort. Running them yourself in a terminal isn't affected.
 - **Codex is isolated by its own sandbox.**
-  - The sandbox is whatever Codex is configured with. With `danger-full-access`, Codex can read and write any directory on your machine; the task brief limits what it should touch and Claude Code reviews the diff afterwards, but that is not isolation. For isolation, set `agents.<ID>.sandbox` to `workspace-write` or `read-only`.
+  - The sandbox is whatever Codex is configured with. With `danger-full-access`, Codex can read and write any directory on your machine; the task brief limits what it should touch and Claude Code reviews the diff afterwards, but that is not isolation. For isolation, set `agents.<ID>.sandbox` to `workspace-write` or `read-only` (on Windows use `workspace-write`: the read-only sandbox may fail to start even file-reading commands).
   - Codex's default elevated sandbox on Windows needs a one-time setup with administrator rights, and if that setup is broken, every command fails (with `windows sandbox failed`). After changing the sandbox, have Claude Code run `check`: it tests the sandbox without calling a model and lists fixes if it's broken, such as switching to `[windows] sandbox = "unelevated"`.
   - Leave `approval` at the default `never`: nobody can approve in a handed-off task, and a broken sandbox needs fixing at the sandbox.
 - **opencode and pi have no OS sandbox when doing hands-on work.** At `edit` they can't write outside the project or run commands; at `shell` their commands can reach the whole machine. It's off by default; only you can turn it on, in the user config, and a project config can't.
 - **Your code goes to the providers behind your agents.** Work handed to Codex goes to OpenAI; opencode, pi and API models send it to their providers, and API models also receive the files Claude Code attaches. Check that this is acceptable for sensitive projects, and tighten things with a project config if needed.
 - **API keys can go in the user config or in environment variables.** In the config they're plain text, so don't commit or share `~/.claude/foreman/config.json`; keys in a project config are ignored. The `config` command never shows keys, and the script never writes them into run records.
-- **Pay-as-you-go means real costs.** Codex with API-key billing, API models, and pay-as-you-go providers reached through opencode or pi all cost money for each handoff or discussion. Set `dispatch.auto` to `false` if you don't want Claude Code handing off work on its own.
+- **Pay-as-you-go means real costs.** Codex with API-key billing, API models, and pay-as-you-go providers reached through opencode or pi all cost money for each handoff or discussion. Set `dispatch.auto` to `false` if you don't want Claude Code starting handoffs, discussions and reviews on its own; it asks you first instead.
 - **Agents don't get stuck waiting for an answer.** Codex needs no approvals by default, opencode gets no way to ask questions or request confirmable permissions, and pi has no question tool. Anything they need answered is collected in the result, and Claude Code decides: within the authority you've already given, it decides and resumes; it only asks you about business trade-offs, wider scope, extra cost and irreversible steps.
 
 ## Run records

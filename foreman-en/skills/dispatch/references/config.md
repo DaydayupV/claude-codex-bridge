@@ -37,7 +37,7 @@ Example:
 
 | Setting | What it does | Default |
 |---|---|---|
-| `auto` | Whether to hand off work on its own (see "Permission" in the skill) | `true` |
+| `auto` | Whether Claude asks before starting handoffs, discussions and reviews on its own: `true` goes ahead and says so, `false` asks first (see "Permission" in the skill) | `true` |
 | `watch` | `auto`: open the live view whenever work goes to another model (hands-on work, resumes, discussions, reviews); `off`: don't, and use `/foreman-en:watch` when you want to look | `auto` |
 | `intro` | The first time the live view opens for a newly dispatched conversation, play a short intro first: the model's pixel avatar, "Starting …" and a few jokes, 5 seconds for one model and 10 for a discussion. Any key skips it, and it wraps up at once if the run finishes early. Resumes (the next round of a discussion, a rework) don't get one. The avatar is picked by keywords in the model name (gpt, deepseek, glm, kimi, qwen, mimo, minimax, gemini, claude and so on), with a ??? avatar for anything else. `false` turns it off | `true` |
 | `discuss_max_rounds` | The most rounds one discussion can have (round 1 plus later resumes), counted per participant; the script refuses resumes beyond it | `2` |
@@ -60,7 +60,7 @@ Example:
 | `model` | Model | If not set, uses `~/.codex/config.toml` |
 | `bin` | Path to the codex executable or `codex.js` (or the environment variable `CODEX_BIN`) | Found automatically |
 | `max_parallel` | How many runs this agent may have going at once, across all groups and sessions (see "Splitting work to run in parallel" in the skill) | `4` |
-| `sandbox` | Sandbox for each of `run` / `review` / `discuss`: `read-only` / `workspace-write` / `danger-full-access` | All `null` (use Codex config) |
+| `sandbox` | Sandbox for each of `run` / `review` / `discuss`: `read-only` / `workspace-write` / `danger-full-access`. Don't use `read-only` on Windows: the read-only sandbox may fail to start even file-reading commands | All `null` (use Codex config) |
 | `approval` | Approval policy: `never` or `on-request` | `never` when not set: runs are unattended, so nobody can approve. A command blocked by the sandbox fails straight back to the model; a broken sandbox needs fixing, see "When Codex's sandbox won't start" below |
 
 ### When Codex's sandbox won't start
@@ -132,7 +132,7 @@ Like opencode it has no OS sandbox, and both levels take a change snapshot befor
 
 ## levels
 
-Three task types, `run` / `review` / `discuss`, each with three levels, `simple` / `normal` / `complex`. Each level can be:
+Three task types, `run` / `review` / `discuss`, each with three levels, `simple` / `normal` / `complex`. There is also a level 0 (below the threshold, not worth an outside model), which Claude always does itself and which isn't in the config. Each level can be:
 - `"claude code"`: Claude does hands-on work itself; for reviews and discussions, that level uses no outside agent. All three task types accept it.
 - `run` and `review`: `{ "agent": "<ID>", "effort": "<effort>" }`.
 - `discuss`: an array of participants, one or more, for example `[{ "agent": "gpt-6-astra", "effort": "max" }, { "agent": "deepseek-v4-pro", "effort": "max" }]`. Each agent can appear only once per level.
