@@ -243,4 +243,63 @@ function replaceFile(from, to) {
   }
 }
 
-export { replaceFile, HERE, LANGUAGE, M, notice, isObject, readJson, die, need, resolveDir, readBrief, MAX_MATERIAL_CHARS, readAttachments, focusFiles, binCommand, pathCommand, npmEntry, isGitRepo, pidAlive, killTree, relativePath, pathKey, RECONNECT, isReconnect, sleep, clip, oneLine, plainCommand, isAscii, modelOf, whoOf, agentTypeOf, looksLikeQuestion, looksLikeInputPrompt, looksLikeFinalQuestion, needsDecision, closestMatches };
+// 终端里中日韩字符和全角符号占两格，按显示宽度截断和换行，避免折行错位。
+const charWidth = (ch) => (/[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(ch) ? 2 : 1);
+const textWidth = (s) => [...s].reduce((w, ch) => w + charWidth(ch), 0);
+
+function fitWidth(s, width) {
+  if (textWidth(s) <= width) return s;
+  let out = '';
+  let w = 0;
+  for (const ch of s) {
+    if (w + charWidth(ch) > width - 1) break;
+    out += ch;
+    w += charWidth(ch);
+  }
+  return `${out}…`;
+}
+
+const NO_LINE_START = /[、，。．！？：；）】』」》〉’”…—,.!?:;)\]}%]/;
+const NO_LINE_END = /[（【『「《〈‘“([{]/;
+const WORD = /[A-Za-z0-9_\-./\\]/; // 英文单词、文件名和路径，折行时不拆开
+
+function wrapWidth(s, width) {
+  const lines = [];
+  for (const para of String(s).replace(/\r/g, '').split('\n')) {
+    let line = '';
+    let w = 0;
+    for (const ch of para) {
+      if (w + charWidth(ch) > width) {
+        const chars = [...line];
+        let k = chars.length;
+        if (NO_LINE_START.test(ch)) {
+          // 逗号、句号这类标点不放在行首：把上一行末尾的字（连同它后面的标点）一起带到下一行。
+          while (k > 0 && NO_LINE_START.test(chars[k - 1])) k--;
+          k = k > 1 ? k - 1 : chars.length;
+          if (WORD.test(chars[k] || '')) { // 带走的是英文单词的末尾时，整个单词一起带走
+            let j = k;
+            while (j > 0 && WORD.test(chars[j - 1])) j--;
+            if (j > 0 && k - j < Math.min(40, width / 2)) k = j;
+          }
+        } else if (WORD.test(ch) && WORD.test(chars[k - 1] || '')) {
+          // 英文单词不拆开，整个带到下一行（超过半行的长单词照常截断）
+          let j = k;
+          while (j > 0 && WORD.test(chars[j - 1])) j--;
+          if (j > 0 && k - j < Math.min(40, width / 2)) k = j;
+        }
+        while (k > 1 && NO_LINE_END.test(chars[k - 1])) k--; // 开引号、开括号不留在行尾
+        const carry = chars.splice(k).join('');
+        lines.push(chars.join('').trimEnd());
+        line = carry;
+        w = textWidth(carry);
+        if (ch === ' ' && !line) continue; // 行首不留空格
+      }
+      line += ch;
+      w += charWidth(ch);
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+export { replaceFile, HERE, LANGUAGE, M, notice, isObject, readJson, die, need, resolveDir, readBrief, MAX_MATERIAL_CHARS, readAttachments, focusFiles, binCommand, pathCommand, npmEntry, isGitRepo, pidAlive, killTree, relativePath, pathKey, RECONNECT, isReconnect, sleep, clip, oneLine, plainCommand, isAscii, modelOf, whoOf, agentTypeOf, looksLikeQuestion, looksLikeInputPrompt, looksLikeFinalQuestion, needsDecision, closestMatches, charWidth, textWidth, fitWidth, wrapWidth };

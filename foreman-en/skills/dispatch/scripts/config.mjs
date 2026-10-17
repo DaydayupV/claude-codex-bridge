@@ -62,7 +62,7 @@ const MODES = ['run', 'review', 'discuss'];
 const CLAUDE_CODE = 'claude code';
 const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
 const DEFAULT_CONFIG = {
-  dispatch: { auto: true, watch: 'auto', discuss_max_rounds: 2, timeout_min: 480, stall_min: 40, busy_ask_min: 2, runs_dir: null },
+  dispatch: { auto: true, watch: 'auto', intro: true, discuss_max_rounds: 2, timeout_min: 480, stall_min: 40, busy_ask_min: 2, runs_dir: null },
   agents: {},
   levels: Object.fromEntries(MODES.map((mode) => [mode, Object.fromEntries(LEVELS.map((lv) => [lv, CLAUDE_CODE]))])),
 };
@@ -279,6 +279,7 @@ function validateConfig(cfg, adapters, fail = die) {
   for (const key of ['dispatch', 'agents', 'levels']) check(isObject(cfg[key]), key, why.object);
   check(typeof cfg.dispatch.auto === 'boolean', 'dispatch.auto', why.boolean);
   check(['auto', 'off'].includes(cfg.dispatch.watch), 'dispatch.watch', why.watch);
+  check(typeof cfg.dispatch.intro === 'boolean', 'dispatch.intro', why.boolean);
   check(Number.isInteger(cfg.dispatch.discuss_max_rounds) && cfg.dispatch.discuss_max_rounds >= 1, 'dispatch.discuss_max_rounds', why.positiveInt);
   for (const key of ['timeout_min', 'stall_min', 'busy_ask_min']) check(Number.isFinite(cfg.dispatch[key]) && (key === 'timeout_min' ? cfg.dispatch[key] > 0 : cfg.dispatch[key] >= 0), `dispatch.${key}`, why.minutes);
   check(cfg.dispatch.runs_dir === null || text(cfg.dispatch.runs_dir), 'dispatch.runs_dir', why.pathOrNull);

@@ -39,6 +39,7 @@ Example:
 |---|---|---|
 | `auto` | Whether to hand off work on its own (see "Permission" in the skill) | `true` |
 | `watch` | `auto`: open the live view whenever work goes to another model (hands-on work, resumes, discussions, reviews); `off`: don't, and use `/foreman-en:watch` when you want to look | `auto` |
+| `intro` | The first time the live view opens for a newly dispatched conversation, play a short intro first: the model's pixel avatar, "Starting …" and a few jokes, 5 seconds for one model and 10 for a discussion. Any key skips it, and it wraps up at once if the run finishes early. Resumes (the next round of a discussion, a rework) don't get one. The avatar is picked by keywords in the model name (gpt, deepseek, glm, kimi, qwen, mimo, minimax, gemini, claude and so on), with a ??? avatar for anything else. `false` turns it off | `true` |
 | `discuss_max_rounds` | The most rounds one discussion can have (round 1 plus later resumes), counted per participant; the script refuses resumes beyond it | `2` |
 | `timeout_min` | Total time limit for one run, in minutes | `480` |
 | `stall_min` | How long without activity counts as stuck, in minutes (0 turns it off). Codex: no events and no command running; API: no data at all in the stream; opencode: no events at all; pi: no events and no tool running | `40` |

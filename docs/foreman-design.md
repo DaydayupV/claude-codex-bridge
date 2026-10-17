@@ -204,6 +204,7 @@
 | `tracker.mjs` | 影子 git 快照和 diff |
 | `review-scope.mjs` | 审查范围的 diff 计算（第 5.2 节） |
 | `watch.mjs` | 时间线、组视图、verbose |
+| `watch-intro.mjs`、`watch-avatars.mjs` | watch 的启动动画：按模型名认头像、排版和动画；头像数据由 `tools/make-avatars.mjs` 从 `tools/avatars/source.webp` 生成 |
 | `status.mjs` | status、await-busy、cancel |
 | `adapters/codex-cli.mjs`、`adapters/opencode-cli.mjs`、`adapters/api.mjs` | 各工具适配器 |
 | `adapters/index.mjs` | 静态注册表：`type` → 适配器 |

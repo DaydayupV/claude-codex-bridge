@@ -2,66 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { RUNS_ROOT, CANCEL_FILE, listRuns, findRun, readMeta, isRunning, runEnd, runOutcome, groupTally, groupRuns } from './records.mjs';
-import { M, die, sleep, clip, oneLine, plainCommand, RECONNECT, isReconnect, modelOf, whoOf, agentTypeOf, needsDecision } from './util.mjs';
-
-// 终端里中日韩字符和全角符号占两格，按显示宽度截断和换行，避免折行错位。
-const charWidth = (ch) => (/[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(ch) ? 2 : 1);
-const textWidth = (s) => [...s].reduce((w, ch) => w + charWidth(ch), 0);
-
-function fitWidth(s, width) {
-  if (textWidth(s) <= width) return s;
-  let out = '';
-  let w = 0;
-  for (const ch of s) {
-    if (w + charWidth(ch) > width - 1) break;
-    out += ch;
-    w += charWidth(ch);
-  }
-  return `${out}…`;
-}
-
-const NO_LINE_START = /[、，。．！？：；）】』」》〉’”…—,.!?:;)\]}%]/;
-const NO_LINE_END = /[（【『「《〈‘“([{]/;
-const WORD = /[A-Za-z0-9_\-./\\]/; // 英文单词、文件名和路径，折行时不拆开
-
-function wrapWidth(s, width) {
-  const lines = [];
-  for (const para of String(s).replace(/\r/g, '').split('\n')) {
-    let line = '';
-    let w = 0;
-    for (const ch of para) {
-      if (w + charWidth(ch) > width) {
-        const chars = [...line];
-        let k = chars.length;
-        if (NO_LINE_START.test(ch)) {
-          // 逗号、句号这类标点不放在行首：把上一行末尾的字（连同它后面的标点）一起带到下一行。
-          while (k > 0 && NO_LINE_START.test(chars[k - 1])) k--;
-          k = k > 1 ? k - 1 : chars.length;
-          if (WORD.test(chars[k] || '')) { // 带走的是英文单词的末尾时，整个单词一起带走
-            let j = k;
-            while (j > 0 && WORD.test(chars[j - 1])) j--;
-            if (j > 0 && k - j < Math.min(40, width / 2)) k = j;
-          }
-        } else if (WORD.test(ch) && WORD.test(chars[k - 1] || '')) {
-          // 英文单词不拆开，整个带到下一行（超过半行的长单词照常截断）
-          let j = k;
-          while (j > 0 && WORD.test(chars[j - 1])) j--;
-          if (j > 0 && k - j < Math.min(40, width / 2)) k = j;
-        }
-        while (k > 1 && NO_LINE_END.test(chars[k - 1])) k--; // 开引号、开括号不留在行尾
-        const carry = chars.splice(k).join('');
-        lines.push(chars.join('').trimEnd());
-        line = carry;
-        w = textWidth(carry);
-        if (ch === ' ' && !line) continue; // 行首不留空格
-      }
-      line += ch;
-      w += charWidth(ch);
-    }
-    lines.push(line);
-  }
-  return lines;
-}
+import { M, die, sleep, clip, oneLine, plainCommand, RECONNECT, isReconnect, modelOf, whoOf, agentTypeOf, needsDecision, charWidth, textWidth, fitWidth, wrapWidth } from './util.mjs';
+import { avatarFor, introScene, playIntro } from './watch-intro.mjs';
 
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
 // 能画实时画面的终端：输出到终端，而且不是 TERM=dumb 这种不认光标控制的终端
@@ -224,6 +166,14 @@ function liveScreen(render, { wheel = false } = {}) {
     },
   };
 }
+
+// 启动动画只在新派出的对话第一次打开时放：输出到能画实时画面的终端、没设 NO_COLOR、
+// 配置没关（dispatch.intro）、没加 --no-intro，而且有还在运行的、不是续接出来的任务（讨论第 2 轮、返工都不放）。
+const LEAVE_SCREEN = '\x1b[0m\x1b[?7h\x1b[?25h\x1b[?1049l';
+const kindOf = (m) => m.kind || (m.mode === 'discuss' ? 'discuss' : m.mode === 'review' ? 'review' : 'exec');
+const introWanted = (o, metas, loadCfg) => liveCapable() && !process.env.NO_COLOR && !o['no-intro']
+  && metas.some((m) => isRunning(m) && !m.parent) && loadCfg(metas[0].cwd).dispatch.intro !== false;
+const introOf = (m) => ({ key: avatarFor(m.model_name ?? m.model, agentTypeOf(m)), model: modelOf(m), who: whoOf(m) });
 
 // 把一段键盘输入拆成单个按键（方向键、翻页键是 ESC 开头的一串）
 const splitKeys = (s) => s.match(/\x1b\[[0-9;]*[A-Za-z~]|\x1bO[A-Za-z]|[\s\S]/g) || [];
@@ -679,7 +629,7 @@ function groupHeadLine(group, title, all, width) {
   return C.bold(left) + ' '.repeat(width - textWidth(left) - countsW) + counts;
 }
 
-async function watchGroup(group) {
+async function watchGroup(group, o, loadCfg) {
   // 被续接过的任务（讨论的上一轮、返工前的那次）由续接的新任务代替，不再单独显示
   const current = (runs) => {
     const replaced = new Set(runs.map((run) => run.meta.parent).filter(Boolean));
@@ -694,6 +644,27 @@ async function watchGroup(group) {
     if (waited >= 15000) die(M.groupNotFound(group));
     if (waited === 0 && !runs.length) process.stdout.write(`${M.watchWaiting}\n`);
     await sleep(500);
+  }
+  // 启动动画：画出组里新派出的各位，播放中后登记的任务也会出场；结束后接着用备用屏幕画实时面板
+  let introPlayed = false;
+  let handOff = () => {};
+  if (introWanted(o, runs.map((run) => run.meta), loadCfg)) {
+    const fresh = (list) => list.filter((run) => !run.meta.parent).map((run) => introOf(run.meta));
+    const first = runs.find((run) => !run.meta.parent).meta;
+    const kind = runs.some((run) => kindOf(run.meta) === 'discuss') ? 'discuss' : kindOf(first);
+    // meta.json 正被替换时会暂时读不到，组里的任务就会从列表里消失：见过的任务都记着，读不到的不算结束
+    const seen = new Map(runs.map((run) => [run.id, run]));
+    handOff = await playIntro(introScene({ mode: first.mode, kind, participants: fresh(runs), group: true }), {
+      keepScreen: true,
+      isOver: () => {
+        for (const run of recentRuns()) seen.set(run.id, run);
+        return [...seen.values()].every((run) => { const m = readMeta(run.dir); return !!m && !isRunning(m); });
+      },
+      refresh: () => { const list = recentRuns(); return list.length ? fresh(list) : null; },
+    });
+    introPlayed = true;
+    const after = recentRuns();
+    if (after.length) runs = after;
   }
   const known = new Map();
   const feeds = new Map();
@@ -761,6 +732,7 @@ async function watchGroup(group) {
     process.on('exit', () => screen.stop());
     process.on('SIGINT', () => { screen.stop(); process.exit(130); });
     screen.start();
+    handOff(); // 实时面板接手了备用屏幕，由它负责退出时恢复终端
     for (let tick = 0; ; tick++) {
       screen.draw();
       if (settled()) break;
@@ -770,6 +742,9 @@ async function watchGroup(group) {
     }
     if (process.stdin.isTTY) { process.stdin.off('data', onKeys); process.stdin.setRawMode(false); process.stdin.pause(); }
     screen.stop();
+  } else if (introPlayed) {
+    process.stdout.write(LEAVE_SCREEN); // 动画期间全部结束了：离开备用屏幕，直接输出汇总
+    handOff();
   } else if (anyRunning()) {
     // 输出被重定向时（比如被别的程序读取），每个任务状态变化时写一行。
     process.stdout.write(`${M.groupHeader(group, sharedTitle(), known.size)}\n`);
@@ -807,13 +782,24 @@ async function watchGroup(group) {
   process.stdout.write(`${out.join('\n')}\n`);
 }
 
-async function cmdWatch(o) {
-  if (o.group != null) return watchGroup(o.group);
+async function cmdWatch(o, loadCfg) {
+  if (o.group != null) return watchGroup(o.group, o, loadCfg);
   const { id, dir, meta } = await pickWatchRun(o.run);
+  let handOff = null;
+  if (introWanted(o, [meta], loadCfg)) {
+    // 时间线也画在备用屏幕里，动画结束后不用退出；--verbose 逐行输出在普通屏幕里，要先退出
+    handOff = await playIntro(introScene({ mode: meta.mode, kind: kindOf(meta), participants: [introOf(meta)] }), {
+      keepScreen: !o.verbose,
+      isOver: () => { const m = readMeta(dir); return !!m && !isRunning(m); },
+    });
+  }
   const cwd = meta.cwd;
   const rel = (p) => { const r = path.relative(cwd, p); return r && !r.startsWith('..') && !path.isAbsolute(r) ? r : p; };
   // 任务还在运行、输出到终端时，时间线画在可以随窗口重排的实时画面里
-  const view = !o.verbose ? timelineRenderer(meta, rel, { screen: liveCapable() && isRunning(meta), dir })
+  const live = liveCapable() && isRunning(meta);
+  // 动画期间任务就结束了：时间线不进实时画面，先离开动画留下的备用屏幕
+  if (handOff && !o.verbose && !live) { process.stdout.write(LEAVE_SCREEN); handOff(); }
+  const view = !o.verbose ? timelineRenderer(meta, rel, { screen: live, dir })
     : (agentTypeOf(meta) === 'api' ? apiVerboseRenderer : verboseRenderer)(meta, rel);
   view.header(id, dir);
 
@@ -842,6 +828,7 @@ async function cmdWatch(o) {
 
   drain();
   view.goLive();
+  handOff?.(); // 实时时间线接手了备用屏幕，由它负责退出时恢复终端
   let m = readMeta(dir);
   while (isRunning(m)) {
     await sleep(500);

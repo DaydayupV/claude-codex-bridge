@@ -359,6 +359,30 @@ ${schema}`,
   watchRecommendation: (text) => `推荐：${text}`,
   needsDecisionNote: (n) => `有 ${n} 个问题要决定（见 questions）。任务已经结束，不是卡住了：Claude 能决定的直接决定，再用 resume 续接或自己做掉；需要用户拍板的才问用户`,
   inputWaitDetected: (min, line) => `输出了像是在等人回答的提示，之后 ${min} 分钟没有动静，已结束这次运行，问题交回给 Claude：${line}`,
+  // watch 的启动动画。笑话里 {n} 换成模型简称（GPT、DeepSeek……），{m} 换成模型名
+  introStarting: (who) => `正在启动 ${who}`,
+  introGathering: (n, models) => (models ? `正在召集 ${n} 位模型：${models.join('、')}` : `正在召集 ${n} 位模型`),
+  introDispatching: (n, models) => (models ? `正在派出 ${n} 个任务：${models.join('、')}` : `正在派出 ${n} 个任务`),
+  introDone: '任务已经结束，直接看结果',
+  introCountdown: (s) => `${s} 秒 · 任意键跳过`,
+  introEnded: '已结束',
+  introJokes: {
+    run: ['Claude 正在鞭打 {n}……', 'Claude 正在把需求切成 {n} 一口能吃下的小块……', '正在提醒 {n}：这次不许写 300 个测试……', '{n} 正在签署《不越界承诺书》……', '{n} 正在翻仓库的族谱（git log）……', 'Claude 正在给 {n} 划重点……', '正在给 {n} 泡一杯赛博咖啡……'],
+    review: ['{n} 正在戴上老花镜……', '正在给 {n} 的红笔灌墨水……', '{n} 正在 diff 里找茬……', 'Claude 正在假装一点也不紧张……'],
+    discuss: ['Claude 正在给各位分发辩论稿……', '正在把会议室的椅子摆成一圈……', '正在没收手机，防止偷看别人的方案……', 'Claude 宣布规则：对事不对模型……', '{n} 正在清嗓子……', 'Claude 正在给每位倒一杯水……'],
+  },
+  introModelJokes: {
+    claude: ['Claude 正在照镜子……'],
+    chatgpt: ['GPT 正在把 effort 拧到最大……', 'GPT 正在活动手指，准备敲代码……'],
+    gemini: ['双子座的两位正在猜拳决定谁来上班……', 'Gemini 比了个耶，表示收到……'],
+    deepseek: ['DeepSeek 正在深度思考要不要深度思考……', '小鲸鱼正在下潜到代码最底层……'],
+    mimo: ['MiMo 正在握拳给自己打气……', 'MiMo 正在把 M 字发卡别正……'],
+    glm: ['GLM 正在把立方体发卡扶正……', 'GLM 正在默念：先读代码，再开口……'],
+    kimi: ['Kimi 正在一口气读完整个仓库……', 'Kimi 正在把 K 字发卡擦亮……'],
+    qwen: ['Qwen 正在问第一千个问题……', 'Qwen 冲你眨了眨眼……'],
+    minimax: ['MiniMax 正在给声波发卡调音……', 'MiniMax 正在清嗓子，准备开麦……'],
+    unknown: ['一位神秘嘉宾正在入场……', '正在核对神秘嘉宾的入场券……', '正在给 {m} 办临时工牌……'],
+  },
 };
 
 const en = {
@@ -720,6 +744,30 @@ ${schema}`,
   watchRecommendation: (text) => `Recommended: ${text}`,
   needsDecisionNote: (n) => `${n} question(s) need a decision (see questions). The run has finished; it isn't stuck. Decide what Claude can decide, then resume or do it yourself; ask the user only about what needs their call`,
   inputWaitDetected: (min, line) => `It printed what looks like a prompt waiting for an answer and then went quiet for ${min} min; the run was stopped and the question handed back to Claude: ${line}`,
+  // The watch intro. In the jokes, {n} becomes the model's short name (GPT, DeepSeek…) and {m} the model name
+  introStarting: (who) => `Starting ${who}`,
+  introGathering: (n, models) => (models ? `Gathering ${n} models: ${models.join(', ')}` : `Gathering ${n} models`),
+  introDispatching: (n, models) => (models ? `Sending out ${n} runs: ${models.join(', ')}` : `Sending out ${n} runs`),
+  introDone: 'The run has already finished; straight to the result',
+  introCountdown: (s) => `${s}s · any key to skip`,
+  introEnded: 'finished',
+  introJokes: {
+    run: ['Claude is cracking the whip over {n}…', 'Claude is cutting the spec into bite-size pieces for {n}…', 'Reminding {n}: no 300-test suites this time…', '{n} is signing a pledge to stay in scope…', '{n} is reading the family tree (git log)…', 'Claude is highlighting the key points for {n}…', 'Brewing a cup of coffee for {n}…'],
+    review: ['{n} is putting on reading glasses…', "Refilling {n}'s red pen…", '{n} is picking nits in the diff…', 'Claude is pretending not to be nervous…'],
+    discuss: ['Claude is handing out the debate notes…', 'Arranging the meeting-room chairs in a circle…', "Collecting phones so nobody peeks at anyone else's proposal…", 'Claude announces the rules: attack the idea, not the model…', '{n} is clearing its throat…', 'Claude is pouring everyone a glass of water…'],
+  },
+  introModelJokes: {
+    claude: ['Claude is checking itself in the mirror…'],
+    chatgpt: ['GPT is cranking the effort all the way up…', 'GPT is cracking its knuckles…'],
+    gemini: ["The Gemini twins are playing rock-paper-scissors for today's shift…", 'Gemini flashes a peace sign: got it…'],
+    deepseek: ['DeepSeek is thinking deeply about whether to think deeply…', 'The little whale is diving into the depths of the code…'],
+    mimo: ['MiMo is pumping both fists…', 'MiMo is straightening the M hair clip…'],
+    glm: ['GLM is straightening the cube hair clip…', 'GLM mutters: read the code first, talk later…'],
+    kimi: ['Kimi is reading the whole repo in one sitting…', 'Kimi is polishing the K hair clip…'],
+    qwen: ['Qwen is asking question number one thousand…', 'Qwen gives you a wink…'],
+    minimax: ['MiniMax is tuning the sound-wave hair clip…', 'MiniMax is clearing its throat for the mic…'],
+    unknown: ['A mystery guest is arriving…', "Checking the mystery guest's ticket…", 'Printing a temporary badge for {m}…'],
+  },
 };
 
 export const MESSAGES = { zh, en };
