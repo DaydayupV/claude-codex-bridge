@@ -27,13 +27,51 @@ function codexCommand(agent) {
   return binCommand(npmEntry('@openai', 'codex', 'bin', 'codex.js') || 'codex.exe');
 }
 
-// 没配置模型时从 Codex 的 config.toml 读出实际模型名，只用于显示，让用户知道用的是哪个模型。
-function codexConfigModel() {
+// 读 Codex 的 config.toml 里的一个字符串值：不给表名时只看第一个 [表] 之前的顶层键。读不到返回 null。
+function codexConfigValue(key, table = null) {
   const file = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'config.toml');
   let text;
   try { text = fs.readFileSync(file, 'utf8'); } catch { return null; }
-  const top = text.split(/^\s*\[/m)[0]; // 只看第一个 [表] 之前的顶层键
-  return /^\s*model\s*=\s*["']([^"']+)["']/m.exec(top)?.[1] || null;
+  const part = table == null ? text.split(/^\s*\[/m)[0] : (text.split(new RegExp(`^\\s*\\[${table}\\]\\s*$`, 'm'))[1] || '').split(/^\s*\[/m)[0];
+  return new RegExp(`^\\s*${key}\\s*=\\s*["']([^"']+)["']`, 'm').exec(part)?.[1] || null;
+}
+
+// 没配置模型时从 Codex 的配置读出实际模型名，只用于显示，让用户知道用的是哪个模型。
+const codexConfigModel = () => codexConfigValue('model');
+
+// Codex 的沙箱启动不了命令时的报错（Windows 沙箱设置坏了最常见）；只在命令失败时匹配，避免误判正常输出。
+const SANDBOX_ERROR = /windows sandbox failed|helper_unknown_error|setup refresh had errors|failed to create unified exec process|sandbox (?:setup )?(?:failed|error)/i;
+const SANDBOX_MARK = 'foreman-sandbox-ok';
+
+// 用 codex sandbox 在沙箱里跑一条 echo，不调用模型。ok 为 null 表示这个版本的 Codex 没法这样探测。
+function probeSandbox(agent, mode, extra = []) {
+  const { file, pre } = codexCommand(agent);
+  const command = process.platform === 'win32' ? ['cmd', '/c', 'echo', SANDBOX_MARK] : ['echo', SANDBOX_MARK];
+  const r = spawnSync(file, [...pre, 'sandbox', ...extra, '-c', `sandbox_mode="${mode}"`, '--', ...command],
+    { encoding: 'utf8', windowsHide: true, timeout: 60000, cwd: os.tmpdir() });
+  if ((r.stdout || '').includes(SANDBOX_MARK)) return { ok: true, error: null };
+  const error = r.error?.message || (r.stderr || '').trim().split(/\r?\n/).pop() || `exit ${r.status}`;
+  return { ok: /unrecognized subcommand|unexpected argument|invalid value/i.test(error) ? null : false, error };
+}
+
+// 这个协作方在各类任务里实际用的沙箱：foreman 配置里写了就用它，否则用 Codex 自己的 sandbox_mode。
+// danger-full-access 不进沙箱，不用探测；都没写时按只读探测，沙箱本身坏了任何模式都起不来。
+function checkSandbox(agent, modes) {
+  const configured = codexConfigValue('sandbox_mode');
+  const byMode = new Map();
+  for (const mode of modes) {
+    const value = agent.sandbox?.[mode] || configured || null;
+    if (value === 'danger-full-access') continue;
+    const key = value || 'read-only';
+    byMode.set(key, [...(byMode.get(key) || []), mode]);
+  }
+  if (!byMode.size) return null;
+  const checked = [...byMode].map(([mode, used_in]) => ({ mode, used_in, ...probeSandbox(agent, mode) }));
+  const windows = process.platform === 'win32' ? codexConfigValue('sandbox', 'windows') : null;
+  // Windows 默认的 elevated 沙箱要先以管理员身份完成设置，坏了的时候 unelevated 往往还能用，顺带试一下。
+  const unelevated = process.platform === 'win32' && windows !== 'unelevated' && checked.some((c) => c.ok === false)
+    ? probeSandbox(agent, checked.find((c) => c.ok === false).mode, ['-c', 'windows.sandbox="unelevated"']).ok : null;
+  return { checked, windows_sandbox: windows, unelevated_ok: unelevated };
 }
 
 // Codex 内置 image_gen 出的图存在 <CODEX_HOME>/generated_images/<会话 id>/ 下，按生成先后返回完整路径。
@@ -52,7 +90,7 @@ function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, sess
     const events = fs.createWriteStream(path.join(runDir, 'events.jsonl'));
     const errLog = fs.createWriteStream(path.join(runDir, 'stderr.log'));
     const event = eventWriter(runDir, events);
-    const out = { code: null, sessionId: null, usage: null, errors: [], warnings: [], fileChanges: new Set(), images: [], quotaExhausted: false, timedOut: false, stalled: false, cancelled: false, commands: 0, messages: [], questions: [] };
+    const out = { code: null, sessionId: null, usage: null, errors: [], warnings: [], notes: [], sandboxError: null, fileChanges: new Set(), images: [], quotaExhausted: false, timedOut: false, stalled: false, cancelled: false, commands: 0, messages: [], questions: [] };
     const runningCommands = new Set();
     let lastEventAt = Date.now();
     const child = spawnCli(file, [...pre, ...args], {
@@ -87,7 +125,11 @@ function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, sess
       else if (ev.type === 'turn.failed') out.errors.push(ev.error?.message || JSON.stringify(ev));
       else if (ev.type === 'error') (isReconnect(ev.message) ? out.warnings : out.errors).push(ev.message || JSON.stringify(ev));
       else if (ev.type === 'item.completed' && ev.item?.type === 'error') out.warnings.push(ev.item.message);
-      else if (ev.type === 'item.completed' && ev.item?.type === 'command_execution') out.commands++;
+      else if (ev.type === 'item.completed' && ev.item?.type === 'command_execution') {
+        out.commands++;
+        const failed = ev.item.exit_code !== 0 && SANDBOX_ERROR.exec(String(ev.item.aggregated_output || ''));
+        if (failed && !out.sandboxError) out.sandboxError = String(ev.item.aggregated_output).trim().split(/\r?\n/).find((l) => SANDBOX_ERROR.test(l)).slice(0, 300);
+      }
       else if (ev.type === 'item.completed' && ev.item?.type === 'agent_message') out.messages.push(ev.item.text || '');
       return ev;
     };
@@ -147,6 +189,8 @@ function runCodex({ agent, args, cwd, prompt, runDir, timeoutMin, stallMin, sess
       process.removeListener('SIGTERM', onSignal);
       if (buf.trim()) record(buf);
       scanImages();
+      // 沙箱坏了时 Codex 照样正常结束，只在报告里说命令起不来；提示 Claude 这不是任务本身的问题。
+      if (out.sandboxError) out.notes.push(M.codexSandboxFailed(out.sandboxError));
       events.end();
       errLog.end();
       out.code = code;
@@ -235,7 +279,7 @@ function codexEfforts(name, agent, efforts, catalog) {
   return out;
 }
 
-function checkCodex(name, agent, efforts = [], catalog = () => codexCatalog(agent)) {
+function checkCodex(name, agent, efforts = [], catalog = () => codexCatalog(agent), modes = []) {
   const { file, pre } = codexCommand(agent);
   const codex = (args) => spawnSync(file, [...pre, ...args], { encoding: 'utf8', windowsHide: true, timeout: 60000 });
   const version = codex(['--version']);
@@ -254,6 +298,15 @@ function checkCodex(name, agent, efforts = [], catalog = () => codexCatalog(agen
   if (unsupported) {
     out.ok = false;
     out.fix = M.fixEffortUnsupported(name, M.list(unsupported.map((u) => M.effortAt(u.variant, M.list(u.used_at), u.model, M.list(u.supported)))));
+  }
+  const sandbox = checkSandbox(agent, modes);
+  if (sandbox) {
+    out.sandbox = sandbox;
+    const broken = sandbox.checked.filter((c) => c.ok === false);
+    if (broken.length) {
+      out.ok = false;
+      out.fix = [out.fix, M.fixCodexSandbox(name, broken[0].error, M.list(broken.flatMap((c) => c.used_in).map((m) => M.modeNames[m])), sandbox.unelevated_ok)].filter(Boolean).join('\n');
+    }
   }
   return out;
 }

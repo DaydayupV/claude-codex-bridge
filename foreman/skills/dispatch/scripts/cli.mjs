@@ -162,10 +162,17 @@ async function cmdCheck(o) {
       }
     }
   }
+  // 每个协作方被哪几类任务用到（Codex 按这个探测沙箱）。
+  const usedModes = new Map();
+  for (const [mode, levels] of Object.entries(cfg.levels)) {
+    for (const entry of Object.values(levels)) {
+      for (const item of entry === CLAUDE_CODE ? [] : Array.isArray(entry) ? entry : [entry]) usedModes.set(item.agent, new Set([...(usedModes.get(item.agent) || []), mode]));
+    }
+  }
   // 只在要核对推理强度时才读清单。
   const readCatalog = catalogReader();
   for (const [name, agent] of Object.entries(cfg.agents)) {
-    if (!o.agent || o.agent === name) result.agents[name] = { ...await adapters[agent.type].check(name, agent, variants.get(name) || [], () => readCatalog(agent)), type: agent.type };
+    if (!o.agent || o.agent === name) result.agents[name] = { ...await adapters[agent.type].check(name, agent, variants.get(name) || [], () => readCatalog(agent), [...(usedModes.get(name) || [])]), type: agent.type };
   }
   const referenced = new Set(Object.values(cfg.levels).flatMap((levels) => Object.values(levels).flatMap((entry) => entry === CLAUDE_CODE ? [] : (Array.isArray(entry) ? entry : [entry]).map((item) => item.agent))));
   result.ok = nodeOk && Object.entries(result.agents).every(([name, agent]) => !referenced.has(name) || agent.ok);

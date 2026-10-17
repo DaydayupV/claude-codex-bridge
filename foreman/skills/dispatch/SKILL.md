@@ -47,7 +47,7 @@ Codex 的文字表达弱，经常不说人话：术语堆砌、翻译腔、绕�
 唯一入口是本 skill 目录下的 `scripts/cli.mjs`（即 `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/cli.mjs`）。不要手敲 `codex exec`。
 
 - **没有例外**：测试、验收、试跑、一次性问答，也都必须走这个脚本。只读的问答用 `discuss`。插件带有钩子，直接调用 `codex exec` 或 `codex review` 的命令会被拦下。
-- **遇到沙箱问题时停下来**：Codex 因为沙箱无法启动命令或报错时，把错误原文和你的判断告诉用户，由用户决定是否修改配置。不要自己换沙箱、改配置文件，也不要想办法绕开脚本。
+- **遇到沙箱问题时停下来**：Codex 因为沙箱无法启动命令或报错时（结果的 `notes` 会提示"Codex 的沙箱启动不了命令"，常见原文是 `windows sandbox failed`、`setup refresh had errors`），不要重试，也不要自己换沙箱、改配置文件、想办法绕开脚本。先运行 `check`，它会不调模型地测一遍沙箱，`fix` 里列出可选的修法（Windows 上 unelevated 沙箱能用时会写明）；把错误原文、你的判断和这些选项告诉用户，由用户决定。不要建议改 `approval`：派出去的任务没人能批准，`never` 是对的，问题在沙箱。
 
 ```bash
 node "<脚本路径>" run    --cwd "<项目目录>" --brief "<任务说明.md>" --title "<短标题>" --level <simple|normal|complex> [--add-dir "<目录>"] [--track "<路径>"] [--group <组名> --scope "<路径>"] [--timeout 分钟]
@@ -64,7 +64,7 @@ node "<脚本路径>" cancel --run <run_id>
 ```
 
 - `check` 检查环境能不能用：Node.js、Git，以及配置里的每个协作方，结果在 `agents.<代号>` 里。
-  - Codex CLI：能否启动、是否已登录；再按 Codex 自带的模型清单核对各等级配置的推理强度（不发请求），结果列在 `efforts` 里；
+  - Codex CLI：能否启动、是否已登录；再按 Codex 自带的模型清单核对各等级配置的推理强度（不发请求），结果列在 `efforts` 里；按各类任务实际用的沙箱模式，用 `codex sandbox` 在沙箱里跑一条 echo（不调模型），结果列在 `sandbox` 里，`danger-full-access` 不进沙箱、不测；
   - API：key 是否设置，并发一个很小的请求确认能连通；
   - opencode：能否启动、`opencode models` 里有没有这个模型，并发一个很小的请求确认能用；各等级给它配置了推理强度（variant）的，先按 opencode 的模型清单核对，清单里没有的直接判不通过，其余每个档位再各发一个小请求，结果列在 `variants` 里；
   - pi：能否启动、模型清单里有没有这个模型，并发一个很小的请求确认能用；推理强度只按清单核对（pi 遇到模型不支持的档位不报错，会悄悄换成最接近的一档，发请求试不出来），结果列在 `efforts` 里。

@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { sandbox, output, baseConfig, apiAgent, opencodeAgent, MESSAGES } from './helpers.mjs';
 import { apiServer } from './fake/api-server.mjs';
 const M = MESSAGES.zh;
+const sandboxProbe = (mode, extra = []) => ['sandbox', ...extra, '-c', `sandbox_mode="${mode}"`, '--', ...(process.platform === 'win32' ? ['cmd', '/c', 'echo'] : ['echo']), 'foreman-sandbox-ok'];
 
 for (const lang of ['zh', 'en']) {
   test(`check opencode 检查两个档位并报告拒绝项 (${lang})`, async (t) => {
@@ -93,7 +95,7 @@ for (const loggedIn of [true, false]) {
     assert.equal(r.agents.codex.version, 'codex-cli synthetic-1.0');
     assert.equal(r.agents.codex.fix, loggedIn ? null : M.fixCodexLogin);
     // 已登录时还会读一次模型清单，核对配置的推理强度
-    assert.deepEqual(s.calls().map((c) => c.args), loggedIn ? [['--version'], ['login', 'status'], ['debug', 'models']] : [['--version'], ['login', 'status']]);
+    assert.deepEqual(s.calls().map((c) => c.args), loggedIn ? [['--version'], ['login', 'status'], ['debug', 'models'], sandboxProbe('read-only')] : [['--version'], ['login', 'status']]);
   });
 }
 
@@ -154,3 +156,32 @@ for (const listed of [true, false]) {
     }
   });
 }
+
+test('check 不调模型地探测 Codex 沙箱：坏了判不通过并给出修法，Windows 上顺带试 unelevated', async (t) => {
+  const h = sandbox(t), c = baseConfig();
+  c.agents.codex.sandbox = { run: 'workspace-write', review: null, discuss: 'danger-full-access' };
+  h.config(c);
+  const broken = h.scenario({ sandbox_broken: true, unelevated_ok: true });
+  const r = output(await h.bridge(['check'], { env: broken.env }), 1), codex = r.agents.codex;
+  const win = process.platform === 'win32';
+  assert.equal(codex.ok, false);
+  // 执行用 workspace-write，审查没写、按只读探测，讨论是 danger-full-access 不探测
+  assert.deepEqual(codex.sandbox.checked.map((x) => [x.mode, x.used_in, x.ok]), [['workspace-write', ['run'], false], ['read-only', ['review'], false]]);
+  assert.equal(codex.sandbox.unelevated_ok, win ? true : null);
+  const error = 'windows sandbox failed: helper_unknown_error: setup refresh had errors';
+  assert.equal(codex.fix, M.fixCodexSandbox('codex', error, M.list([M.modeNames.run, M.modeNames.review]), win ? true : null));
+  assert.ok(!broken.calls().some((x) => x.operation === 'exec'));
+  if (win) assert.ok(broken.calls().some((x) => x.operation === 'sandbox' && x.args.includes('windows.sandbox="unelevated"')));
+  const fine = output(await h.bridge(['check'], { env: h.scenario({}).env }));
+  assert.equal(fine.agents.codex.ok, true);
+  assert.ok(fine.agents.codex.sandbox.checked.every((x) => x.ok === true));
+  // Codex 自己配了 danger-full-access、foreman 没另配时，不进沙箱，不用探测
+  c.agents.codex.sandbox = { run: null, review: null, discuss: null }; h.config(c);
+  fs.mkdirSync(path.join(h.home, '.codex'), { recursive: true });
+  fs.writeFileSync(path.join(h.home, '.codex', 'config.toml'), 'sandbox_mode = "danger-full-access"\n\n[windows]\nsandbox = "elevated"\n');
+  const skipped = h.scenario({ sandbox_broken: true });
+  const probes = () => skipped.calls().filter((x) => x.operation === 'sandbox').length, before = probes(); // 调用记录按沙箱累计
+  const r2 = output(await h.bridge(['check'], { env: skipped.env }));
+  assert.equal(r2.agents.codex.sandbox, undefined);
+  assert.equal(probes(), before);
+});

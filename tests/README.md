@@ -91,6 +91,7 @@
 | 18 模型清单和总表 | catalog.test.mjs | models 列出 Codex、opencode 和 API 的清单并核对配置里的模型，读不到清单时如实报告；check 按 Codex 清单核对推理强度、不发执行请求，模型不在清单里或读不到清单时只提示；opencode 清单外的档位不发请求、修正提示列出支持的档位；模型提供方前缀和 levels 里的代号写错时提示最接近的写法；config 和 check 输出总表，含没用到的协作方、明文 key、shell 权限和失效的旧代号，档位不支持的格子写明原因 |
 | 19 实测补漏 | generalization.test.mjs、review.test.mjs、run.test.mjs、status-watch.test.mjs | 续接到 "claude code" 的等级时不沿用上一轮的协作方；opencode 审查和 check 总是带标题、被厂商限流时提示稍后再试、出错的回复没有 tokens 时照常统计用量；来源不明的改动落在同组其他任务的范围里时标出 group_run；组汇总把已续接的任务记作已续接 |
 | 20 pi 协作方 | pi.test.mjs、generalization.test.mjs | 配置校验（模型写法、run_access、推理强度、执行授权按能力判断）；讨论的隔离参数、只读工具、守卫策略、事件翻译、用量和费用、续接同一会话；审查的补丁材料和不能续接；edit / shell 两档执行的工具、守卫策略、改动归属、被挡的操作、命令计数和 watch；报告修复同会话不开工具；出错、限流、截断、自动重试和推理强度被改；check 按清单核对推理强度并写明会换成哪一档；models 按 pi 的规则算推理强度；守卫扩展按档位放行工具、路径按 pi 的规则解析（@、~、file://、/c/…）并按真实路径判断（符号链接、junction）；拦截钩子按 pi 的参数语义判断；环境检测带隔离参数；check 按覆盖的模型核对；自动压缩的用量；会话头之后才失败时保留 stderr；流式输出期间定期写进度，status 显示思考或回答了多少字 |
+| 21 Codex 沙箱 | check.test.mjs、run.test.mjs | check 按各类任务实际用的沙箱模式用 codex sandbox 探测（不调模型），坏了判不通过并给出修法，Windows 上顺带试 unelevated，danger-full-access 不探测；运行时命令因为沙箱失败时 notes 里说明，成功的命令不误判 |
 | 10 共用文件同步 | sync.test.mjs | 中英文插件的共用文件、schema 结构和版本号一致 |
 
 ## 说明

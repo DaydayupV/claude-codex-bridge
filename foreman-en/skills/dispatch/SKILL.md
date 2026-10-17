@@ -49,7 +49,7 @@ Codex's writing is weak: piles of jargon, stiff phrasing, roundabout sentences t
 The only entry point is `scripts/cli.mjs` in this skill's folder (that is, `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/cli.mjs`). Don't type `codex exec` by hand.
 
 - **No exceptions**: tests, checks, trial runs and one-off questions all go through this script too. Use `discuss` for read-only questions. The plugin includes a hook that blocks commands calling `codex exec` or `codex review` directly.
-- **Stop on sandbox problems**: if the sandbox stops Codex from starting commands or it errors, tell the user the exact error and your assessment, and let them decide whether to change the config. Don't switch the sandbox, edit config files or look for a way around the script yourself.
+- **Stop on sandbox problems**: if the sandbox stops Codex from starting commands or it errors (`notes` in the result says Codex's sandbox couldn't start commands; typical errors are `windows sandbox failed` and `setup refresh had errors`), don't retry, and don't switch the sandbox, edit config files or look for a way around the script yourself. Run `check` first: it tests the sandbox without calling a model, and its `fix` lists the possible fixes (on Windows it says so when the unelevated sandbox works). Tell the user the exact error, your assessment and those options, and let them decide. Don't suggest changing `approval`: nobody can approve in a handed-off task, so `never` is right; the problem is the sandbox.
 
 ```bash
 node "<script path>" run    --cwd "<project dir>" --brief "<brief.md>" --title "<short title>" --level <simple|normal|complex> [--add-dir "<dir>"] [--track "<path>"] [--group <name> --scope "<path>"] [--timeout minutes]
@@ -66,7 +66,7 @@ node "<script path>" cancel --run <run_id>
 ```
 
 - `check` tests whether the environment works: Node.js, Git, and every agent in the config, with results under `agents.<ID>`.
-  - Codex CLI: whether it starts and is signed in; then the efforts the levels configure are checked against Codex's own model list (no requests sent), with results under `efforts`;
+  - Codex CLI: whether it starts and is signed in; then the efforts the levels configure are checked against Codex's own model list (no requests sent), with results under `efforts`; and for each sandbox mode the task types actually use, `codex sandbox` runs an echo inside the sandbox (no model call), with results under `sandbox`; `danger-full-access` doesn't use a sandbox and isn't tested;
   - API: whether the key is set, plus a tiny request to confirm it connects;
   - opencode: whether it starts, whether `opencode models` lists the model, plus a tiny request to confirm it works; each reasoning effort (variant) the levels configure for it is first checked against opencode's model list, failing at once if it isn't there, and every other one gets one more tiny request; results are under `variants`;
   - pi: whether it starts, whether its model list has the model, plus a tiny request to confirm it works; efforts are only checked against the model list (pi doesn't report an unsupported level; it quietly switches to the nearest one, so a request can't reveal it), with results under `efforts`.

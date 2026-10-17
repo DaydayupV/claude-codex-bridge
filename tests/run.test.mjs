@@ -172,3 +172,14 @@ test('来源不明的改动落在同组其他任务的范围里时，标出是�
   assert.ok(r.notes.includes(M.groupScopeChanges(1, '20000101-sibling')));
   assert.ok(r.notes.includes(M.unattributedChanges(1)));
 });
+
+test('Codex 的命令因为沙箱起不来时，notes 里说明这不是任务本身的问题', async (t) => {
+  const h = sandbox(t);
+  const error = 'Failed to create unified exec process: helper_unknown_error: setup refresh had errors';
+  const s = h.scenario({ steps: [{ event: { type: 'item.completed', item: { id: 'cmd-1', type: 'command_execution', command: 'node --version', exit_code: -1, aggregated_output: error } } }] });
+  const r = output(await h.bridge(taskArgs(h), { env: s.env }));
+  assert.ok(r.notes.includes(M.codexSandboxFailed(error)));
+  const ok = h.scenario({ steps: [{ event: { type: 'item.completed', item: { id: 'cmd-2', type: 'command_execution', command: 'grep sandbox', exit_code: 0, aggregated_output: 'sandbox failed in docs' } } }] });
+  const r2 = output(await h.bridge(taskArgs(h), { env: ok.env }));
+  assert.ok(!r2.notes.some((n) => n.startsWith(M.codexSandboxFailed('').slice(0, 10))));
+});

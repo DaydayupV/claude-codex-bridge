@@ -11,7 +11,7 @@ The script is `${CLAUDE_PLUGIN_ROOT}/skills/dispatch/scripts/cli.mjs`. The confi
 
 1. **Check the environment**: run `node "<script path>" check` and `node "<script path>" config --cwd "<current project dir>"`.
    - Use one table to show what this machine has, from `environment` in `config`: whether Codex is there and signed in; whether opencode and pi are there and how many models each has; which API key environment variables were found.
-   - If Node.js fails, the plugin can't be used: pass on its `fix` and stop. If Git fails, tell the user change tracking won't work and suggest installing it, but carry on. If the live view (`watch`) fails, it only affects opening live progress automatically in the desktop app's terminal panel, so carry on.
+   - If Node.js fails, the plugin can't be used: pass on its `fix` and stop. If Git fails, tell the user change tracking won't work and suggest installing it, but carry on. If the live view (`watch`) fails, it only affects opening live progress automatically in the desktop app's terminal panel, so carry on. If anything under Codex's `sandbox` fails, its sandbox can't start on this machine and every task handed to it will fail: pass on the fixes in `fix` for the user to choose, and include this in the recommendation in step 4.
    - If the script printed "First run: created config file", pass on what it found and what it generated.
    - Don't list each agent's check result here; that goes into the overview in step 7.
 

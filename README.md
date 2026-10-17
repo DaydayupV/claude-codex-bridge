@@ -211,7 +211,7 @@ pi 本身没有权限系统。插件每次调用都只开放这次任务需要�
 
 ## 安全提示
 
-- **沙箱以 Codex 的配置为准。** 如果你的 Codex 配置是 `danger-full-access`，Codex 能读写电脑上的任何目录。任务说明会限定它的改动范围，Claude 事后也会审查 diff，但这些都不是技术上的隔离。想要技术隔离，就在配置里把 `agents.codex.sandbox` 设成 `workspace-write` 或 `read-only`。注意 Codex 在 Windows 上的沙箱支持可能不完整，改了之后要实际测试。
+- **沙箱以 Codex 的配置为准。** 如果你的 Codex 配置是 `danger-full-access`，Codex 能读写电脑上的任何目录。任务说明会限定它的改动范围，Claude 事后也会审查 diff，但这些都不是技术上的隔离。想要技术隔离，就在配置里把 `agents.codex.sandbox` 设成 `workspace-write` 或 `read-only`。Codex 在 Windows 上默认的 elevated 沙箱要先以管理员身份完成设置，设置坏了时每条命令都会失败（报 `windows sandbox failed`）。改了沙箱之后让 Claude 运行一次 `check`：它会不调模型地测一遍沙箱，坏了会列出修法，比如改用 `[windows] sandbox = "unelevated"`。审批 `approval` 保持默认的 `never` 就好，派出去的任务没人能批准，沙箱坏了要修沙箱。
 - **opencode 和 pi 做执行时没有系统沙箱。** `run_access` 为 `edit` 时它写不了项目以外的文件、也不能运行命令；为 `shell` 时它的命令能访问整台机器。默认不开放，要你自己在用户配置里写，项目配置开不了。
 - **Claude 只能通过插件调用协作方。** 插件带有一个钩子：Claude 直接运行 `codex exec`、`codex review`、`opencode run` 或用 pi 跑任务的命令会被拦下，这样每次调用都有记录、改动追踪和明确的模型和推理强度。你自己在终端里运行它们不受影响。
 - **协作方不会因为等人回答而卡住。** Codex 默认不需要审批，opencode 不开放提问和需要确认的权限，pi 没有提问工具；协作方要人回答的事（交回的问题、被权限挡住的操作、等终端输入的提示）都收集在结果里，由 Claude 判断：在你已有的授权内的直接决定后续接，业务取舍、扩大范围、花钱和不可逆的操作才问你。

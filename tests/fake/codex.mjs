@@ -3,7 +3,7 @@ import { setup, replay, write, finish } from './common.mjs';
 import { report } from '../fixtures/reports.mjs';
 
 const args = process.argv.slice(2);
-const operation = args[0] === '--version' ? 'version' : args[0] === 'login' ? 'login' : args[0] === 'debug' ? 'catalog' : 'exec';
+const operation = args[0] === '--version' ? 'version' : args[0] === 'login' ? 'login' : args[0] === 'debug' ? 'catalog' : args[0] === 'sandbox' ? 'sandbox' : 'exec';
 const { scenario: s } = await setup('codex', operation, args);
 if (operation === 'version') {
   console.log(s.version || 'codex-cli synthetic-1.0');
@@ -11,6 +11,11 @@ if (operation === 'version') {
   // codex debug models：剧本没给 codex_catalog 时当作读不到清单
   if (s.codex_catalog) console.log(JSON.stringify(s.codex_catalog));
   else { process.stderr.write('synthetic: no model catalog\n'); process.exitCode = 1; }
+} else if (operation === 'sandbox') {
+  // codex sandbox -c sandbox_mode=… -- <echo 命令>：剧本 sandbox_broken 时模拟 Windows 沙箱设置坏了，unelevated_ok 时 unelevated 模式还能用
+  const unelevated = args.includes('windows.sandbox="unelevated"');
+  if (s.sandbox_broken && !(unelevated && s.unelevated_ok)) { process.stderr.write('windows sandbox failed: helper_unknown_error: setup refresh had errors\n'); process.exitCode = 1; }
+  else console.log(args.at(-1));
 } else if (operation === 'login') {
   process.stderr.write(s.logged_in === false ? 'Not logged in\n' : 'Logged in using synthetic credentials\n');
   process.exitCode = s.logged_in === false ? 1 : 0;

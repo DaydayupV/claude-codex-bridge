@@ -60,7 +60,17 @@ Example:
 | `bin` | Path to the codex executable or `codex.js` (or the environment variable `CODEX_BIN`) | Found automatically |
 | `max_parallel` | How many runs this agent may have going at once, across all groups and sessions (see "Splitting work to run in parallel" in the skill) | `4` |
 | `sandbox` | Sandbox for each of `run` / `review` / `discuss`: `read-only` / `workspace-write` / `danger-full-access` | All `null` (use Codex config) |
-| `approval` | Approval policy | `never` when not set: runs are unattended, so nobody can approve |
+| `approval` | Approval policy: `never` or `on-request` | `never` when not set: runs are unattended, so nobody can approve. A command blocked by the sandbox fails straight back to the model; a broken sandbox needs fixing, see "When Codex's sandbox won't start" below |
+
+### When Codex's sandbox won't start
+Symptoms: every command in a task handed to Codex fails with `windows sandbox failed`, `helper_unknown_error`, `setup refresh had errors` or `Failed to create unified exec process`, and `notes` in the result says the sandbox is broken. The most common cause is that Codex's default elevated sandbox on Windows has a broken setup (it needs a one-time setup with administrator rights).
+
+Run `check`: for each sandbox mode the task types actually use, it runs an echo with `codex sandbox`, with no model call and no cost, and fails with the fixes listed if the sandbox is broken. Pick one:
+1. On Windows, set `sandbox = "unelevated"` under `[windows]` in `~/.codex/config.toml`. `check` tries this too and says so when it works.
+2. Redo the setup per Codex's Windows sandbox instructions (usually needs administrator rights).
+3. In the foreman config, set the matching task under `agents.<ID>.sandbox` to `"danger-full-access"`: no sandbox, Codex can read and write the whole machine, held only by the brief and the diff review afterwards.
+
+Don't fix it by changing `approval`. Codex 0.162 has two approval values: `never` (a blocked command's failure goes straight back to the model) and `on-request` (the model decides when to ask for approval). Nobody can approve in a handed-off task, so foreman uses `never` by default; with a broken sandbox neither value can run commands. Also, `workspace-write` has no network access by default, so tasks that install dependencies fail; if needed, turn on `network_access = true` under `[sandbox_workspace_write]` in the Codex config.
 
 **`type: "opencode cli"`** (the opencode CLI on this machine)
 

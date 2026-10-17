@@ -60,7 +60,17 @@
 | `bin` | codex 可执行文件或 `codex.js` 路径（也可以用环境变量 `CODEX_BIN`） | 自动查找 |
 | `max_parallel` | 这个协作方同时最多运行几个任务，所有任务组和会话加起来算（见 skill 的"并发拆分"一节） | `4` |
 | `sandbox` | `run` / `review` / `discuss` 各自的沙箱：`read-only` / `workspace-write` / `danger-full-access` | 全部 `null`，沿用 Codex 配置 |
-| `approval` | 审批策略 | 不写时用 `never`：无人值守，没人能审批 |
+| `approval` | 审批策略：`never` 或 `on-request` | 不写时用 `never`：无人值守，没人能审批。命令被沙箱挡住时直接把失败交回给模型；沙箱坏了要修沙箱，见下文"Codex 的沙箱起不来时" |
+
+### Codex 的沙箱起不来时
+现象：派给 Codex 的任务里每条命令都失败，报 `windows sandbox failed`、`helper_unknown_error`、`setup refresh had errors` 或 `Failed to create unified exec process`；结果的 `notes` 会提示沙箱坏了。最常见的原因是 Windows 上 Codex 默认的 elevated 沙箱设置坏了（它要以管理员身份完成一次设置）。
+
+运行 `check`：它按各类任务实际用的沙箱模式，用 `codex sandbox` 跑一条 echo，不调模型、不花钱，坏了就判不通过并列出修法。选一种：
+1. Windows 上在 `~/.codex/config.toml` 的 `[windows]` 里写 `sandbox = "unelevated"`。`check` 会顺带试一下，能用时会写明。
+2. 按 Codex 的 Windows 沙箱说明重新完成设置（通常要管理员权限）。
+3. 在 foreman 配置里把 `agents.<代号>.sandbox` 对应的任务设成 `"danger-full-access"`：不用沙箱，Codex 能读写整台电脑，靠任务说明约束、事后看 diff 把关。
+
+不要靠改 `approval` 解决。Codex 0.162 的审批只有两个值：`never`（命令被挡住就直接把失败交回给模型）和 `on-request`（模型决定什么时候申请批准）。派出去的任务没人能批准，所以 foreman 默认用 `never`；沙箱坏了时两个值都一样跑不了命令。另外，`workspace-write` 默认不能联网，任务要装依赖时会失败，需要的话在 Codex 配置的 `[sandbox_workspace_write]` 里开 `network_access = true`。
 
 **`type: "opencode cli"`**（本机的 opencode CLI）
 
